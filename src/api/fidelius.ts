@@ -18,20 +18,8 @@
  */
 import type { GrpcMethodDesc } from "../transport/grpc-web.ts";
 import { ProtoWriter } from "../transport/proto-encode.ts";
-
-/** Cleartext identity material as returned by the WASM. */
-export type FideliusIdentity = {
-  /** SEC1-uncompressed P-256 public key (65 bytes, 0x04 prefix). */
-  cleartextPublicKey: Uint8Array;
-  /** P-256 private key (32 bytes). */
-  cleartextPrivateKey: Uint8Array;
-  /** Server-side identifier for this key (32 bytes). */
-  identityKeyId: Uint8Array;
-  /** Root wrapping key (16 bytes) — locally encrypts persisted keys. */
-  rwk: Uint8Array;
-  /** Protocol version (10 = "TEN", current as of 2026-04). */
-  version: number;
-};
+import type { FideliusIdentity } from "../auth/fidelius-mint.ts";
+export type { FideliusIdentity };
 
 /** Server's response to InitializeWebKey — confirms registration. */
 export type InitializeWebKeyResponse = {

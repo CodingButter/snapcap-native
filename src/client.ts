@@ -46,9 +46,28 @@ import {
 } from "./api/messaging.ts";
 import { User } from "./api/user.ts";
 import { callRpc, type GrpcMethodDesc, type HeaderTransform } from "./transport/grpc-web.ts";
+import { mintFideliusIdentity, type FideliusIdentity } from "./auth/fidelius-mint.ts";
+import { initializeWebKey, stripOriginReferer } from "./api/fidelius.ts";
 
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
+
+/**
+ * Serialized form of a Fidelius identity stored in the auth blob.
+ * Bytes are hex-encoded so the blob is plain JSON.
+ *
+ * SECURITY: `privateKey` is the long-lived root of E2E encryption for
+ * this account. Snap's server never sees it; if you lose this blob the
+ * identity can't be recovered (Snap won't let the same user register
+ * a second one). Treat the whole blob as credential-grade.
+ */
+export type FideliusIdentityBlob = {
+  publicKey: string;     // hex (65 bytes, 0x04-prefixed P-256)
+  privateKey: string;    // hex (32 bytes)
+  identityKeyId: string; // hex (32 bytes)
+  rwk: string;           // hex (16 bytes)
+  version: number;
+};
 
 export type SnapcapAuthBlob = {
   /** Serialized tough-cookie jar (jar.toJSON()). */
@@ -59,6 +78,12 @@ export type SnapcapAuthBlob = {
   userAgent: string;
   /** Cached self user (saves a round-trip on rehydrate). */
   self?: { userId: string; username?: string; displayName?: string };
+  /**
+   * E2E identity. Present once `fromCredentials` has minted + registered
+   * the user's Fidelius key. Restoring a blob without it = no E2E ops
+   * (sending snaps + reading inbound bodies will throw).
+   */
+  fidelius?: FideliusIdentityBlob;
 };
 
 export type FromCredentialsOpts = {
@@ -85,11 +110,20 @@ export class SnapcapClient {
    */
   public self?: User;
 
-  private constructor(jar: CookieJar, bearer: string, userAgent: string, self?: User) {
+  /**
+   * Long-lived Fidelius E2E identity for this account. Populated by
+   * `fromCredentials` (mint via WASM + register with server) or
+   * `fromAuth` (deserialize from blob). Required for sending snaps
+   * and reading inbound message bodies.
+   */
+  public fidelius?: FideliusIdentity;
+
+  private constructor(jar: CookieJar, bearer: string, userAgent: string, self?: User, fidelius?: FideliusIdentity) {
     this.jar = jar;
     this.bearer = bearer;
     this.userAgent = userAgent;
     this.self = self;
+    this.fidelius = fidelius;
   }
 
   static async fromCredentials(opts: FromCredentialsOpts): Promise<SnapcapClient> {
@@ -107,6 +141,29 @@ export class SnapcapClient {
     } catch {
       // tolerate — consumer can still operate via setSelf()
     }
+    // Mint + register Fidelius identity. Boot cost is one-time
+    // (~250ms WASM init); subsequent `fromAuth(blob)` skips it
+    // entirely. If the user has already registered an identity from
+    // a different installation, the InitializeWebKey call returns
+    // 401 — we surface that as a warning + leave fidelius undefined,
+    // since the SDK can't recover the original private key.
+    try {
+      const identity = await mintFideliusIdentity();
+      const fideliusRpc = client.makeRpc(stripOriginReferer);
+      await initializeWebKey(fideliusRpc, identity);
+      client.fidelius = identity;
+    } catch (err) {
+      const msg = (err as Error).message ?? String(err);
+      if (msg.includes("401") || msg.includes("unauthorized")) {
+        console.warn(
+          "[snapcap] Fidelius identity already registered for this account from a previous session. " +
+            "E2E operations (snaps, inbound message bodies) will be unavailable in this client. " +
+            "If you need them, locate the original blob or have Snap reset the account's web identity.",
+        );
+      } else {
+        console.warn(`[snapcap] Fidelius identity init failed: ${msg.slice(0, 200)}`);
+      }
+    }
     return client;
   }
 
@@ -115,7 +172,10 @@ export class SnapcapClient {
     const self = opts.auth.self
       ? new User(opts.auth.self.userId, opts.auth.self.username, opts.auth.self.displayName)
       : undefined;
-    return new SnapcapClient(jar, opts.auth.bearer, opts.auth.userAgent, self);
+    const fidelius = opts.auth.fidelius
+      ? deserializeFidelius(opts.auth.fidelius)
+      : undefined;
+    return new SnapcapClient(jar, opts.auth.bearer, opts.auth.userAgent, self, fidelius);
   }
 
   /**
@@ -156,6 +216,7 @@ export class SnapcapClient {
       bearer: this.bearer,
       userAgent: this.userAgent,
       self: this.self?.toJSON(),
+      fidelius: this.fidelius ? serializeFidelius(this.fidelius) : undefined,
     };
   }
 
@@ -467,4 +528,41 @@ function findSelf(payload: unknown, username: string): User | null {
     else for (const k of Object.keys(obj)) stack.push(obj[k]);
   }
   return null;
+}
+
+function serializeFidelius(id: FideliusIdentity): {
+  publicKey: string; privateKey: string; identityKeyId: string; rwk: string; version: number;
+} {
+  return {
+    publicKey: bytesToHex(id.cleartextPublicKey),
+    privateKey: bytesToHex(id.cleartextPrivateKey),
+    identityKeyId: bytesToHex(id.identityKeyId),
+    rwk: bytesToHex(id.rwk),
+    version: id.version,
+  };
+}
+
+function deserializeFidelius(blob: {
+  publicKey: string; privateKey: string; identityKeyId: string; rwk: string; version: number;
+}): FideliusIdentity {
+  return {
+    cleartextPublicKey: hexToBytes(blob.publicKey),
+    cleartextPrivateKey: hexToBytes(blob.privateKey),
+    identityKeyId: hexToBytes(blob.identityKeyId),
+    rwk: hexToBytes(blob.rwk),
+    version: blob.version,
+  };
+}
+
+function bytesToHex(b: Uint8Array): string {
+  return Array.from(b, (n) => n.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBytes(s: string): Uint8Array {
+  if (s.length % 2 !== 0) throw new Error(`hex length ${s.length} not even`);
+  const out = new Uint8Array(s.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
 }
