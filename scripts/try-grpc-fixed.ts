@@ -304,15 +304,55 @@ async function unaryFetch(url: string, body: Uint8Array): Promise<Uint8Array | n
   // registered — synthesize a successful response with our existing keys.
   // Saves a real round-trip and avoids the 401-already-registered abort path.
   if (url.includes("FideliusIdentityService/InitializeWebKey")) {
-    log(`  [InitializeWebKey] synthesizing response from existing fidelius identity`);
-    // Response proto: { identityKeyId: bytes, rwk: bytes }
-    // Wire: tag(0x0a)+len+identityKeyId, tag(0x12)+len+rwk
-    const out = new Uint8Array(2 + fidIdentityKeyId.byteLength + 2 + fidRwk.byteLength);
+    // Parse the WASM's request: field 2 sub { f1: pubkey, f2: identityKeyId, f3: rwk, f4: version }
+    // Echo the WASM's OWN identityKeyId and rwk back in the response so the
+    // C++ side accepts them (they have to match what the WASM just generated).
+    let identityKeyId = fidIdentityKeyId, rwk = fidRwk;
+    try {
+      // Find the inner submessage at field 2
+      let pos = 0;
+      while (pos < body.byteLength) {
+        const tag = body[pos++]!;
+        const wt = tag & 0x07;
+        const field = tag >> 3;
+        if (wt === 2) {
+          let len = 0, shift = 0;
+          while (true) { const b = body[pos++]!; len |= (b & 0x7f) << shift; if (!(b & 0x80)) break; shift += 7; }
+          const slice = body.subarray(pos, pos + len);
+          pos += len;
+          if (field === 2) {
+            // inner message: f1=pub, f2=identityKeyId, f3=rwk, f4=version
+            let ip = 0;
+            while (ip < slice.byteLength) {
+              const itag = slice[ip++]!;
+              const iwt = itag & 0x07;
+              const ifield = itag >> 3;
+              if (iwt === 2) {
+                let ilen = 0, ishift = 0;
+                while (true) { const b = slice[ip++]!; ilen |= (b & 0x7f) << ishift; if (!(b & 0x80)) break; ishift += 7; }
+                const ibytes = slice.subarray(ip, ip + ilen);
+                ip += ilen;
+                if (ifield === 2) identityKeyId = new Uint8Array(ibytes);
+                else if (ifield === 3) rwk = new Uint8Array(ibytes);
+              } else if (iwt === 0) {
+                while (slice[ip++]! & 0x80) {}
+              }
+            }
+          }
+        } else if (wt === 0) {
+          while (body[pos++]! & 0x80) {}
+        } else break;
+      }
+    } catch (e) {
+      log(`  [InitializeWebKey] parse err: ${(e as Error).message}`);
+    }
+    log(`  [InitializeWebKey] echoing back WASM's own identityKeyId=${identityKeyId.byteLength}B rwk=${rwk.byteLength}B`);
+    const out = new Uint8Array(2 + rwk.byteLength + 2 + identityKeyId.byteLength);
     let p = 0;
-    out[p++] = 0x0a; out[p++] = fidIdentityKeyId.byteLength;
-    out.set(fidIdentityKeyId, p); p += fidIdentityKeyId.byteLength;
-    out[p++] = 0x12; out[p++] = fidRwk.byteLength;
-    out.set(fidRwk, p);
+    out[p++] = 0x0a; out[p++] = rwk.byteLength;
+    out.set(rwk, p); p += rwk.byteLength;
+    out[p++] = 0x12; out[p++] = identityKeyId.byteLength;
+    out.set(identityKeyId, p);
     return out;
   }
   // Route through web.snapchat.com (not us-east1-aws), with cookie jar + bearer.
@@ -436,19 +476,12 @@ const sessionScopedStorage = loggingProxy("session", {
   },
   async loadTemporaryIdentityKey() {
     const bytes = await dataStore.get("e2ee/temporary_identity_key");
-    // Try heap-allocated buffer (like our gRPC response pattern) for empty.
     if (bytes && bytes.byteLength > 0) {
-      const ptr = Module._malloc(bytes.byteLength);
-      const view = new Uint8Array(Module.HEAPU8.buffer, ptr, bytes.byteLength);
-      view.set(bytes);
-      log(`[session.loadTempKey] → heap ${bytes.byteLength}B @0x${ptr.toString(16)}`);
-      return view;
+      log(`[session.loadTempKey] → bytes(${bytes.byteLength}B)`);
+      return bytes;
     }
-    // Empty: heap-allocated 0-byte view
-    const ptr = Module._malloc(1);  // 1-byte alloc, 0-length view
-    const view = new Uint8Array(Module.HEAPU8.buffer, ptr, 0);
-    log(`[session.loadTempKey] → heap 0B @0x${ptr.toString(16)}`);
-    return view;
+    log(`[session.loadTempKey] → undefined (no temp key)`);
+    return undefined;
   },
   async clearTemporaryIdentityKey() {
     log(`[session.clearTempKey]`);
