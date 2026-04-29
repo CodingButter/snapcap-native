@@ -497,6 +497,36 @@ export class Conversation {
   }
 
   /**
+   * Send an image. Pipeline:
+   *   1. getUploadLocations → signed S3 PUT URL + media id
+   *   2. AES-256-CBC encrypt the bytes (fresh per-message key)
+   *   3. PUT ciphertext to S3
+   *   4. CreateContentMessage with the media id + key + IV embedded
+   *
+   * Recipient downloads from S3 and decrypts client-side using the keys
+   * carried in the message. PNG/JPEG/WebP dimensions are auto-detected;
+   * pass `opts.width`/`opts.height` for other formats.
+   */
+  async sendImage(bytes: Uint8Array, opts: { width?: number; height?: number } = {}): Promise<void> {
+    this.requireSelf();
+    const { sendImage } = await import("./media.ts");
+    const { nativeFetch } = await import("../transport/native-fetch.ts");
+    await sendImage(this.owner.rpc, nativeFetch, this.owner.self!.userId, this.conversationId, {
+      bytes, width: opts.width, height: opts.height,
+    });
+  }
+
+  /**
+   * Send an image followed by a caption text. Snap's UI renders this as
+   * one logical "image with caption," but on the wire it's two separate
+   * CreateContentMessage calls (image first, text immediately after).
+   */
+  async sendImageWithCaption(bytes: Uint8Array, caption: string, opts?: { width?: number; height?: number }): Promise<void> {
+    await this.sendImage(bytes, opts);
+    await this.sendText(caption);
+  }
+
+  /**
    * Type for `durationMs` ms then send the message. Mimics a human
    * composing a message in the UI: the recipient sees the typing
    * indicator, then sees the message.
