@@ -26,9 +26,11 @@
 import { CookieJar } from "tough-cookie";
 import { nativeLogin, type LoginCredentials } from "./auth/login.ts";
 import { mintBearer } from "./auth/sso.ts";
-import { listFriends, type RawSyncFriendData } from "./api/friends.ts";
+import { listFriends, syncFriendDataRaw } from "./api/friends.ts";
 import { addFriends } from "./api/friending.ts";
 import { searchUsers } from "./api/search.ts";
+import { buildPresenceBody, PresenceCounter } from "./api/presence.ts";
+import { connectDuplex, type Duplex } from "./transport/duplex.ts";
 import { highLowToUuid } from "./transport/proto-encode.ts";
 import {
   Conversation,
@@ -133,8 +135,11 @@ export class SnapcapClient {
    * loading from an old auth blob that doesn't have `self` cached.
    */
   async resolveSelf(username: string): Promise<User> {
-    const friends = await this.listFriends() as Record<string, unknown>;
-    const found = findSelf(friends, username);
+    // Pull the raw SyncFriendData record (which embeds the self-user) and
+    // walk it. listFriends() returns User[] now and would have already
+    // dropped self if we knew our userId — but we don't yet.
+    const raw = await syncFriendDataRaw(this.makeRpc());
+    const found = findSelf(raw, username);
     if (!found) {
       throw new Error(`could not resolve self user "${username}" from SyncFriendData response`);
     }
@@ -150,6 +155,63 @@ export class SnapcapClient {
       userAgent: this.userAgent,
       self: this.self?.toJSON(),
     };
+  }
+
+  // ── Duplex WS (presence + typing) ──────────────────────────────────
+
+  private duplex: Promise<Duplex> | null = null;
+
+  /**
+   * Lazy-open the persistent duplex WebSocket. Real-time presence
+   * (viewing/typing indicators) only fans out to recipients when our
+   * session has an open WS to aws.duplex.snapchat.com — gRPC alone won't
+   * do it. We open once, hold for the lifetime of the client, and reuse
+   * across every conversation.
+   */
+  private getDuplex(): Promise<Duplex> {
+    if (!this.duplex) {
+      this.duplex = (async () => {
+        const dx = await connectDuplex({ bearer: this.bearer, jar: this.jar, userAgent: this.userAgent });
+        await dx.ready;
+        return dx;
+      })();
+    }
+    return this.duplex;
+  }
+
+  /** Publish a presence frame on the conversation. Counter encodes the state (VIEWING / TYPING). */
+  private async publishPresence(
+    conversationId: string,
+    peerUserId: string,
+    counter: number,
+  ): Promise<void> {
+    if (!this.self) {
+      throw new Error("publishPresence requires client.self — call resolveSelf() or fromCredentials() first");
+    }
+    const dx = await this.getDuplex();
+    const body = buildPresenceBody({
+      senderUserId: this.self.userId,
+      conversationId,
+      sessionId: dx.sessionId,
+      counter,
+    });
+    dx.sendTransient("presence", body, peerUserId);
+  }
+
+  /**
+   * Internal: called by Conversation.setTyping(durationMs).
+   * Publishes a TYPING pulse to the duplex WS.
+   */
+  async _publishTyping(conversationId: string, peerUserId: string): Promise<void> {
+    await this.publishPresence(conversationId, peerUserId, PresenceCounter.TYPING);
+  }
+
+  /**
+   * Internal: called by Conversation.markViewed().
+   * Publishes a VIEWING pulse — recipient sees the "in chat" indicator.
+   */
+  async _publishViewing(conversationId: string, peerUserId: string): Promise<void> {
+    await this.publishPresence(conversationId, peerUserId, PresenceCounter.VIEWING);
   }
 
   /** Mint a fresh bearer from the current cookie jar. Used by 401 retry. */
@@ -213,8 +275,8 @@ export class SnapcapClient {
 
   // ── Low-level primitives (functional, take IDs) ─────────────────────
 
-  async listFriends(): Promise<RawSyncFriendData> {
-    return await listFriends(this.makeRpc());
+  async listFriends(): Promise<User[]> {
+    return await listFriends(this.makeRpc(), this.self?.userId);
   }
 
   /**

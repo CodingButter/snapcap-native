@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getKameleon } from "../auth/kameleon.ts";
+import { User } from "./user.ts";
 
 let chatBundleLoaded = false;
 
@@ -85,18 +86,49 @@ export type RpcUnaryFn = (
 ) => Promise<unknown>;
 
 /**
- * Opaque snapshot of someone's social graph. Shape mirrors what AtlasGw
- * returns; we keep it loose for now since SyncFriendData responds with
- * many nested oneofs and we don't need to surface them all yet.
+ * Raw protobuf-decoded SyncFriendData response. Useful when you need
+ * the full record (best-friends, fidelius info, story sync state, …)
+ * rather than just the friend list. Most callers want `listFriends`.
  */
 export type RawSyncFriendData = Record<string, unknown>;
 
-export async function listFriends(rpc: { unary: RpcUnaryFn }): Promise<RawSyncFriendData> {
-  await getKameleon();  // ensures accounts bundle + p.m are populated
+export async function syncFriendDataRaw(rpc: { unary: RpcUnaryFn }): Promise<RawSyncFriendData> {
+  await getKameleon();
   const Atlas = atlasGwClass();
   const client = new Atlas(rpc);
-  const result = await (client.SyncFriendData as Function).call(client, {
+  return (await (client.SyncFriendData as Function).call(client, {
     outgoingSyncRequest: { requestType: { $case: "all", all: {} } },
-  });
-  return result as RawSyncFriendData;
+  })) as RawSyncFriendData;
+}
+
+/**
+ * Walk a SyncFriendData response and produce a flat User[] of the friends
+ * (excluding the logged-in user's own self-record). The same response
+ * embeds self info; use `findSelf()` from client.ts to extract it.
+ */
+export async function listFriends(
+  rpc: { unary: RpcUnaryFn },
+  excludeUserId?: string,
+): Promise<User[]> {
+  const raw = await syncFriendDataRaw(rpc);
+  const users = new Map<string, User>();
+  walkForUsers(raw, users);
+  if (excludeUserId) users.delete(excludeUserId);
+  return Array.from(users.values());
+}
+
+function walkForUsers(node: unknown, out: Map<string, User>): void {
+  if (!node || typeof node !== "object") return;
+  const obj = node as Record<string, unknown>;
+  // Friend records have userId + mutableUsername; treat any object with
+  // both as a candidate and parse via the User factory.
+  if (obj.userId && typeof obj.userId === "object" && obj.mutableUsername) {
+    const u = User.fromFriendRecord(obj);
+    if (u) {
+      out.set(u.userId, u);
+      return; // don't recurse into the parsed record
+    }
+  }
+  if (Array.isArray(node)) for (const x of node) walkForUsers(x, out);
+  else for (const k of Object.keys(obj)) walkForUsers(obj[k], out);
 }

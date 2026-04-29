@@ -58,6 +58,14 @@ export async function callRpc<Req, Resp>(opts: CallRpcOpts<Req, Resp>): Promise<
       // (CreateContentMessage etc.) and rejects with "invalid user agent"
       // if missing or wrong-format. The regular User-Agent isn't enough.
       "x-snap-client-user-agent": "SnapchatWeb/13.79.0 PROD (linux 0.0.0; chrome 147.0.0.0)",
+      // Messaging COF (config-on-fly) experiment IDs — server reads this to
+      // decide which features to enable for the request. Real-time typing
+      // dispatch turned out to be gated on it: without the header the call
+      // succeeds (200 OK, conv last-activity bumps) but the server never
+      // fans the typing event out to the recipient's WebSocket.
+      // Value lifted from a captured browser send; consumers can override
+      // via opts.cofIds if they capture a fresher one.
+      "mcs-cof-ids-bin": "ChjSlcACiLO9AcSl8gLelrIBipe7AYzw4QE=",
       "accept": "*/*",
       "accept-language": "en-US,en;q=0.9",
     };

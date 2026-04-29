@@ -79,8 +79,9 @@ export const UpdateConversationDesc: GrpcMethodDesc<UpdateConversationRequest, R
   requestType: {
     serializeBinary(this: UpdateConversationRequest): Uint8Array {
       // wire shape from recon:
-      //   { 1: { 1: { 1: bytes16 conversationId },  2: varint timestamp_ms,  3: varint=22 },
-      //     2: { 1: { 1: bytes16 senderUserId },    2: { 2: varint viewState } } }
+      //   { 1:  { 1: { 1: bytes16 conversationId },  2: varint timestamp_ms,  3: varint=22 },
+      //     10: { 1: { 1: bytes16 senderUserId },    2: { 2: varint viewState } } }
+      // Field 10 — not field 2 — is what tripped us up the first time.
       const ts = this.timestampMs ?? Date.now();
       const w = new ProtoWriter();
       w.fieldMessage(1, (c) => {
@@ -88,7 +89,7 @@ export const UpdateConversationDesc: GrpcMethodDesc<UpdateConversationRequest, R
         c.fieldVarint(2, ts);
         c.fieldVarint(3, 0x16);
       });
-      w.fieldMessage(2, (u) => {
+      w.fieldMessage(10, (u) => {
         u.fieldMessage(1, (uid) => uid.fieldBytes(1, uuidToBytes(this.userId)));
         u.fieldMessage(2, (state) => state.fieldVarint(2, this.viewState));
       });
@@ -372,6 +373,10 @@ export async function syncConversations(rpc: Rpc, selfUserId: string): Promise<R
 export type ConversationOwner = {
   rpc: Rpc;
   self?: User;
+  /** Publish a TYPING presence pulse over the duplex WS. */
+  _publishTyping?: (conversationId: string, peerUserId: string) => Promise<void>;
+  /** Publish a VIEWING presence pulse over the duplex WS. */
+  _publishViewing?: (conversationId: string, peerUserId: string) => Promise<void>;
 };
 
 export type ConversationKind = "dm" | "group" | "myStory" | "unknown";
@@ -419,47 +424,56 @@ export class Conversation {
   // ── primitives ─────────────────────────────────────────────────────
 
   /**
-   * Send "typing…" notification.
+   * Send "typing…" notification — recipient sees "<name> is typing…" in
+   * real time. Routed over the duplex WebSocket; the gRPC equivalent is
+   * accepted by the server but never fans out.
    *
    * Without `durationMs`: a single pulse. Snap's UI auto-clears in ~5s.
    *
-   * With `durationMs`: refreshes the pulse every 3s for the duration,
-   * then stops (the indicator naturally times out shortly after).
-   * Useful when composing a longer message and you want the indicator
-   * to stay visible the whole time.
+   * With `durationMs`: refreshes every 2.5s for the duration so the
+   * indicator stays on continuously. Useful when composing a longer
+   * message and you want the recipient to see typing until you send.
    */
   async setTyping(durationMs?: number): Promise<void> {
     this.requireSelf();
+    if (!this.owner._publishTyping) {
+      throw new Error("Conversation.setTyping requires a SnapcapClient owner with duplex WS support");
+    }
+    const peer = this.friend?.userId ?? this.participants.find((p) => p.userId !== this.owner.self!.userId)?.userId;
+    if (!peer) {
+      throw new Error("Conversation.setTyping needs to know the peer user — populate `participants` when constructing");
+    }
     if (durationMs === undefined || durationMs <= 0) {
-      await sendTypingNotification(
-        this.owner.rpc,
-        this.conversationId,
-        this.owner.self!.userId,
-      );
+      await this.owner._publishTyping(this.conversationId, peer);
       return;
     }
     const start = Date.now();
     while (Date.now() - start < durationMs) {
-      await sendTypingNotification(
-        this.owner.rpc,
-        this.conversationId,
-        this.owner.self!.userId,
-      );
+      await this.owner._publishTyping(this.conversationId, peer);
       const remaining = durationMs - (Date.now() - start);
       if (remaining <= 0) break;
-      await new Promise((r) => setTimeout(r, Math.min(3000, remaining)));
+      await new Promise((r) => setTimeout(r, Math.min(2500, remaining)));
     }
   }
 
-  /** Mark the conversation as actively viewed (recipient sees a read indicator). */
-  async markViewed(state: number = ConversationViewState.ACTIVE): Promise<void> {
+  /**
+   * Mark the conversation as actively viewed — recipient sees the
+   * "in chat" indicator (bitmoji avatar pose changes to a smiley/screen
+   * pose). Routed over the duplex WebSocket.
+   *
+   * Pair with `setTyping()` to mimic the natural human pattern: open
+   * conversation → maybe type → send → leave.
+   */
+  async markViewed(_state: number = ConversationViewState.ACTIVE): Promise<void> {
     this.requireSelf();
-    await updateConversationView(
-      this.owner.rpc,
-      this.conversationId,
-      this.owner.self!.userId,
-      state,
-    );
+    if (!this.owner._publishViewing) {
+      throw new Error("Conversation.markViewed requires a SnapcapClient owner with duplex WS support");
+    }
+    const peer = this.friend?.userId ?? this.participants.find((p) => p.userId !== this.owner.self!.userId)?.userId;
+    if (!peer) {
+      throw new Error("Conversation.markViewed needs to know the peer user — populate `participants` when constructing");
+    }
+    await this.owner._publishViewing(this.conversationId, peer);
   }
 
   /** Mark a single received message as viewed. */
