@@ -195,6 +195,49 @@ const moduleEnv: Record<string, unknown> = {
       `[fidelius] instantiateWasm called — imports.env has ${Object.keys(imports.env ?? {}).length} entries\n`,
     );
     wrapEmvalImports(imports);
+
+    const env = imports.env as Record<string, Function>;
+
+    // Hook __cxa_throw — when C++ throws, this is called with the
+    // exception payload. Lets us catch the real source of failure
+    // (the OOB might just be exception unwinding).
+    const cxaThrow = env.__cxa_throw;
+    if (typeof cxaThrow === "function") {
+      env.__cxa_throw = function (...args: unknown[]) {
+        process.stderr.write(`[__cxa_throw] args=[${args.join(",")}] — C++ exception thrown!\n`);
+        return cxaThrow.apply(this, args);
+      };
+    }
+
+    // Hook EVERY invoke_* import — when WASM does call_indirect via JS,
+    // it goes through one of these.
+    const invokeNames = Object.keys(env).filter((k) => k.startsWith("invoke_"));
+    process.stderr.write(`[fidelius] hooking ${invokeNames.length} invoke_* imports\n`);
+    let invokeCount = 0;
+    let recentInvokes: string[] = [];
+    let invokeFirstFail = false;
+    for (const name of invokeNames) {
+      const orig = env[name];
+      if (typeof orig !== "function") continue;
+      env[name] = function (...args: unknown[]) {
+        const idx = args[0];
+        invokeCount++;
+        const summary = `${name}(idx=${idx},${args.slice(1).join(",")})`;
+        recentInvokes.push(summary);
+        if (recentInvokes.length > 20) recentInvokes.shift();
+        try {
+          return orig.apply(this, args);
+        } catch (e) {
+          if (!invokeFirstFail) {
+            invokeFirstFail = true;
+            process.stderr.write(`\n[invoke FAIL] total invokes before fail: ${invokeCount}\n`);
+            process.stderr.write(`[invoke FAIL] last 20 invokes (oldest→newest):\n`);
+            for (const r of recentInvokes) process.stderr.write(`    ${r}\n`);
+          }
+          throw e;
+        }
+      };
+    }
     WebAssembly.instantiate(wasmBytes, imports).then(
       (res) => {
         process.stderr.write(`[fidelius] WASM compiled OK — calling successCallback\n`);
@@ -521,22 +564,46 @@ try {
   const grpcClients: unknown[] = [];
   (globalThis as unknown as { __grpcClients: unknown[] }).__grpcClients = grpcClients;
 
+  // Wrap the JS gRPC client in DjinniCppProxy so the WASM sees
+  // _djinni_native_ref and routes through trusted trampolines instead
+  // of treating the return as an unwrapped JS proxy (which would fail
+  // vtable dispatch with OOB on call_indirect).
+  const D = Module.DjinniCppProxy as new (impl: unknown, methodSpecs: unknown[]) => unknown;
+
   const grpcClientFactory = {
     createClient: (config: unknown) => {
       process.stderr.write(`  [grpc.createClient] config: ${JSON.stringify(config).slice(0, 200)}\n`);
-      const client = {
+      const impl = {
         unaryCall(methodPath: string, body: Uint8Array, options: unknown, callback: unknown) {
           process.stderr.write(`  [grpc.unaryCall] method=${methodPath} body=${body?.byteLength ?? "?"}B\n`);
         },
-        serverStreamingCall() {
-          throw new Error("unsupported");
-        },
-        bidiStreamingCall() {
-          throw new Error("unsupported");
-        },
+        serverStreamingCall() { throw new Error("unsupported"); },
+        bidiStreamingCall() { throw new Error("unsupported"); },
       };
-      grpcClients.push(client);
-      return client;
+      grpcClients.push(impl);
+      // Try plain object — bundle returns this shape and works in production
+      // BUT add a fake $$ to satisfy Embind's class-instance type converter.
+      // The converter checks t.$$ exists and t.$$.ptr is non-zero; if both true
+      // it tries to "upcast" to the registered class. Provide a non-null ptr
+      // and a registeredClass that matches grpc_UnifiedGrpcService.
+      try {
+        const G = Module.grpc_UnifiedGrpcService as { prototype?: { constructor?: { name: string } } };
+        // Some Embind classes expose the registeredClass via the prototype.
+        // Heuristic: try to mimic the shape of a real instance.
+        Object.defineProperty(impl, "$$", {
+          value: {
+            ptr: 1,  // non-zero so "Cannot pass deleted" check passes
+            ptrType: { registeredClass: G, isConst: false, isSmartPointer: false, baseClass: null, upcast: null },
+            count: { value: 1 },
+          },
+          enumerable: false,
+        });
+        process.stderr.write(`  [grpc] attached fake $$ to client\n`);
+      } catch (e) {
+        process.stderr.write(`  [grpc] couldn't attach $$: ${(e as Error).message.slice(0,150)}\n`);
+      }
+      grpcClients.push(impl);
+      return impl;
     },
   };
   (globalThis as unknown as { __grpcFactory: unknown }).__grpcFactory = grpcClientFactory;
