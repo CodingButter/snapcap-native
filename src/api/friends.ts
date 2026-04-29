@@ -7,55 +7,9 @@
  * something asks for it we lazy-load the chat bundle and merge its
  * factories into the same webpack require.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { getKameleon } from "../auth/kameleon.ts";
+import { ensureChatBundle } from "../auth/chat-bundle.ts";
 import { User } from "./user.ts";
-
-let chatBundleLoaded = false;
-
-function ensureChatBundle(): void {
-  if (chatBundleLoaded) return;
-  const w = globalThis as unknown as {
-    __snapcap_p?: { (id: string): unknown; m: Record<string, Function> };
-  };
-  if (!w.__snapcap_p) {
-    throw new Error("getKameleon() must be called before loading chat bundle");
-  }
-
-  const chatPath = join(
-    import.meta.dirname,
-    "..",
-    "..",
-    "vendor",
-    "snap-bundle",
-    "cf-st.sc-cdn.net",
-    "dw",
-    "9846a7958a5f0bee7197.js",
-  );
-  const src = readFileSync(chatPath, "utf8");
-  new Function("module", "exports", "require", src)(
-    { exports: {} }, {}, () => { throw new Error("require not available"); },
-  );
-
-  // Chat bundle pushes into `webpackChunk_snapchat_web_calling_app`, a
-  // different chunk array than the accounts runtime watches. Manually merge
-  // its factories into p.m so wreq() can find them.
-  const arr = (globalThis as unknown as Record<string, unknown[]>)["webpackChunk_snapchat_web_calling_app"];
-  if (Array.isArray(arr)) {
-    for (const chunk of arr) {
-      if (!Array.isArray(chunk) || chunk.length < 2) continue;
-      const mods = chunk[1] as Record<string, Function>;
-      if (mods && typeof mods === "object") {
-        for (const id in mods) {
-          const factory = mods[id];
-          if (factory) w.__snapcap_p!.m[id] = factory;
-        }
-      }
-    }
-  }
-  chatBundleLoaded = true;
-}
 
 /**
  * AtlasGw client constructor — pulled out of chat bundle module 74052.

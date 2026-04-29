@@ -25,6 +25,10 @@ export type InstallShimOpts = {
 };
 
 export function installShims(opts: InstallShimOpts = {}): void {
+  if (process.env.SNAPCAP_TRACE_SHIMS) {
+    const e = new Error();
+    process.stderr.write(`[shims] installShims(${opts.url ?? "default"}) installed=${installed}\n  ${e.stack?.split("\n").slice(2, 5).join("\n  ")}\n`);
+  }
   if (installed) return;
   installed = true;
 

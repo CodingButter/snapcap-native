@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { installShims } from "../shims/runtime.ts";
 import { installWebpackCapture } from "../shims/webpack-capture.ts";
+import { ensureChatBundle } from "./chat-bundle.ts";
 
 export type FideliusIdentity = {
   /** SEC1-uncompressed P-256 public key (65 bytes, 0x04 prefix). */
@@ -90,57 +91,19 @@ async function getOrBootKeyManager(opts: MintFideliusOpts): Promise<{ km: KeyMan
 async function bootOnce(opts: MintFideliusOpts): Promise<{ km: KeyManagerStatics }> {
   const bundleDir = opts.bundleDir ?? defaultBundleDir();
   const chatDw = join(bundleDir, "cf-st.sc-cdn.net", "dw");
-  const runtimePath = join(chatDw, "9989a7c6c88a16ebf19d.js");
-  const mainPath = join(chatDw, "9846a7958a5f0bee7197.js");
   const wasmPath = join(chatDw, "e4fa90570c4c2d9e59c1.wasm");
 
   installShims({ url: "https://www.snapchat.com/web" });
   installWebpackCapture();
 
-  // happy-dom doesn't auto-create #root; chat bundle's top-level mounts
-  // a React app and crashes without one.
-  const doc = (globalThis as unknown as { document?: { body?: { innerHTML: string } } }).document;
-  if (doc?.body) doc.body.innerHTML = '<div id="root"></div>';
-
-  // Load chat-bundle webpack runtime — patch `o`-closure to expose the
-  // module map as globalThis.__snapcap_p, same trick as kameleon.
-  let runtimeSrc = readFileSync(runtimePath, "utf8");
-  if (!runtimeSrc.includes("o.m=n,o.amdO={}")) {
-    throw new Error("chat-bundle runtime patch site not found");
-  }
-  runtimeSrc = runtimeSrc.replace("o.m=n,o.amdO={}", "globalThis.__snapcap_p=o,o.m=n,o.amdO={}");
-  try {
-    new Function("module", "exports", "require", runtimeSrc)({ exports: {} }, {}, () => {
-      throw new Error("require not available (chat runtime)");
-    });
-  } catch {
-    // chat runtime throws on top-level eval (calls into bootstrap that
-    // expects a browser env); module map is registered before throw.
-  }
-
-  // Pre-stage real Buffer/fs into globals so the patched main bundle's
-  // stub modules (91903, 36675) can hand them out.
-  const fsModule = await import("node:fs");
-  const g = globalThis as unknown as Record<string, unknown>;
-  g.__snapcap_node_buffer = { Buffer };
-  g.__snapcap_node_fs = fsModule;
-
-  let mainSrc = readFileSync(mainPath, "utf8");
-  mainSrc = mainSrc.replace("91903(){}", "91903(e,t){t.Buffer=globalThis.__snapcap_node_buffer.Buffer}");
-  mainSrc = mainSrc.replace("36675(){}", "36675(e,t){Object.assign(t,globalThis.__snapcap_node_fs)}");
-  try {
-    new Function("module", "exports", "require", mainSrc)({ exports: {} }, {}, () => {
-      throw new Error("require not available (chat main)");
-    });
-  } catch {
-    // expected — main does top-level work that needs a browser.
-  }
+  // Load chat bundle (idempotent, shared with friends.ts loader).
+  ensureChatBundle({ bundleDir });
 
   const w = globalThis as unknown as {
     __snapcap_p?: { (id: string): unknown; m: Record<string, Function> };
   };
   if (!w.__snapcap_p) {
-    throw new Error("chat-bundle webpack runtime did not expose __snapcap_p — patch may have failed");
+    throw new Error("chat-bundle webpack runtime did not expose __snapcap_p — kameleon must run first");
   }
   const wreq = w.__snapcap_p;
 
@@ -185,6 +148,11 @@ async function bootOnce(opts: MintFideliusOpts): Promise<{ km: KeyManagerStatics
       throw new Error("Fidelius WASM init timed out (>30s)");
     }
     await new Promise((r) => setTimeout(r, 50));
+  }
+
+  // Stash for debug/probe scripts. Not part of the public API.
+  if (process.env.SNAPCAP_EXPOSE_FIDELIUS_MODULE) {
+    (globalThis as unknown as { __snapcap_fidelius_module?: unknown }).__snapcap_fidelius_module = moduleEnv;
   }
 
   const km = (moduleEnv as { e2ee_E2EEKeyManager?: KeyManagerStatics }).e2ee_E2EEKeyManager;
