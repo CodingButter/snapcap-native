@@ -429,22 +429,51 @@ function loggingProxy<T extends object>(name: string, target: T): T {
   });
 }
 
+// Coerce whatever the WASM hands us (raw bytes, Uint8Array view, or
+// indexed-property object {0:b,1:b,...}) into a Uint8Array we can persist.
+function coerceToBytes(e: unknown): Uint8Array | null {
+  if (e instanceof Uint8Array) return e;
+  if (e instanceof ArrayBuffer) return new Uint8Array(e);
+  if (Array.isArray(e)) return new Uint8Array(e as number[]);
+  if (e && typeof e === "object") {
+    // Indexed object: {0: byte, 1: byte, ..., length: n}
+    const obj = e as Record<string | number, unknown>;
+    const len = (typeof obj.length === "number" ? obj.length : Object.keys(obj).filter(k => /^\d+$/.test(k)).length) as number;
+    if (len > 0 && typeof obj[0] === "number") {
+      const out = new Uint8Array(len);
+      for (let i = 0; i < len; i++) out[i] = (obj[i] as number) & 0xff;
+      return out;
+    }
+    // Wrapped: { value: bytes } / { data: bytes }
+    if (obj.value instanceof Uint8Array) return obj.value;
+    if (obj.data instanceof Uint8Array) return obj.data;
+  }
+  return null;
+}
+
 // Delegates back the WASM persist + session storage with our DataStore.
 // On first run, WASM completes registration and writes wrapped bytes here.
 // On subsequent runs, we load them back and the WASM should skip re-registration.
 const persistentStorage = loggingProxy("persist", {
   storeUserWrappedIdentityKeys(e: unknown) {
-    const bytes = e as Uint8Array;
-    log(`[persist.store] ${bytes?.byteLength ?? typeof e}B`);
-    if (bytes instanceof Uint8Array) {
-      dataStore.set("e2ee/wrapped_identity_keys", bytes).catch((err) => log(`  store err: ${(err as Error).message}`));
-    }
+    log(`[persist.store] saving ${typeof e} ctor=${(e as object)?.constructor?.name}`);
+    // Mirror sharedItem.set: JSON-stringify the opaque value, store as bytes.
+    const json = JSON.stringify(e, (_k, v) => {
+      if (v instanceof Uint8Array) return Array.from(v);
+      return v;
+    });
+    dataStore.set("e2ee/wrapped_identity_keys", new TextEncoder().encode(json))
+      .catch((err) => log(`  err: ${(err as Error).message}`));
+    log(`  → saved ${json.length}B JSON`);
   },
   async loadUserWrappedIdentityKeys() {
     const bytes = await dataStore.get("e2ee/wrapped_identity_keys");
     if (bytes && bytes.byteLength > 0) {
-      log(`[persist.load] → [bytes(${bytes.byteLength}B)]`);
-      return [bytes];
+      // Restore the JSON-serialized shape WASM stored
+      const json = new TextDecoder().decode(bytes);
+      const value = JSON.parse(json);
+      log(`[persist.load] → restored ${json.length}B JSON`);
+      return value;
     }
     log(`[persist.load] → [] (no value)`);
     return [];
@@ -453,21 +482,20 @@ const persistentStorage = loggingProxy("persist", {
 
 const sessionScopedStorage = loggingProxy("session", {
   storeRootWrappingKey(e: unknown) {
-    const bytes = e as Uint8Array;
-    log(`[session.storeRwk] ${bytes?.byteLength ?? typeof e}B`);
-    if (bytes instanceof Uint8Array) {
-      dataStore.set("e2ee/root_wrapping_key", bytes).catch((err) => log(`  err: ${(err as Error).message}`));
-    }
+    log(`[session.storeRwk] saving ${typeof e}`);
+    const json = JSON.stringify(e, (_k, v) => v instanceof Uint8Array ? Array.from(v) : v);
+    dataStore.set("e2ee/root_wrapping_key", new TextEncoder().encode(json))
+      .catch((err) => log(`  err: ${(err as Error).message}`));
+    log(`  → saved ${json.length}B JSON`);
   },
   async readRootWrappingKey() {
     const bytes = await dataStore.get("e2ee/root_wrapping_key");
     if (bytes && bytes.byteLength > 0) {
-      const obj: Record<number, number> = {};
-      for (let i = 0; i < bytes.byteLength; i++) obj[i] = bytes[i]!;
-      log(`[session.readRwk] → object(${bytes.byteLength}B)`);
-      return obj;
+      const json = new TextDecoder().decode(bytes);
+      log(`[session.readRwk] → restored ${json.length}B JSON`);
+      return JSON.parse(json);
     }
-    log(`[session.readRwk] → [] (empty)`);
+    log(`[session.readRwk] → [] (no value)`);
     return [];
   },
   async destroy() {
