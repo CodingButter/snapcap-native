@@ -34,9 +34,9 @@ import { mintBearer } from "./auth/sso.ts";
 import { listFriends, syncFriendDataRaw } from "./api/friends.ts";
 import { addFriends } from "./api/friending.ts";
 import { searchUsers } from "./api/search.ts";
-import { buildPresenceBody, PresenceCounter } from "./api/presence.ts";
-// PresenceCounter is referenced in publishPresence's docs and
-// _publishViewing — explicit import keeps tree-shaking clean.
+import { buildPresenceBody, PresenceState } from "./api/presence.ts";
+// PresenceState is referenced in publishPresence's docs and
+// _publishViewing/_publishTyping — explicit import keeps tree-shaking clean.
 import { connectDuplex, type Duplex } from "./transport/duplex.ts";
 import { highLowToUuid } from "./transport/proto-encode.ts";
 import {
@@ -287,15 +287,18 @@ export class SnapcapClient {
   }
 
   /**
-   * Publish a presence frame on the conversation. Counter is monotonic
-   * per-WS-connection — first call returns 1 (= VIEWING), subsequent
-   * calls increment. The server reads counter==1 as "subscribe/viewing"
-   * and counter > 1 as activity (typing).
+   * Publish a presence frame on the conversation. The `state` field is a
+   * bit-packed flag word (see `PresenceState`), NOT a monotonic counter:
+   *   1  = IN_CHAT (viewing)
+   *   17 = IN_CHAT | TYPING
+   *   49 = IN_CHAT | TYPING_FINISHED
+   * The same value is sent on every refresh pulse — server's typing-bubble
+   * timeout is ~3s, so callers re-fire at <=2.5s to keep it alive.
    */
   private async publishPresence(
     conversationId: string,
     peerUserId: string,
-    counter: number,
+    state: number,
   ): Promise<void> {
     if (!this.self) {
       throw new Error("publishPresence requires client.self — call resolveSelf() or isAuthorized() first");
@@ -305,34 +308,38 @@ export class SnapcapClient {
       senderUserId: this.self.userId,
       conversationId,
       sessionId: dx.sessionId,
-      counter,
+      counter: state,
     });
     dx.sendTransient("presence", body, peerUserId);
   }
 
   /**
    * Internal: called by Conversation.setTyping(durationMs).
-   * Publishes an ACTIVITY pulse (counter > 1) to the duplex WS — server
-   * fans out as "typing…" to the recipient.
+   * Publishes a TYPING pulse (state=17 = IN_CHAT|TYPING) to the duplex WS
+   * — server fans out as "typing…" to the recipient. Same value re-fires
+   * every pulse; server timeout is ~3s so callers refresh at <=2.5s.
    */
   async _publishTyping(conversationId: string, peerUserId: string): Promise<void> {
-    const dx = await this.getDuplex();
-    // First-ever publish on this WS uses counter=1 which means "viewing",
-    // not "typing". Bump past 1 if we're at the start of the connection.
-    let c = dx.nextCounter();
-    if (c === 1) c = dx.nextCounter();
-    await this.publishPresence(conversationId, peerUserId, c);
+    await this.publishPresence(conversationId, peerUserId, PresenceState.TYPING);
+  }
+
+  /**
+   * Internal: called by Conversation.setTyping after the duration loop
+   * exits. Publishes a TYPING_FINISHED pulse (state=49 = IN_CHAT|FINISHED)
+   * so the recipient's typing bubble clears immediately rather than
+   * waiting for the server's ~3s natural timeout.
+   */
+  async _publishTypingFinished(conversationId: string, peerUserId: string): Promise<void> {
+    await this.publishPresence(conversationId, peerUserId, PresenceState.TYPING_FINISHED);
   }
 
   /**
    * Internal: called by Conversation.markViewed().
-   * Publishes a VIEWING pulse (counter=1) — recipient sees the
+   * Publishes a VIEWING pulse (state=1 = IN_CHAT) — recipient sees the
    * "in chat" indicator (bitmoji avatar pose changes).
    */
   async _publishViewing(conversationId: string, peerUserId: string): Promise<void> {
-    // VIEWING is always counter=1 regardless of monotonic state — that's
-    // the protocol convention: 1 = "I'm subscribed to this conversation".
-    await this.publishPresence(conversationId, peerUserId, PresenceCounter.VIEWING);
+    await this.publishPresence(conversationId, peerUserId, PresenceState.VIEWING);
   }
 
   /** Mint a fresh bearer from the current cookie jar. Used by 401 retry. */

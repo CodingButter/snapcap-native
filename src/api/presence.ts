@@ -9,15 +9,27 @@
 import { ProtoWriter } from "../transport/proto-encode.ts";
 
 /**
- * Counter values observed in captured browser frames. The same `presence`
- * channel carries multiple states; the counter inside field 4.2.1 is what
- * differentiates them.
+ * Presence state values — bit-packed flags, NOT a monotonic counter.
+ *
+ * Bit layout (from vendor/snap-bundle/cf-st.sc-cdn.net/dw/9846a7958a5f0bee7197.js
+ * around offset 8152748):
+ *   bit 0    = in-chat
+ *   bits 4-5 = typing state (0=none, 1=typing, 2=paused, 3=finished)
+ *   bit 6    = typing-activity-type
+ *
+ * Real values observed in captured Snap traffic:
+ *   1  = IN_CHAT (subscribed / viewing the conversation)
+ *   17 = IN_CHAT | TYPING
+ *   33 = IN_CHAT | PAUSED   (not currently sent by the SDK)
+ *   49 = IN_CHAT | FINISHED (clears the typing bubble before timeout)
  */
-export const PresenceCounter = {
-  /** "I'm in this chat" — recipient sees a viewing indicator (bitmoji pose changes). */
+export const PresenceState = {
+  /** Subscribed / viewing the conversation. */
   VIEWING: 1,
-  /** "I'm typing right now" — recipient sees "<name> is typing…". */
-  TYPING: 33,
+  /** Actively typing (refresh every <=2.5s while composing). */
+  TYPING: 17,
+  /** Done typing — clears the bubble before the natural timeout. */
+  TYPING_FINISHED: 49,
 } as const;
 
 /**
@@ -48,7 +60,7 @@ export function buildPresenceBody(opts: {
   senderUserId: string;
   conversationId: string;
   sessionId: bigint;
-  /** State counter — observed values: 1 (initial subscribe), 33 (subsequent activity). */
+  /** Bit-packed presence state — see `PresenceState`. */
   counter: number;
   timestampMs?: number;
 }): Uint8Array {

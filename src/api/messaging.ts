@@ -375,6 +375,8 @@ export type ConversationOwner = {
   self?: User;
   /** Publish a TYPING presence pulse over the duplex WS. */
   _publishTyping?: (conversationId: string, peerUserId: string) => Promise<void>;
+  /** Publish a TYPING_FINISHED pulse — clears the recipient's typing bubble immediately. */
+  _publishTypingFinished?: (conversationId: string, peerUserId: string) => Promise<void>;
   /** Publish a VIEWING presence pulse over the duplex WS. */
   _publishViewing?: (conversationId: string, peerUserId: string) => Promise<void>;
 };
@@ -453,6 +455,12 @@ export class Conversation {
       const remaining = durationMs - (Date.now() - start);
       if (remaining <= 0) break;
       await new Promise((r) => setTimeout(r, Math.min(2500, remaining)));
+    }
+    // Trailing TYPING_FINISHED pulse — clears the recipient's bubble
+    // immediately rather than waiting for the server's ~3s timeout. Optional
+    // on the owner type so older mocks/tests don't need to implement it.
+    if (this.owner._publishTypingFinished) {
+      await this.owner._publishTypingFinished(this.conversationId, peer);
     }
   }
 
