@@ -287,18 +287,6 @@ for (const m of [
   process.stderr.write(`  ${m}: argCount=${fn?.argCount}, length=${fn?.length}\n`);
 }
 
-// Try generateKeyInitializationRequest — wants an int (probably enum).
-process.stderr.write("\n--- generateKeyInitializationRequest(int) ---\n");
-const genFn = km.generateKeyInitializationRequest as (...a: unknown[]) => unknown;
-for (const arg of [0, 1, 2, 3, 4, 5]) {
-  try {
-    const r = genFn(arg);
-    const view = r instanceof Uint8Array ? `Uint8Array(${r.byteLength}) ${Buffer.from(r).toString("hex").slice(0, 80)}` : JSON.stringify(r);
-    process.stderr.write(`  ${arg} → ${typeof r}: ${view}\n`);
-  } catch (e) {
-    process.stderr.write(`  ${arg} threw: ${(e as Error).message.slice(0, 150)}\n`);
-  }
-}
 
 // createSharedSecretKeys(2 args) — likely (privateKey, publicKey) returning shared secret
 process.stderr.write("\n--- createSharedSecretKeys(2 args) ---\n");
@@ -328,6 +316,29 @@ for (const k of nonClass) {
 const classes = allKeys.filter((k) => !nonClass.includes(k));
 process.stderr.write(`\nEmbind classes (${classes.length}): ${classes.join(", ")}\n`);
 
+// Sweep classes for encrypt/decrypt-ish methods
+process.stderr.write("\n=== sweep: encrypt/decrypt-ish methods ===\n");
+const ENCRYPT_RE = /encrypt|decrypt|seal|open|wrap|unwrap|cipher|extract|consume/i;
+for (const name of classes) {
+  const klass = (Module as Record<string, unknown>)[name] as
+    | { prototype?: Record<string, unknown> }
+    | undefined;
+  if (typeof klass !== "function") continue;
+  const methods: string[] = [];
+  for (const k of Object.getOwnPropertyNames(klass)) {
+    if (ENCRYPT_RE.test(k) && !["constructor", "name", "length", "prototype", "argCount"].includes(k))
+      methods.push(`static ${k}`);
+  }
+  if (klass.prototype) {
+    for (const k of Object.getOwnPropertyNames(klass.prototype)) {
+      if (ENCRYPT_RE.test(k) && k !== "constructor") methods.push(k);
+    }
+  }
+  if (methods.length) {
+    process.stderr.write(`  ${name}: ${methods.join(", ")}\n`);
+  }
+}
+
 // Probe StatelessSession argCount + show methods' arity
 const SS = Module.messaging_StatelessSession as Record<string, unknown> & { argCount?: number };
 process.stderr.write(`\n=== StatelessSession constructor argCount: ${SS.argCount}\n`);
@@ -346,6 +357,98 @@ try {
   process.stderr.write(`  succeeded! inst keys: ${Object.keys(inst as object).join(", ")}\n`);
 } catch (e) {
   process.stderr.write(`  threw: ${(e as Error).message}\n`);
+}
+
+// Look for enum-like Module values (Embind registers enums as classes
+// with integer-named static keys)
+process.stderr.write("\n=== sweep for Embind enums ===\n");
+for (const name of allKeys) {
+  const klass = (Module as Record<string, unknown>)[name];
+  if (typeof klass !== "function") continue;
+  const ownProps = Object.getOwnPropertyNames(klass);
+  const symbolicProps = ownProps.filter((k) => /^[A-Z][A-Z_0-9]+$/.test(k));
+  if (symbolicProps.length > 0) {
+    process.stderr.write(`  ${name}: ${symbolicProps.slice(0, 8).join(", ")}${symbolicProps.length > 8 ? "..." : ""}\n`);
+  }
+}
+
+// ── Try to construct E2EEKeyManager ────────────────────────────────────
+// Bundle pattern (f16f chunk) confirmed:
+//   constructPostLogin(grpcCfg, persistentStorageDelegate, sessionScopedStorageDelegate,
+//                       userId, upgradeMode, version)
+// The two delegates are plain JS objects with the methods Embind expects.
+process.stderr.write("\n--- attempting constructPostLogin ---\n");
+
+// In-memory shared store — one identity blob, one root wrapping key.
+let storedIdentity: unknown = undefined;
+let storedRwk: unknown = undefined;
+let storedTempKey: unknown = undefined;
+
+const persistentStorage = {
+  storeUserWrappedIdentityKeys: function (e: unknown) {
+    process.stderr.write(`  persistent.store called (${typeof e})\n`);
+    storedIdentity = e;
+  },
+  loadUserWrappedIdentityKeys: function () {
+    process.stderr.write(`  persistent.load called → ${storedIdentity ? "have key" : "null"}\n`);
+    return Promise.resolve(storedIdentity);
+  },
+};
+
+const sessionScopedStorage = {
+  storeRootWrappingKey: function (e: unknown) {
+    process.stderr.write(`  session.storeRwk called\n`);
+    storedRwk = e;
+  },
+  readRootWrappingKey: function () {
+    process.stderr.write(`  session.readRwk called → ${storedRwk ? "have" : "null"}\n`);
+    return Promise.resolve(storedRwk);
+  },
+  destroy: function () {
+    storedRwk = undefined;
+    return Promise.resolve();
+  },
+  loadTemporaryIdentityKey: function () {
+    return Promise.resolve(storedTempKey);
+  },
+  clearTemporaryIdentityKey: function () {
+    storedTempKey = undefined;
+    return Promise.resolve();
+  },
+};
+
+// UPGRADE_TO_TEN=1, TEN=1 from JS enum scan
+try {
+  const grpcCfg = { apiGatewayEndpoint: "https://us-east1-aws.api.snapchat.com", grpcPathPrefix: "" };
+  const result = (km.constructPostLogin as (...a: unknown[]) => unknown).call(
+    km,
+    grpcCfg,
+    persistentStorage,
+    sessionScopedStorage,
+    "527be2ff-aaec-4622-9c68-79d200b8bdc1",
+    1, // UPGRADE_TO_TEN
+    1, // TEN
+  );
+  process.stderr.write(`  → SUCCESS! type=${typeof result}\n`);
+  if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    process.stderr.write(`  keys: ${Object.keys(r).join(", ")}\n`);
+    // Try to call a method on it
+    const km2 = result as { getCurrentUserKeyAsync?: () => Promise<unknown> };
+    if (typeof km2.getCurrentUserKeyAsync === "function") {
+      process.stderr.write(`  calling getCurrentUserKeyAsync...\n`);
+      try {
+        const k = await km2.getCurrentUserKeyAsync();
+        process.stderr.write(`  → ${typeof k} ${k ? Object.keys(k as object).join(",") : "null"}\n`);
+      } catch (e) {
+        process.stderr.write(`  threw: ${(e as Error).message.slice(0, 200)}\n`);
+      }
+    }
+  }
+} catch (e) {
+  const err = e as Error;
+  process.stderr.write(`  threw: ${err.message.slice(0, 300)}\n`);
+  if (err.stack) process.stderr.write(`  stack: ${err.stack.split("\n").slice(0, 5).join(" | ").slice(0, 500)}\n`);
 }
 
 process.stderr.write("\n[fidelius] DONE\n");
