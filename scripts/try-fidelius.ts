@@ -20,6 +20,9 @@
  *                                    setTweaks, setUserPrefs}
  *   r.snapchat_messaging_FideliusEncryption (Embind class — exact name TBC)
  */
+// IMPORTANT: snapshot native fetch BEFORE installShims replaces it
+// with happy-dom's CORS-enforcing version.
+import { nativeFetch } from "../src/transport/native-fetch.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { installShims } from "../src/shims/runtime.ts";
@@ -701,6 +704,55 @@ try {
   if (err.stack) process.stderr.write(`  stack: ${err.stack.split("\n").slice(0, 5).join(" | ").slice(0, 500)}\n`);
 }
 emvalTrace = false;
+
+// ── Pragmatic angle: register the key with Snap's server ──────────────
+// The minted `request` bytes are exactly the InitializeWebKey gRPC body.
+// If posting succeeds → our key is registered as a Fidelius identity. We
+// can then call GetFriendKeys for recipients and have everything we need
+// to encrypt manually (or, eventually, drive the WASM with a real auth
+// context).
+process.stderr.write("\n=== posting InitializeWebKey to live server ===\n");
+const requestBytes = (minted as { request?: Uint8Array }).request;
+process.stderr.write(`  request size: ${requestBytes?.byteLength ?? "?"} bytes\n`);
+if (requestBytes) {
+  // Need bearer + cookie jar from a valid SnapcapClient session.
+  try {
+    const { readFileSync: r2 } = await import("node:fs");
+    const blob = JSON.parse(r2("/tmp/snapcap-smoke-auth.json", "utf8"));
+    const { SnapcapClient } = await import("../src/index.ts");
+    const client = await SnapcapClient.fromAuth({ auth: blob });
+    process.stderr.write(`  using auth for ${client.self?.username}\n`);
+
+    // Build a 5-byte gRPC-Web framed body: flag(0) + length(BE u32) + bytes
+    const framed = new Uint8Array(5 + requestBytes.byteLength);
+    framed[0] = 0;
+    new DataView(framed.buffer).setUint32(1, requestBytes.byteLength, false);
+    framed.set(requestBytes, 5);
+
+    // Use the SDK's existing makeRpc → callRpc infrastructure (web.snapchat.com).
+    const rpc = (client as unknown as { makeRpc: () => unknown }).makeRpc();
+    const desc = {
+      methodName: "InitializeWebKey",
+      service: { serviceName: "snapchat.fidelius.FideliusIdentityService" },
+      requestType: { serializeBinary: () => requestBytes },
+      responseType: { decode: (b: Uint8Array) => ({ raw: b }) },
+    };
+    process.stderr.write(`  calling InitializeWebKey via SDK rpc (web.snapchat.com)…\n`);
+    try {
+      const r = await (rpc as { unary: Function }).unary(desc, {});
+      process.stderr.write(`  → response: ${typeof r}\n`);
+      if (r && typeof r === "object") {
+        const rr = r as { raw?: Uint8Array };
+        process.stderr.write(`  raw bytes: ${rr.raw?.byteLength ?? "?"} hex: ${rr.raw ? Buffer.from(rr.raw).toString("hex").slice(0, 100) : ""}\n`);
+      }
+    } catch (e) {
+      process.stderr.write(`  rpc threw: ${(e as Error).message.slice(0, 300)}\n`);
+    }
+    const resp = { status: 0, statusText: "delegated to callRpc", arrayBuffer: async () => new ArrayBuffer(0) };
+  } catch (e) {
+    process.stderr.write(`  posting threw: ${(e as Error).message}\n`);
+  }
+}
 
 process.stderr.write("\n[fidelius] DONE\n");
 process.exit(0);
