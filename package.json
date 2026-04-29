@@ -1,0 +1,66 @@
+{
+  "name": "@snapcap/native",
+  "version": "0.0.1",
+  "description": "Browser-free Snap client. Runs Snap's web JavaScript and WASM directly in Node via shimmed Chrome APIs. Multi-account-friendly, no Playwright/Chromium overhead.",
+  "license": "MIT",
+  "homepage": "https://codingbutter.github.io/snapcap-native",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/codingbutter/snapcap-native.git"
+  },
+  "bugs": {
+    "url": "https://github.com/codingbutter/snapcap-native/issues"
+  },
+  "keywords": [
+    "snapchat",
+    "snap",
+    "client",
+    "sdk",
+    "web-grpc",
+    "automation"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "scripts/download-bundle.sh",
+    "scripts/extract-chunk-urls.py",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "download:bundle": "bash scripts/download-bundle.sh",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@happy-dom/global-registrator": "^15.0.0",
+    "happy-dom": "^15.0.0",
+    "tough-cookie": "^5.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/ws": "^8.5.0",
+    "playwright": "^1.59.1",
+    "typescript": "^5.7.0",
+    "vitepress": "^1.5.0"
+  },
+  "engines": {
+    "bun": ">=1.3.0",
+    "node": ">=22"
+  }
+}

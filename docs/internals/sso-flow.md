@@ -1,0 +1,154 @@
+# The SSO bearer flow
+
+WebLoginService gives you a long-lived cookie. It does not give you a Bearer token. To call any gRPC service on `web.snapchat.com`, you need a short-lived Bearer — and the path to mint one is non-obvious.
+
+This chapter walks through the full flow.
+
+## The cast
+
+Three hosts, each with a different role:
+
+- **`accounts.snapchat.com`** — login. Issues `__Host-sc-a-auth-session` (the long-lived refresh cookie).
+- **`session.snapchat.com`** — attestation bootstrapping. Hosts `WebAttestationService.BootstrapAttestationSession`, used by kameleon for some attestation flavors. snapcap doesn't call it explicitly because kameleon's self-contained finalize works without it.
+- **`web.snapchat.com`** — the API. Hosts `AtlasGw`, `MessagingCoreService`, `MediaDeliveryService`, etc. Every call needs `Authorization: Bearer …` plus a handful of parent-domain cookies.
+
+The Bearer is issued not by any of those gRPC endpoints but by an HTTP redirect.
+
+## What `/web-chat-session/refresh` is not
+
+The name suggests it's the bearer issuer. It isn't. Look at what the recon HAR shows:
+
+```
+POST https://web.snapchat.com/web-chat-session/refresh?client_id=web-calling-corp--prod
+  authorization: Bearer hCgwKCj…       ← already has a bearer
+  cookie: …
+  → 200 OK, content-length: 0          ← empty body
+```
+
+The request already carries a Bearer. The response is empty. Whatever this endpoint does, it doesn't *issue* a Bearer — it presumably refreshes the server-side session associated with one. snapcap ignores it.
+
+## What actually issues the bearer
+
+The bearer is delivered as a URL fragment in a 303 redirect. Specifically:
+
+```
+GET https://accounts.snapchat.com/accounts/sso?client_id=web-calling-corp--prod&referrer=…
+  cookie: __Host-sc-a-auth-session=…
+  → 303 See Other
+  Location: https://www.snapchat.com/web#ticket=hCgwKCj…
+```
+
+The `ticket` URL fragment **is** the Bearer. It's URL-decoded in place and used as `Authorization: Bearer <decoded>` from then on.
+
+This pattern has a name in OAuth literature: the "implicit grant via URL fragment." The point of putting it after `#` instead of `?` is that browsers don't send fragments in HTTP requests, so the token never leaks to the redirect target's server logs. The receiving page reads it from `window.location.hash` client-side.
+
+snapcap doesn't have a `window.location.hash` because there's no page rendering. We just parse the redirect's `Location` header:
+
+```ts
+const m = location.match(/[#&]ticket=([^&#]+)/);
+if (m) bearer = decodeURIComponent(m[1]);
+```
+
+That's it. That's the whole bearer mint.
+
+## Why visiting www.snapchat.com matters
+
+There's a subtlety. Calling AtlasGw with just the Bearer returns 401:
+
+```
+POST https://web.snapchat.com/com.snapchat.atlas.gw.AtlasGw/SyncFriendData
+  authorization: Bearer hCgwKCj…
+  → 401 unauthorized
+```
+
+The Bearer is correct, the URL is correct, the framing is correct. But there's no cookie header. AtlasGw expects parent-domain cookies — `sc-a-nonce`, `_scid`, `sc_at` — to ride along with the Bearer.
+
+Where do those come from?
+
+The 303 redirect sends the browser to `https://www.snapchat.com/web#ticket=…`. When the browser follows that redirect, `www.snapchat.com` returns the React app HTML and **sets the parent-domain cookies** in its response:
+
+```
+GET https://www.snapchat.com/web
+  → 200 OK
+  Set-Cookie: sc-a-nonce=…; Domain=snapchat.com; …
+  Set-Cookie: _scid=…; Domain=snapchat.com; …
+  Set-Cookie: sc_at=…;   Domain=snapchat.com; …
+```
+
+The `Domain=snapchat.com` (without the leading dot, which is implicit per RFC 6265) means these cookies are sent to **all** `*.snapchat.com` subdomains. So a subsequent request to `web.snapchat.com` automatically includes them.
+
+Without those cookies, `web.snapchat.com` 401s every gRPC call regardless of how good the Bearer is. snapcap follows the redirect explicitly so the cookies land in the jar:
+
+```ts
+await jarFetch(location, {
+  method: "GET",
+  headers: { accept: "text/html,…", referer: `${ACCOUNTS_HOST}/` },
+});
+```
+
+We don't care what `www.snapchat.com/web` returns. We just want its `Set-Cookie` headers.
+
+## Putting it together
+
+The full `mintBearer` from `auth/sso.ts`:
+
+```ts
+export async function mintBearer(opts: MintBearerOpts): Promise<BearerResult> {
+  const jarFetch = makeJarFetch(opts.jar, opts.userAgent);
+  const ssoUrl = `${ACCOUNTS_HOST}${opts.continueParam ?? DEFAULT_CONTINUE}`;
+
+  // 1. Hit /accounts/sso. Cookie jar carries __Host-sc-a-auth-session.
+  let resp = await jarFetch(ssoUrl, {
+    method: "GET",
+    headers: { referer: `${ACCOUNTS_HOST}/v2/password` },
+    redirect: "manual",
+  });
+
+  // 2. Pull the ticket out of the Location header.
+  let location = resp.headers.get("location");
+  let bearer = location ? extractTicket(location) : null;
+
+  if (!bearer) throw new Error("no ticket in SSO redirect");
+
+  // 3. Visit www.snapchat.com so parent-domain cookies seed the jar.
+  await jarFetch(location, {
+    method: "GET",
+    headers: { accept: "text/html,…", referer: `${ACCOUNTS_HOST}/` },
+  });
+
+  return { bearer, landingUrl: location };
+}
+```
+
+After this returns, the cookie jar has everything `web.snapchat.com` will demand:
+
+- `__Host-sc-a-auth-session` (host-only, sent only to `accounts.snapchat.com` — for renewal)
+- `sc-a-nonce`, `_scid`, `sc_at`, `sc-cookies-accepted`, `Performance`, `Marketing`, `Preferences`, `EssentialSession`, `blizzard_*`, `_ga*`, `sc-language`, `sc-dweb-allocation`, `sc-wcid`, `_sc-sid`, `_sctr`, `_scid_r` (all parent-domain `Domain=snapchat.com` — sent to `web.snapchat.com` automatically)
+
+And the bearer is in our hand as a string.
+
+## Refreshing on 401
+
+Bearers are short-lived. We don't know the exact TTL — Snap doesn't document it — but we don't need to. The `transport/grpc-web.ts` helper retries any 401 once via `refreshBearer`:
+
+```ts
+let resp = await send(opts.bearer);
+if (resp.status === 401 && opts.refreshBearer) {
+  const fresh = await opts.refreshBearer();
+  if (fresh) resp = await send(fresh);
+}
+```
+
+`SnapcapClient.refreshBearer` re-runs `mintBearer` against the same cookie jar. The long-lived `__Host-sc-a-auth-session` is still valid, so the SSO redirect still issues a fresh ticket. The jar accumulates fresh parent-domain cookies in the process. The new Bearer slots into `this.bearer` and the call succeeds.
+
+Net effect: callers never see bearer expiration. They write `await client.listFriends()` and the auth dance is invisible.
+
+## When this breaks
+
+Two failure modes worth watching:
+
+1. **Cookie expiration.** `__Host-sc-a-auth-session` has `Max-Age=31536000` (one year). The actual server-side validity may be shorter — sliding window, idle-timeout, who knows. When the cookie is dead, the SSO redirect won't issue a ticket. The retry in `mintBearer` returns `null`, the original 401 surfaces, and the caller has to re-login from username + password. Catch the error, call `SnapcapClient.fromCredentials` again.
+
+2. **Continue-param mismatch.** SSO requires `client_id=web-calling-corp--prod` (or whatever `client_id` the original WebLogin used). If the values diverge between login time and bearer-mint time, SSO returns a different redirect that doesn't carry a ticket. snapcap pins the same default in both flows, so this only bites if you override one without the other.
+
+That's the whole bearer flow. It's a textbook OAuth implicit grant with the parent-domain cookie set as a side-effect of the redirect target. Once you see the pattern, the 401 mystery from "I have a Bearer, why doesn't AtlasGw work" becomes obvious.
