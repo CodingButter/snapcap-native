@@ -228,6 +228,21 @@ const moduleEnv: Record<string, unknown> = {
         try {
           return orig.apply(this, args);
         } catch (e) {
+          // SILENCE_BAD_INVOKES=1 → keep going past OOB to see what
+          // the WASM tries next. Returns 0 (i32) for indirect-call
+          // failures so C++ doesn't immediately panic.
+          if (process.env.SILENCE_BAD_INVOKES) {
+            if (!invokeFirstFail) {
+              invokeFirstFail = true;
+              process.stderr.write(`[invoke FAIL #1 SILENCED] ${summary}\n`);
+              process.stderr.write(`  total before: ${invokeCount}, last 20:\n`);
+              for (const r of recentInvokes) process.stderr.write(`    ${r}\n`);
+            } else {
+              process.stderr.write(`[invoke FAIL silenced] ${summary}\n`);
+            }
+            // Return 0 — common safe default for i32-returning calls
+            return 0;
+          }
           if (!invokeFirstFail) {
             invokeFirstFail = true;
             process.stderr.write(`\n[invoke FAIL] total invokes before fail: ${invokeCount}\n`);
