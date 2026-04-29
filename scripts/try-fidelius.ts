@@ -77,6 +77,9 @@ if (!w.__snapcap_p) {
 const wreq = w.__snapcap_p;
 console.log(`[fidelius] runtime ready, modules registered so far: ${Object.keys(wreq.m).length}`);
 
+// Load the messaging-init chunk along with main so its modules
+// (createMessagingSession, etc.) register and we can invoke them.
+const F16F_PATH = join(CHAT_DW, "f16f14e3b729db223348.chunk.js");
 console.log("[fidelius] loading chat-bundle main (9846a…)…");
 let mainSrc = readFileSync(MAIN_PATH, "utf8");
 
@@ -372,6 +375,66 @@ for (const name of allKeys) {
   }
 }
 
+// ── Replicate bundle's WASM init sequence ──────────────────────────────
+// Bundle calls these on `s` (the Module) right after instantiate:
+//   s.shims_Platform.init({assertionMode, minLogLevel}, {logTimedEvent, log})
+//   s.shims_Platform.registerSerialTaskQueue(...)
+//   s.shims_Platform.installErrorReporter({reportError})
+//   s.shims_Platform.installNonFatalReporter({reportError})
+//   s.config_ConfigurationRegistry.setCircumstanceEngine(...)
+//   s.config_ConfigurationRegistry.setCompositeConfig(...)
+//   s.config_ConfigurationRegistry.setExperiments(...)
+//   s.config_ConfigurationRegistry.setServerConfig(...)
+//   s.config_ConfigurationRegistry.setTweaks(...)
+//   s.config_ConfigurationRegistry.setUserPrefs(...)
+process.stderr.write("\n=== running bundle's init sequence ===\n");
+const Platform = Module.shims_Platform as Record<string, (...a: unknown[]) => unknown>;
+const ConfigReg = Module.config_ConfigurationRegistry as Record<string, (...a: unknown[]) => unknown>;
+
+try {
+  // assertionMode=2 (ALWAYS), minLogLevel=2 (INFO) — guesses based on enum order
+  Platform.init(
+    { assertionMode: 2, minLogLevel: 2 },
+    {
+      logTimedEvent: () => {},
+      log: (level: number, tag: unknown, msg: unknown) => {
+        process.stderr.write(`  [wasm log lvl=${level} tag=${String(tag).slice(0,40)}] ${String(msg).slice(0,120)}\n`);
+      },
+    },
+  );
+  process.stderr.write(`  Platform.init OK\n`);
+} catch (e) {
+  process.stderr.write(`  Platform.init threw: ${(e as Error).message.slice(0, 200)}\n`);
+}
+
+try {
+  Platform.installErrorReporter({ reportError: (e: unknown) => {
+    process.stderr.write(`  [errorReporter] ${JSON.stringify(e).slice(0, 200)}\n`);
+  } });
+  process.stderr.write(`  installErrorReporter OK\n`);
+} catch (e) {
+  process.stderr.write(`  installErrorReporter threw: ${(e as Error).message.slice(0, 200)}\n`);
+}
+
+try {
+  Platform.installNonFatalReporter({ reportError: (e: unknown) => {
+    process.stderr.write(`  [nonFatal] ${JSON.stringify(e).slice(0, 200)}\n`);
+  } });
+  process.stderr.write(`  installNonFatalReporter OK\n`);
+} catch (e) {
+  process.stderr.write(`  installNonFatalReporter threw: ${(e as Error).message.slice(0, 200)}\n`);
+}
+
+// Empty configs
+for (const setter of ["setCircumstanceEngine", "setCompositeConfig", "setExperiments", "setServerConfig", "setTweaks", "setUserPrefs"]) {
+  try {
+    ConfigReg[setter](new Uint8Array(0));
+    process.stderr.write(`  ${setter}(empty) OK\n`);
+  } catch (e) {
+    process.stderr.write(`  ${setter} threw: ${(e as Error).message.slice(0, 100)}\n`);
+  }
+}
+
 // ── Try to construct E2EEKeyManager ────────────────────────────────────
 // Bundle pattern (f16f chunk) confirmed:
 //   constructPostLogin(grpcCfg, persistentStorageDelegate, sessionScopedStorageDelegate,
@@ -379,43 +442,76 @@ for (const name of allKeys) {
 // The two delegates are plain JS objects with the methods Embind expects.
 process.stderr.write("\n--- attempting constructPostLogin ---\n");
 
-// In-memory shared store — one identity blob, one root wrapping key.
-let storedIdentity: unknown = undefined;
+// Probe Djinni / Cpp proxy classes — Snap uses Djinni-style bindings,
+// JS-implemented interfaces likely need wrapping via DjinniCppProxy.
+process.stderr.write("\n=== Djinni proxy classes ===\n");
+for (const n of ["DjinniCppProxy", "DjinniJsPromiseBuilder", "callJsProxyMethod", "callNativeProviderCallback", "makeNativeProviderCallback", "initCppResolveHandler"]) {
+  const v = (Module as Record<string, unknown>)[n];
+  process.stderr.write(`  ${n}: ${typeof v}${typeof v === "function" ? ` argCount=${(v as { argCount?: number }).argCount}` : ""}\n`);
+  if (typeof v === "function" && (v as { prototype?: object }).prototype) {
+    const p = (v as { prototype: object }).prototype;
+    const methods = Object.getOwnPropertyNames(p).filter((k) => k !== "constructor");
+    if (methods.length) process.stderr.write(`    proto: ${methods.join(", ")}\n`);
+  }
+}
+
+// First, mint a fresh identity using the WASM's own key generator —
+// this tells us what shape the storage delegate is expected to round-trip.
+const minted = (km.generateKeyInitializationRequest as (a: number) => unknown)(0) as {
+  keyInfo?: unknown;
+  rwk?: unknown;
+};
+process.stderr.write(`\n=== minted identity ===\n`);
+process.stderr.write(`  keyInfo: ${minted.keyInfo ? "yes" : "no"}, rwk: ${minted.rwk ? "yes" : "no"}\n`);
+
+// In-memory shared store, prefilled with the freshly minted key.
+// Bundle's `loadUserWrappedIdentityKeys` returns a serialized blob (the
+// "wrapped" form — encrypted-at-rest with the rwk). For a fresh start
+// without a stored blob, returning undefined is the documented signal
+// for "no prior key" — but maybe what's really expected is the same
+// shape as keyInfo from generateKeyInitializationRequest.
+let storedIdentity: unknown = undefined; // start "logged in but no stored key"
 let storedRwk: unknown = undefined;
 let storedTempKey: unknown = undefined;
 
-const persistentStorage = {
-  storeUserWrappedIdentityKeys: function (e: unknown) {
+// Class-instance form — some Embind/Djinni bindings probe with `in`
+// against own props that arrow-fn objects expose, but proto methods on
+// class instances may pass differently.
+class PersistentStorage {
+  storeUserWrappedIdentityKeys(e: unknown) {
     process.stderr.write(`  persistent.store called (${typeof e})\n`);
     storedIdentity = e;
-  },
-  loadUserWrappedIdentityKeys: function () {
+  }
+  loadUserWrappedIdentityKeys() {
     process.stderr.write(`  persistent.load called → ${storedIdentity ? "have key" : "null"}\n`);
     return Promise.resolve(storedIdentity);
-  },
-};
+  }
+}
 
-const sessionScopedStorage = {
-  storeRootWrappingKey: function (e: unknown) {
+class SessionScopedStorage {
+  storeRootWrappingKey(e: unknown) {
     process.stderr.write(`  session.storeRwk called\n`);
     storedRwk = e;
-  },
-  readRootWrappingKey: function () {
+  }
+  readRootWrappingKey() {
     process.stderr.write(`  session.readRwk called → ${storedRwk ? "have" : "null"}\n`);
     return Promise.resolve(storedRwk);
-  },
-  destroy: function () {
+  }
+  destroy() {
     storedRwk = undefined;
     return Promise.resolve();
-  },
-  loadTemporaryIdentityKey: function () {
+  }
+  loadTemporaryIdentityKey() {
     return Promise.resolve(storedTempKey);
-  },
-  clearTemporaryIdentityKey: function () {
+  }
+  clearTemporaryIdentityKey() {
     storedTempKey = undefined;
     return Promise.resolve();
-  },
-};
+  }
+}
+
+const persistentStorage = new PersistentStorage();
+const sessionScopedStorage = new SessionScopedStorage();
 
 // UPGRADE_TO_TEN=1, TEN=1 from JS enum scan
 try {
