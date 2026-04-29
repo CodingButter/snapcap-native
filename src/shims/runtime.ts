@@ -69,6 +69,28 @@ export function installShims(opts: InstallShimOpts = {}): void {
   if (typeof g.importScripts !== "function") {
     g.importScripts = () => {};
   }
+
+  // CacheStorage — the chat bundle's WASM init touches `caches.open(...)`
+  // for offline asset caching. happy-dom doesn't ship it. Provide a no-op
+  // that returns empty Cache objects so calls succeed without persisting.
+  if (typeof g.caches === "undefined") {
+    const emptyCache = {
+      match: async () => undefined,
+      add: async () => undefined,
+      addAll: async () => undefined,
+      put: async () => undefined,
+      delete: async () => false,
+      keys: async () => [],
+      matchAll: async () => [],
+    };
+    g.caches = {
+      open: async () => emptyCache,
+      has: async () => false,
+      delete: async () => false,
+      keys: async () => [],
+      match: async () => undefined,
+    };
+  }
 }
 
 export function isShimInstalled(): boolean {
