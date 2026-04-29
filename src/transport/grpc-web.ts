@@ -11,8 +11,8 @@
  * short-lived and the refresh path doesn't require re-entering credentials,
  * so this stays invisible to callers.
  */
-import type { CookieJar } from "tough-cookie";
-import { makeJarFetch } from "./cookies.ts";
+import { makeJarFetch, type JarLike } from "./cookies.ts";
+import { getSandbox } from "../shims/runtime.ts";
 
 export type GrpcMethodDesc<Req, Resp> = {
   methodName: string;
@@ -41,7 +41,7 @@ export type CallRpcOpts<Req, Resp> = {
   request: Req;
   /** Hostname like "https://web.snapchat.com" — no trailing slash, no path. */
   host: string;
-  jar: CookieJar;
+  jar: JarLike;
   userAgent: string;
   /** Bearer to send. Omit for unauthenticated services like login. */
   bearer?: string;
@@ -138,11 +138,15 @@ function decodeRespBytes<Resp>(
   responseType: { decode: (b: Uint8Array) => Resp } | { deserializeBinary: (b: Uint8Array) => Resp },
   bytes: Uint8Array,
 ): Resp {
+  // Bundle decoders run in the vm realm. Cross-realm `instanceof Uint8Array`
+  // fails, and protobufjs-derived decoders throw `Error("illegal buffer")`
+  // on the foreign view. Copy through a vm-realm Uint8Array.
+  const vmBytes = getSandbox().toVmU8(bytes);
   if ("decode" in responseType && typeof responseType.decode === "function") {
-    return responseType.decode(bytes);
+    return responseType.decode(vmBytes);
   }
   if ("deserializeBinary" in responseType && typeof responseType.deserializeBinary === "function") {
-    return responseType.deserializeBinary(bytes);
+    return responseType.deserializeBinary(vmBytes);
   }
   throw new Error("response type has neither decode nor deserializeBinary");
 }

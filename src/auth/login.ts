@@ -16,15 +16,21 @@
  * Kameleon attestation is generated against the username, page="www_login".
  * The token is non-determistic; a fresh one is needed for every login.
  */
-import type { CookieJar } from "tough-cookie";
+import { CookieJar } from "tough-cookie";
 import { getKameleon, type KameleonOpts } from "./kameleon.ts";
-import { makeJarFetch } from "../transport/cookies.ts";
+import { getSandbox } from "../shims/runtime.ts";
+import { makeJarFetch, type JarLike } from "../transport/cookies.ts";
 
 export type LoginCredentials = { username: string; password: string };
 
 export type LoginOpts = {
   credentials: LoginCredentials;
-  jar: CookieJar;
+  /**
+   * Cookie destination. Either a raw tough-cookie jar or a
+   * DataStore-backed `CookieJarStore` wrapper — login persists the
+   * resulting `__Host-sc-a-auth-session` + sibling cookies via this.
+   */
+  jar: JarLike;
   userAgent: string;
   /** Where the SSO flow expects to land afterward. Becomes the `continueParam` in the request. */
   continueParam?: string;
@@ -39,6 +45,7 @@ export async function nativeLogin(opts: LoginOpts): Promise<void> {
   const { credentials, jar, userAgent } = opts;
   const continueParam = opts.continueParam ?? DEFAULT_CONTINUE;
   const jarFetch = makeJarFetch(jar, userAgent);
+  const rawJar: CookieJar = jar instanceof CookieJar ? jar : jar.jar;
 
   const { ctx: kameleon, wreq } = await getKameleon(opts.kameleonOpts);
   const attestation = await kameleon.finalize(credentials.username);
@@ -118,7 +125,7 @@ export async function nativeLogin(opts: LoginOpts): Promise<void> {
     throw new Error(`WebLogin step 2 statusCode=${(r2 as { statusCode?: number }).statusCode}, expected 1`);
   }
 
-  const authCookie = (await jar.getCookies(HOST)).find((c) => c.key === "__Host-sc-a-auth-session");
+  const authCookie = (await rawJar.getCookies(HOST)).find((c) => c.key === "__Host-sc-a-auth-session");
   if (!authCookie) {
     // Server returned success but didn't set the cookie. Either anti-fraud
     // shadow-rejection (fingerprint flagged) or response Set-Cookie was
@@ -163,7 +170,11 @@ async function postWebLogin(
     throw new Error("WebLogin response too short to be gRPC-Web framed");
   }
   const dataLen = new DataView(buf.buffer, buf.byteOffset + 1, 4).getUint32(0, false);
-  return protoMod.WebLoginResponse.decode(buf.subarray(5, 5 + dataLen)) as Record<string, unknown>;
+  // Bundle protobuf decoders run in the vm realm — pass them a vm-realm
+  // Uint8Array, otherwise the bundle's `instanceof Uint8Array` check fails
+  // (cross-realm) and protobufjs throws Error("illegal buffer").
+  const vmBuf = getSandbox().toVmU8(buf.subarray(5, 5 + dataLen));
+  return protoMod.WebLoginResponse.decode(vmBuf) as Record<string, unknown>;
 }
 
 function b64UrlNoPad(s: string): string {

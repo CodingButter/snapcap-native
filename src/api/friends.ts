@@ -9,6 +9,7 @@
  */
 import { getKameleon } from "../auth/kameleon.ts";
 import { ensureChatBundle } from "../auth/chat-bundle.ts";
+import { getSandbox } from "../shims/runtime.ts";
 import { User } from "./user.ts";
 
 /**
@@ -19,8 +20,9 @@ let cachedAtlasClass: (new (rpc: unknown) => Record<string, Function>) | null = 
 function atlasGwClass(): new (rpc: unknown) => Record<string, Function> {
   if (cachedAtlasClass) return cachedAtlasClass;
   ensureChatBundle();
-  const w = globalThis as unknown as { __snapcap_p: { (id: string): unknown } };
-  const exp = w.__snapcap_p("74052") as Record<string, unknown>;
+  const wreq = getSandbox().getGlobal<{ (id: string): unknown }>("__snapcap_p");
+  if (!wreq) throw new Error("chat-bundle webpack runtime not loaded — call ensureChatBundle first");
+  const exp = wreq("74052") as Record<string, unknown>;
   for (const k of Object.keys(exp)) {
     const v = exp[k];
     if (typeof v !== "function") continue;

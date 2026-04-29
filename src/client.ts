@@ -1,20 +1,26 @@
 /**
  * SnapcapClient — main entry point.
  *
- * Two factory paths:
- *   - fromCredentials({ username, password }) — does the full native login
- *     flow (kameleon attestation → WebLoginService 2-step → SSO bearer →
- *     www.snapchat.com cookie seed).
- *   - fromAuth(savedBlob) — picks up where a previous session left off.
- *     Useful for not paying the ~3-4s native-login cost on every process
- *     start.
+ * Constructed with a `DataStore` (required) plus optional cold-start
+ * credentials. The DataStore is the canonical persistence backbone:
+ * cookies, bearer, Fidelius identity, and the Snap-bundle's own
+ * sandbox storage (`local_*` / `session_*` / `indexdb_*`) all live
+ * there under stable keys.
  *
- * Internally a SnapcapClient owns:
- *   - a CookieJar with __Host-sc-a-auth-session + parent-domain cookies
- *   - a current bearer string (short-lived)
- *   - a refresh function bound to its jar (auto-invoked on 401)
- *   - a `self: User` populated lazily (currently externally; auto-discovery
- *     lands once we wire up GetSnapchatterPublicInfo)
+ *   const client = new SnapcapClient({ dataStore, username, password });
+ *   if (await client.isAuthorized()) {
+ *     const friends = await client.listFriends();
+ *   }
+ *
+ * `isAuthorized()` decides whether we already have valid restored
+ * cookies, runs the full native login if not (and credentials are
+ * present), and caches a positive result in-memory so subsequent
+ * calls are free. Pass `{ force: true }` to re-login even if warm.
+ *
+ * `logout()` deletes only the auth-state keys (`cookie_jar`,
+ * `session_snapcap_bearer`, `fidelius`) — other sandbox storage entries
+ * (the bundle's own `local_*` / `session_*` / `indexdb_*`) are left
+ * intact since the SDK doesn't own them.
  *
  * Two layers of API:
  *   - Low-level primitives — take IDs, return Promises. Useful when you
@@ -23,7 +29,6 @@
  *     ergonomic methods. Returned by the high-level helpers
  *     (`getConversations()`, `conversation()`).
  */
-import { CookieJar } from "tough-cookie";
 import { nativeLogin, type LoginCredentials } from "./auth/login.ts";
 import { mintBearer } from "./auth/sso.ts";
 import { listFriends, syncFriendDataRaw } from "./api/friends.ts";
@@ -49,18 +54,31 @@ import { callRpc, type GrpcMethodDesc, type HeaderTransform } from "./transport/
 import { mintFideliusIdentity, type FideliusIdentity } from "./auth/fidelius-mint.ts";
 import { initializeWebKey, stripOriginReferer } from "./api/fidelius.ts";
 import { queryMessages, type QueryMessagesResponse } from "./api/inbox.ts";
+import { installShims, getSandbox } from "./shims/runtime.ts";
+import type { DataStore } from "./storage/data-store.ts";
+import { CookieJarStore } from "./storage/cookie-store.ts";
+import { idbGet, idbPut, idbDelete } from "./storage/idb-utils.ts";
 
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 
 /**
- * Serialized form of a Fidelius identity stored in the auth blob.
- * Bytes are hex-encoded so the blob is plain JSON.
+ * IndexedDB coordinates for the serialized Fidelius identity blob.
+ * Lands in the DataStore under `indexdb_snapcap__fidelius__identity`
+ * via the IDB shim — never reach for `dataStore.get/set` directly here.
+ */
+const FIDELIUS_DB = "snapcap";
+const FIDELIUS_STORE = "fidelius";
+const FIDELIUS_KEY = "identity";
+
+/**
+ * Serialized form of a Fidelius identity stored under the `fidelius`
+ * DataStore key. Bytes are hex-encoded so the blob is plain JSON.
  *
  * SECURITY: `privateKey` is the long-lived root of E2E encryption for
  * this account. Snap's server never sees it; if you lose this blob the
  * identity can't be recovered (Snap won't let the same user register
- * a second one). Treat the whole blob as credential-grade.
+ * a second one). Treat the entry as credential-grade.
  */
 export type FideliusIdentityBlob = {
   publicKey: string;     // hex (65 bytes, 0x04-prefixed P-256)
@@ -70,41 +88,43 @@ export type FideliusIdentityBlob = {
   version: number;
 };
 
-export type SnapcapAuthBlob = {
-  /** Serialized tough-cookie jar (jar.toJSON()). */
-  jar: object;
-  /** Most recent bearer (may be expired; refresh-on-401 will re-mint). */
-  bearer: string;
-  /** UA fingerprint we used at login — keep for consistency on subsequent calls. */
-  userAgent: string;
-  /** Cached self user (saves a round-trip on rehydrate). */
-  self?: { userId: string; username?: string; displayName?: string };
-  /**
-   * E2E identity. Present once `fromCredentials` has minted + registered
-   * the user's Fidelius key. Restoring a blob without it = no E2E ops
-   * (sending snaps + reading inbound bodies will throw).
-   */
-  fidelius?: FideliusIdentityBlob;
-};
-
-export type FromCredentialsOpts = {
-  credentials: LoginCredentials;
+/**
+ * Public constructor options for `SnapcapClient`.
+ *
+ * The DataStore is required and acts as the canonical persistence
+ * backbone — cookies, bearer, Fidelius identity, and the Snap-bundle's
+ * own `local_*`/`session_*`/`indexdb_*` sandbox storage all share it.
+ *
+ * `username`/`password` are only consulted on cold start (no restored
+ * cookies). They are NOT persisted to the DataStore — pass them again
+ * on subsequent process boots if you want to be able to recover from
+ * a session expiry.
+ */
+export type SnapcapClientOpts = {
+  dataStore: DataStore;
+  username?: string;
+  password?: string;
+  /** UA fingerprint used at login. Persists with the cookies for consistency. */
   userAgent?: string;
 };
 
-export type FromAuthOpts = {
-  auth: SnapcapAuthBlob;
-};
-
 export class SnapcapClient {
-  private jar: CookieJar;
-  private bearer: string;
-  private userAgent: string;
+  private readonly dataStore: DataStore;
+  private readonly creds: LoginCredentials | null;
+  private readonly userAgent: string;
+
+  /** Lazy: loaded from the DataStore on first auth-state access. */
+  private cookieStore: CookieJarStore | null = null;
+  /** Lazy: loaded from the DataStore on first auth-state access; minted on login / 401. */
+  private bearer: string | null = null;
+  /** Cached "we're warm" flag — `isAuthorized()` returns it short-circuit. */
+  private authorized = false;
 
   /**
    * The logged-in user. Populated automatically when the SDK can derive it
-   * (currently from the saved auth blob if present); otherwise the consumer
-   * should set it via `setSelf()` before calling Conversation methods.
+   * (currently from the post-login SyncFriendData walk); otherwise the
+   * consumer should set it via `setSelf()` before calling Conversation
+   * methods.
    *
    * Auto-discovery from a self-info RPC is tracked separately (see
    * task #50 in the project notes).
@@ -112,78 +132,102 @@ export class SnapcapClient {
   public self?: User;
 
   /**
-   * Long-lived Fidelius E2E identity for this account. Populated by
-   * `fromCredentials` (mint via WASM + register with server) or
-   * `fromAuth` (deserialize from blob). Required for sending snaps
-   * and reading inbound message bodies.
+   * Long-lived Fidelius E2E identity for this account. Loaded from the
+   * DataStore on demand or minted on first login. Required for sending
+   * snaps and reading inbound message bodies.
    */
   public fidelius?: FideliusIdentity;
 
-  private constructor(jar: CookieJar, bearer: string, userAgent: string, self?: User, fidelius?: FideliusIdentity) {
-    this.jar = jar;
-    this.bearer = bearer;
-    this.userAgent = userAgent;
-    this.self = self;
-    this.fidelius = fidelius;
+  constructor(opts: SnapcapClientOpts) {
+    this.dataStore = opts.dataStore;
+    this.creds = opts.username && opts.password
+      ? { username: opts.username, password: opts.password }
+      : null;
+    this.userAgent = opts.userAgent ?? DEFAULT_USER_AGENT;
+    // Seed the shim singleton with the consumer's DataStore eagerly.
+    // `installShims` is first-call-wins — kameleon boot inside the
+    // login flow will otherwise win the race with no dataStore set,
+    // which means Snap-bundle local/session/indexdb writes go to
+    // happy-dom's in-memory defaults instead of our store.
+    installShims({ url: "https://www.snapchat.com/web", dataStore: this.dataStore });
   }
 
-  static async fromCredentials(opts: FromCredentialsOpts): Promise<SnapcapClient> {
-    const userAgent = opts.userAgent ?? DEFAULT_USER_AGENT;
-    const jar = new CookieJar();
-    await nativeLogin({ credentials: opts.credentials, jar, userAgent });
-    const { bearer } = await mintBearer({ jar, userAgent });
-    const client = new SnapcapClient(jar, bearer, userAgent);
-    // Auto-discover self user. SyncFriendData embeds the logged-in user's
-    // own metadata alongside the friend list — we just have to walk it.
-    // Best-effort: if discovery fails, leave self unset and let the caller
-    // call setSelf() manually.
-    try {
-      await client.resolveSelf(opts.credentials.username);
-    } catch {
-      // tolerate — consumer can still operate via setSelf()
-    }
-    // Mint + register Fidelius identity. Boot cost is one-time
-    // (~250ms WASM init); subsequent `fromAuth(blob)` skips it
-    // entirely. If the user has already registered an identity from
-    // a different installation, the InitializeWebKey call returns
-    // 401 — we surface that as a warning + leave fidelius undefined,
-    // since the SDK can't recover the original private key.
-    try {
-      const identity = await mintFideliusIdentity();
-      const fideliusRpc = client.makeRpc(stripOriginReferer);
-      await initializeWebKey(fideliusRpc, identity);
-      client.fidelius = identity;
-    } catch (err) {
-      const msg = (err as Error).message ?? String(err);
-      if (msg.includes("401") || msg.includes("unauthorized")) {
-        console.warn(
-          "[snapcap] Fidelius identity already registered for this account from a previous session. " +
-            "E2E operations (snaps, inbound message bodies) will be unavailable in this client. " +
-            "If you need them, locate the original blob or have Snap reset the account's web identity.",
-        );
-      } else {
-        console.warn(`[snapcap] Fidelius identity init failed: ${msg.slice(0, 200)}`);
+  /**
+   * Resolve whether this client has a usable session. Three cases:
+   *
+   *   - Restored cookies + bearer present in the DataStore → true (no network).
+   *   - No cookies but credentials supplied → run full login, persist, true.
+   *   - No cookies, no creds → false.
+   *   - Server rejects the supplied creds → false (does not throw).
+   *
+   * The first positive result is cached in-memory so subsequent calls are
+   * free. Pass `{ force: true }` to bypass the cache and re-login even when
+   * already warm.
+   */
+  async isAuthorized(opts?: { force?: boolean }): Promise<boolean> {
+    if (this.authorized && !opts?.force) return true;
+
+    await this.ensureCookieStore();
+    if (!opts?.force) {
+      // Try restored state first.
+      const restoredBearer = await this.loadBearer();
+      const haveAuthCookie = await this.haveSessionCookie();
+      if (restoredBearer && haveAuthCookie) {
+        this.bearer = restoredBearer;
+        await this.loadFideliusIfPresent();
+        this.loadSelf();
+        this.authorized = true;
+        return true;
       }
     }
-    return client;
+
+    if (!this.creds) {
+      // Nothing to fall back on.
+      return false;
+    }
+
+    try {
+      await this.loginFromCredentials();
+      this.authorized = true;
+      return true;
+    } catch (err) {
+      if (process.env.SNAPCAP_TRACE_AUTH) {
+        process.stderr.write(`[isAuthorized] loginFromCredentials threw: ${(err as Error).stack ?? err}\n`);
+      }
+      // Server rejection / network blip / cookie wall — consumer decides
+      // what to do with `false`. Throwing here would punish callers that
+      // legitimately want to probe authorization state.
+      return false;
+    }
   }
 
-  static async fromAuth(opts: FromAuthOpts): Promise<SnapcapClient> {
-    const jar = await CookieJar.deserialize(opts.auth.jar as never);
-    const self = opts.auth.self
-      ? new User(opts.auth.self.userId, opts.auth.self.username, opts.auth.self.displayName)
-      : undefined;
-    const fidelius = opts.auth.fidelius
-      ? deserializeFidelius(opts.auth.fidelius)
-      : undefined;
-    return new SnapcapClient(jar, opts.auth.bearer, opts.auth.userAgent, self, fidelius);
+  /**
+   * Clear the auth-state keys (`cookie_jar`, `session_snapcap_bearer`,
+   * `indexdb_snapcap__fidelius__identity`) from the DataStore. The
+   * bundle's own sandbox storage (other `local_*` / `session_*` /
+   * `indexdb_*` entries we don't own) is left intact — wiping it would
+   * force the next `isAuthorized()` to re-bootstrap Fidelius WASM state
+   * from scratch.
+   */
+  async logout(): Promise<void> {
+    await this.dataStore.delete("cookie_jar");
+    const ss = getSandbox().getGlobal<Storage>("sessionStorage");
+    ss?.removeItem("snapcap_bearer");
+    const ls = getSandbox().getGlobal<Storage>("localStorage");
+    ls?.removeItem("snapcap_self");
+    await idbDelete(FIDELIUS_DB, FIDELIUS_STORE, FIDELIUS_KEY);
+    this.cookieStore = null;
+    this.bearer = null;
+    this.fidelius = undefined;
+    this.self = undefined;
+    this.authorized = false;
   }
 
   /**
    * Override the self-user. Auto-discovery covers the typical case
-   * (`fromCredentials` walks SyncFriendData and finds the logged-in
+   * (`isAuthorized` walks SyncFriendData and finds the logged-in
    * user's own metadata), so this is mostly an escape hatch for callers
-   * who load auth from an old blob without `self` cached.
+   * with an out-of-band record of who they're logged in as.
    */
   setSelf(user: User): void {
     this.self = user;
@@ -193,14 +237,8 @@ export class SnapcapClient {
    * Resolve the logged-in user from server-side data. Calls SyncFriendData
    * (which embeds the caller's own user record alongside the friend list)
    * and matches on `mutableUsername`. Sets `this.self` and returns it.
-   *
-   * Used internally by `fromCredentials`. Consumers can call directly when
-   * loading from an old auth blob that doesn't have `self` cached.
    */
   async resolveSelf(username: string): Promise<User> {
-    // Pull the raw SyncFriendData record (which embeds the self-user) and
-    // walk it. listFriends() returns User[] now and would have already
-    // dropped self if we knew our userId — but we don't yet.
     const raw = await syncFriendDataRaw(this.makeRpc());
     const found = findSelf(raw, username);
     if (!found) {
@@ -208,17 +246,6 @@ export class SnapcapClient {
     }
     this.self = found;
     return found;
-  }
-
-  /** Serialize current session for reuse (auth.bearer may be expired; refresh-on-401 covers it). */
-  async toAuthBlob(): Promise<SnapcapAuthBlob> {
-    return {
-      jar: (await this.jar.serialize()) as object,
-      bearer: this.bearer,
-      userAgent: this.userAgent,
-      self: this.self?.toJSON(),
-      fidelius: this.fidelius ? serializeFidelius(this.fidelius) : undefined,
-    };
   }
 
   // ── Duplex WS (presence + typing) ──────────────────────────────────
@@ -235,7 +262,8 @@ export class SnapcapClient {
   private getDuplex(): Promise<Duplex> {
     if (!this.duplex) {
       this.duplex = (async () => {
-        const dx = await connectDuplex({ bearer: this.bearer, jar: this.jar, userAgent: this.userAgent });
+        const { jar, bearer } = await this.requireAuthState();
+        const dx = await connectDuplex({ bearer, jar: jar.jar, userAgent: this.userAgent });
         await dx.ready;
         // If the server kicks us off (another session displaced ours, auth
         // dropped, etc.), drop the cached promise so the next presence
@@ -270,7 +298,7 @@ export class SnapcapClient {
     counter: number,
   ): Promise<void> {
     if (!this.self) {
-      throw new Error("publishPresence requires client.self — call resolveSelf() or fromCredentials() first");
+      throw new Error("publishPresence requires client.self — call resolveSelf() or isAuthorized() first");
     }
     const dx = await this.getDuplex();
     const body = buildPresenceBody({
@@ -310,8 +338,10 @@ export class SnapcapClient {
   /** Mint a fresh bearer from the current cookie jar. Used by 401 retry. */
   private async refreshBearer(): Promise<string | null> {
     try {
-      const { bearer } = await mintBearer({ jar: this.jar, userAgent: this.userAgent });
+      const store = await this.ensureCookieStore();
+      const { bearer } = await mintBearer({ jar: store, userAgent: this.userAgent });
       this.bearer = bearer;
+      await this.persistBearer(bearer);
       return bearer;
     } catch {
       // If refresh fails (cookie expired), surface the original 401 so
@@ -353,10 +383,6 @@ export class SnapcapClient {
    * Build a Conversation handle for a known conversation ID. Useful when
    * you've persisted IDs in your own DB and want to skip the
    * SyncConversations round-trip.
-   *
-   * `participantUserIds` is optional but improves the resulting handle's
-   * `friend` accessor; without it the SDK can't tell who the other party
-   * is in a DM.
    */
   conversation(conversationId: string, participantUserIds: string[] = []): Conversation {
     return new Conversation(this, {
@@ -383,18 +409,12 @@ export class SnapcapClient {
   }
 
   /**
-   * Post an image to MY_STORY (the user's own story feed). Returns when
-   * the server accepts the post; friends see it in their story feeds via
-   * Snap's normal fanout. Requires `client.self.username`.
-   *
-   * The image is auto-normalized to 1080×1920 RGBA PNG (center-cropped to
-   * 9:16) — Snap's server silently drops stories built from anything else
-   * that doesn't look like what its own camera produces. Pass
-   * `skipNormalize: true` only if you've pre-conformed the bytes yourself.
+   * Post an image to MY_STORY (the user's own story feed). Requires
+   * `client.self.username`.
    */
   async postStory(bytes: Uint8Array, opts?: { skipNormalize?: boolean }): Promise<void> {
     if (!this.self?.username) {
-      throw new Error("postStory requires self.username — call fromCredentials() or resolveSelf() first");
+      throw new Error("postStory requires self.username — call isAuthorized() or resolveSelf() first");
     }
     const { postStory } = await import("./api/media.ts");
     const { nativeFetch } = await import("./transport/native-fetch.ts");
@@ -403,17 +423,10 @@ export class SnapcapClient {
     });
   }
 
-  /**
-   * Fetch recent messages for a conversation. Returns the raw response
-   * payload — caller decodes (typed walker not yet available because we
-   * haven't captured a non-empty inbox-fetch in the wild yet).
-   *
-   * Used as the first half of inbound message retrieval; the second half
-   * (Fidelius decryption) lives in api/inbox.ts as `decryptFideliusEnvelope`.
-   */
+  /** Fetch recent messages for a conversation. */
   async fetchMessages(conversationId: string, opts?: { limit?: number; secondary?: number }): Promise<QueryMessagesResponse> {
     if (!this.self?.userId) {
-      throw new Error("fetchMessages requires self.userId — call resolveSelf() or fromCredentials() first");
+      throw new Error("fetchMessages requires self.userId — call resolveSelf() or isAuthorized() first");
     }
     return await queryMessages(this.makeRpc(), {
       conversationId,
@@ -423,24 +436,17 @@ export class SnapcapClient {
     });
   }
 
-  /**
-   * Search Snap's user index by query string. Returns User objects with
-   * userId, username, and displayName populated where available.
-   */
+  /** Search Snap's user index by query string. */
   async searchUsers(query: string, pageSize?: number): Promise<User[]> {
+    const { jar, bearer } = await this.requireAuthState();
     return await searchUsers(query, {
-      jar: this.jar,
+      jar,
       userAgent: this.userAgent,
-      bearer: this.bearer,
+      bearer,
       refreshBearer: () => this.refreshBearer(),
     }, pageSize);
   }
 
-  /**
-   * Send a single typing pulse. Caller is responsible for refreshing if
-   * they want the indicator to persist; for the auto-refresh behavior,
-   * use `Conversation.setTyping(durationMs)` instead.
-   */
   async sendTypingNotification(
     conversationId: string,
     userId: string,
@@ -480,12 +486,8 @@ export class SnapcapClient {
    * Build an `rpc.unary` impl bound to this client's jar/bearer/refresh.
    *
    * Pass `transformHeaders` to mutate the default header bag for every
-   * call routed through this rpc instance. Useful when a service
-   * rejects headers our regular calls add — e.g. Fidelius's gateway
-   * 401s if Origin/Referer are present, so its API module builds its
-   * own rpc with `(h) => { delete h.origin; delete h.referer; return h; }`.
-   *
-   * Returning a NEW object is recommended (don't mutate input).
+   * call routed through this rpc instance (e.g. Fidelius's gateway 401s
+   * if Origin/Referer are present, so its API module strips them).
    */
   makeRpc(transformHeaders?: HeaderTransform): {
     unary: (
@@ -495,16 +497,14 @@ export class SnapcapClient {
   } {
     return {
       unary: async (method, request) => {
-        // AtlasGw + most chat-bundle services live on web.snapchat.com.
-        // If we add accounts.snapchat.com services later we'll need to
-        // route based on serviceName.
+        const { jar, bearer } = await this.requireAuthState();
         return await callRpc({
           method,
           request,
           host: "https://web.snapchat.com",
-          jar: this.jar,
+          jar,
           userAgent: this.userAgent,
-          bearer: this.bearer,
+          bearer,
           refreshBearer: () => this.refreshBearer(),
           origin: "https://www.snapchat.com",
           referer: "https://www.snapchat.com/",
@@ -512,6 +512,153 @@ export class SnapcapClient {
         });
       },
     };
+  }
+
+  // ── Auth-state plumbing ─────────────────────────────────────────────
+
+  /** Lazy-init the cookie store from the DataStore. Idempotent. */
+  private async ensureCookieStore(): Promise<CookieJarStore> {
+    if (!this.cookieStore) {
+      this.cookieStore = await CookieJarStore.create(this.dataStore, "cookie_jar");
+    }
+    return this.cookieStore;
+  }
+
+  /**
+   * Read jar + bearer from the (possibly already-loaded) DataStore-backed
+   * state. Used by every RPC method to make sure we have something to send.
+   */
+  private async requireAuthState(): Promise<{ jar: CookieJarStore; bearer: string }> {
+    const jar = await this.ensureCookieStore();
+    if (!this.bearer) this.bearer = await this.loadBearer();
+    if (!this.bearer) {
+      throw new Error(
+        "SnapcapClient has no bearer — call client.isAuthorized() and check it returns true before calling RPC methods.",
+      );
+    }
+    return { jar, bearer: this.bearer };
+  }
+
+  /** Read cached bearer string via the sandbox's sessionStorage shim. */
+  private async loadBearer(): Promise<string | null> {
+    const ss = getSandbox().getGlobal<Storage>("sessionStorage");
+    const v = ss?.getItem("snapcap_bearer");
+    return v ?? null;
+  }
+
+  private async persistBearer(token: string): Promise<void> {
+    const ss = getSandbox().getGlobal<Storage>("sessionStorage");
+    ss?.setItem("snapcap_bearer", token);
+  }
+
+  /** Restore the persisted self user, if any. Lands at `local_snapcap_self`. */
+  private loadSelf(): void {
+    if (this.self) return;
+    const ls = getSandbox().getGlobal<Storage>("localStorage");
+    const raw = ls?.getItem("snapcap_self");
+    if (!raw) return;
+    try {
+      const j = JSON.parse(raw) as { userId: string; username?: string; displayName?: string };
+      if (j?.userId) this.self = new User(j.userId, j.username, j.displayName);
+    } catch {
+      // corrupt — drop it; next cold login will repopulate
+    }
+  }
+
+  /** Persist the current self user. */
+  private persistSelf(): void {
+    if (!this.self) return;
+    const ls = getSandbox().getGlobal<Storage>("localStorage");
+    ls?.setItem("snapcap_self", JSON.stringify(this.self.toJSON()));
+  }
+
+  /**
+   * Quick check: does the cookie jar have a session cookie that's
+   * plausibly still valid? `__Host-sc-a-auth-session` is the long-lived
+   * refresh-style cookie that login deposits — if it's gone, the bearer
+   * is unusable too.
+   */
+  private async haveSessionCookie(): Promise<boolean> {
+    const store = await this.ensureCookieStore();
+    const cookies = await store.jar.getCookies("https://accounts.snapchat.com");
+    return cookies.some((c) => c.key === "__Host-sc-a-auth-session");
+  }
+
+  /**
+   * Restore a previously-minted Fidelius identity, if any. Reads through
+   * the IDB shim — lands in the DataStore at
+   * `indexdb_snapcap__fidelius__identity`.
+   */
+  private async loadFideliusIfPresent(): Promise<void> {
+    if (this.fidelius) return;
+    try {
+      const blob = await idbGet<FideliusIdentityBlob>(FIDELIUS_DB, FIDELIUS_STORE, FIDELIUS_KEY);
+      if (!blob) return;
+      this.fidelius = deserializeFidelius(blob);
+    } catch {
+      // Corrupt blob / IDB error — ignore; next login will mint a fresh
+      // one if the server still considers us un-registered, otherwise
+      // E2E ops will remain unavailable.
+    }
+  }
+
+  /** Persist the current Fidelius identity via the IDB shim. */
+  private async persistFidelius(identity: FideliusIdentity): Promise<void> {
+    const blob = serializeFidelius(identity);
+    await idbPut(FIDELIUS_DB, FIDELIUS_STORE, FIDELIUS_KEY, blob);
+  }
+
+  /**
+   * Run the full native-login flow: kameleon → WebLoginService 2-step →
+   * SSO bearer → cookie seed → SyncFriendData self-resolve →
+   * Fidelius identity mint+register. Persists everything to the DataStore.
+   */
+  private async loginFromCredentials(): Promise<void> {
+    if (!this.creds) {
+      throw new Error("loginFromCredentials called without credentials");
+    }
+    const store = await this.ensureCookieStore();
+    await nativeLogin({ credentials: this.creds, jar: store, userAgent: this.userAgent });
+    const { bearer } = await mintBearer({ jar: store, userAgent: this.userAgent });
+    this.bearer = bearer;
+    await store.flush();
+    await this.persistBearer(bearer);
+
+    // Auto-discover self user. SyncFriendData embeds the logged-in user's
+    // own metadata alongside the friend list — we just have to walk it.
+    // Best-effort: if discovery fails, leave self unset and let the caller
+    // call setSelf() manually.
+    try {
+      await this.resolveSelf(this.creds.username);
+      this.persistSelf();
+    } catch {
+      // tolerate — consumer can still operate via setSelf()
+    }
+
+    // Fidelius: prefer a previously-persisted identity; otherwise mint
+    // and register. If the server says "already registered" (401), surface
+    // a warning and continue without E2E.
+    await this.loadFideliusIfPresent();
+    if (!this.fidelius) {
+      try {
+        const identity = await mintFideliusIdentity();
+        const fideliusRpc = this.makeRpc(stripOriginReferer);
+        await initializeWebKey(fideliusRpc, identity);
+        this.fidelius = identity;
+        await this.persistFidelius(identity);
+      } catch (err) {
+        const msg = (err as Error).message ?? String(err);
+        if (msg.includes("401") || msg.includes("unauthorized")) {
+          console.warn(
+            "[snapcap] Fidelius identity already registered for this account from a previous session. " +
+              "E2E operations (snaps, inbound message bodies) will be unavailable in this client. " +
+              "If you need them, locate the original blob or have Snap reset the account's web identity.",
+          );
+        } else {
+          console.warn(`[snapcap] Fidelius identity init failed: ${msg.slice(0, 200)}`);
+        }
+      }
+    }
   }
 }
 
@@ -551,9 +698,7 @@ function findSelf(payload: unknown, username: string): User | null {
   return null;
 }
 
-function serializeFidelius(id: FideliusIdentity): {
-  publicKey: string; privateKey: string; identityKeyId: string; rwk: string; version: number;
-} {
+function serializeFidelius(id: FideliusIdentity): FideliusIdentityBlob {
   return {
     publicKey: bytesToHex(id.cleartextPublicKey),
     privateKey: bytesToHex(id.cleartextPrivateKey),
@@ -563,9 +708,7 @@ function serializeFidelius(id: FideliusIdentity): {
   };
 }
 
-function deserializeFidelius(blob: {
-  publicKey: string; privateKey: string; identityKeyId: string; rwk: string; version: number;
-}): FideliusIdentity {
+function deserializeFidelius(blob: FideliusIdentityBlob): FideliusIdentity {
   return {
     cleartextPublicKey: hexToBytes(blob.publicKey),
     cleartextPrivateKey: hexToBytes(blob.privateKey),

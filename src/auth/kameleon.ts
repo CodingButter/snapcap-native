@@ -67,7 +67,7 @@ export async function bootKameleon(opts: KameleonOpts = {}): Promise<KameleonCon
 async function bootKameleonOnce(opts: KameleonOpts): Promise<BootedKameleon> {
   const bundleDir = opts.bundleDir ?? defaultBundleDir();
   await ensureBundle(bundleDir);
-  installShims(opts.shimOpts ?? { url: "https://accounts.snapchat.com/" });
+  const sandbox = installShims(opts.shimOpts ?? { url: "https://accounts.snapchat.com/" });
   installWebpackCapture();
 
   const accountsDir = join(
@@ -102,22 +102,29 @@ async function bootKameleonOnce(opts: KameleonOpts): Promise<BootedKameleon> {
     const path = join(accountsDir, rel);
     let src = readFileSync(path, "utf8");
     // Patch the webpack runtime's IIFE so its closure-private `p`
-    // (__webpack_require__) leaks to globalThis. Without this we can't
-    // call into modules by id.
+    // (__webpack_require__) leaks to the sandbox Window. Without this we
+    // can't call into modules by id. Note: `globalThis` here resolves to
+    // the sandbox Window because the patched source is eval'd via
+    // sandbox.runInContext.
     if (rel.startsWith("webpack-")) {
       src = src.replace(
         "p.m=s,p.amdO={}",
         "globalThis.__snapcap_p=p,p.m=s,p.amdO={}",
       );
     }
+    // Wrap in an IIFE so module/exports/require are scoped locals matching
+    // the shape `new Function(...)(...)` previously gave us. Top-level
+    // globalThis still resolves to the sandbox Window.
+    //
+    // The `\n` before the close matters: Snap's bundles end in a
+    // `//# sourceMappingURL=…` line comment with no trailing newline, so
+    // a bare `})(…)` continuation gets eaten by the comment.
+    const wrapped =
+      `(function(module, exports, require) {\n` +
+      src +
+      `\n})({ exports: {} }, {}, function() { throw new Error("require not available (${rel})"); });`;
     try {
-      new Function("module", "exports", "require", src)(
-        { exports: {} },
-        {},
-        () => {
-          throw new Error(`require not available (${rel})`);
-        },
-      );
+      sandbox.runInContext(wrapped, `accounts:${rel}`);
     } catch {
       // Many top-level Next.js init failures are harmless (e.g. they try
       // to call document.getElementById('__NEXT_DATA__')). Module factories
@@ -125,13 +132,10 @@ async function bootKameleonOnce(opts: KameleonOpts): Promise<BootedKameleon> {
     }
   }
 
-  const w = globalThis as unknown as {
-    __snapcap_p?: { (id: string): unknown; m: Record<string, Function> };
-  };
-  if (!w.__snapcap_p) {
+  const wreq = sandbox.getGlobal<{ (id: string): unknown; m: Record<string, Function> }>("__snapcap_p");
+  if (!wreq) {
     throw new Error("webpack runtime did not expose __snapcap_p — patch may have failed");
   }
-  const wreq = w.__snapcap_p;
 
   // 58116 = kameleon Emscripten Module factory.
   const kamMod = wreq("58116") as { default?: Function } & Record<string, unknown>;

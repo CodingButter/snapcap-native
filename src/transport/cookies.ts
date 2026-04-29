@@ -4,6 +4,25 @@ import { nativeFetch } from "./native-fetch.ts";
 export type JarFetchOpts = RequestInit;
 
 /**
+ * Anything we can pull a tough-cookie `CookieJar` out of and (optionally)
+ * persist on every Set-Cookie. Lets `makeJarFetch` accept either a raw
+ * `CookieJar` (no persistence) or a DataStore-backed `CookieJarStore`
+ * wrapper without leaking the storage layer into transport code.
+ */
+export type JarLike = CookieJar | { jar: CookieJar; flush?: () => Promise<void> };
+
+function pickJar(j: JarLike): CookieJar {
+  return j instanceof CookieJar ? j : j.jar;
+}
+
+function pickFlush(j: JarLike): (() => Promise<void>) | undefined {
+  // Bind `this` so the wrapper's call site (`await flush()`) doesn't lose
+  // the `CookieJarStore` receiver — tough-cookie wrappers reference
+  // `this.jar` / `this.store` inside `flush`.
+  return j instanceof CookieJar ? undefined : j.flush?.bind(j);
+}
+
+/**
  * Cookie-jar-aware fetch wrapper.
  *
  * - Pulls matching cookies out of the jar and sets the `Cookie` header.
@@ -12,8 +31,16 @@ export type JarFetchOpts = RequestInit;
  *   back into the jar (via `Headers.getSetCookie()`, which is the only way
  *   to access multiple Set-Cookies in fetch — `headers.get('set-cookie')`
  *   merges them on a single line and corrupts attributes).
+ * - If passed a `CookieJarStore`-style wrapper (anything with a `flush()`
+ *   method), flushes the underlying DataStore once per response so cookies
+ *   survive process restarts.
  */
-export function makeJarFetch(jar: CookieJar, userAgent: string): (url: string, init?: JarFetchOpts) => Promise<Response> {
+export function makeJarFetch(
+  jarOrStore: JarLike,
+  userAgent: string,
+): (url: string, init?: JarFetchOpts) => Promise<Response> {
+  const jar = pickJar(jarOrStore);
+  const flush = pickFlush(jarOrStore);
   return async (url, init = {}) => {
     const headers = new Headers(init.headers);
     const cookieHeader = await jar.getCookieString(url);
@@ -23,14 +50,17 @@ export function makeJarFetch(jar: CookieJar, userAgent: string): (url: string, i
     const setCookies =
       (resp.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie?.() ??
       [];
+    let wrote = false;
     for (const c of setCookies) {
       try {
         await jar.setCookie(c, url);
+        wrote = true;
       } catch {
         // Some cookies (e.g. malformed or with unrecognized attributes)
         // can't be parsed by tough-cookie; safe to skip.
       }
     }
+    if (wrote && flush) await flush();
     return resp;
   };
 }

@@ -11,22 +11,20 @@
  *   5. Proxy-wrap every delegate to log call/return/throw
  *   6. constructPostLogin → wait → call methods, see what fires
  */
-import { readFileSync } from "node:fs";
 import { nativeFetch } from "../src/transport/native-fetch.ts";  // bypasses happy-dom CORS
 import { mintFideliusIdentity } from "../src/auth/fidelius-mint.ts";
-import { SnapcapClient, type SnapcapAuthBlob } from "../src/index.ts";
-import { FileDataStore } from "../src/storage/data-store.ts";
-import { installShims } from "../src/shims/runtime.ts";
+import { SnapcapClient, FileDataStore } from "../src/index.ts";
+import { getSandbox } from "../src/shims/runtime.ts";
 
 // Single-file DataStore. WASM persist + session entries land here with
-// indexdb_ prefix; bearer/cookies/etc could later land here too.
+// indexdb_ prefix; bearer/cookies/etc all land here too via SnapcapClient.
 const dataStore = new FileDataStore("/home/codingbutter/snapcap/SnapSDK/.tmp_auth/auth.json");
 const KEY_PREFIX = "indexdb_";
 
-// Install shims BEFORE anything (mint, auth restore) — wires the
-// DataStore-backed StorageShim into globalThis.localStorage/sessionStorage
-// so Snap's bundle's reads/writes persist into our auth.json.
-installShims({ url: "https://www.snapchat.com/web", dataStore });
+// SnapcapClient ctor calls installShims() internally — wires the
+// DataStore-backed StorageShim into the sandbox so Snap-bundle reads/writes
+// persist into auth.json.
+const client = new SnapcapClient({ dataStore });
 
 const log = (...args: unknown[]): void => {
   const s = args.map((a) => typeof a === "string" ? a : JSON.stringify(a, (_k, v) => v instanceof Uint8Array ? `<${v.byteLength}B>` : v)).join(" ");
@@ -42,15 +40,20 @@ process.on("uncaughtException", (err) => {
 });
 Error.stackTraceLimit = 100;
 
-// Legacy SnapcapAuthBlob — until we fully migrate cookies/bearer/fidelius
-// into the unified DataStore, we still read login state from this side file.
-const AUTH_PATH = "/home/codingbutter/snapcap/SnapSDK/.tmp_auth/auth.legacy.json";
-const blob = JSON.parse(readFileSync(AUTH_PATH, "utf8")) as SnapcapAuthBlob;
-const fid = blob.fidelius;
-if (!fid) throw new Error("no fidelius — log in fresh first");
-
-const client = await SnapcapClient.fromAuth({ auth: blob });
+// Authorize from prior DataStore state. With no credentials AND no prior
+// state, we can't proceed — bail with a clear message. Run smoke.ts first
+// to seed the DataStore with cookies + bearer + fidelius identity.
+if (!await client.isAuthorized()) {
+  console.error("[try-grpc] no stored auth; run smoke.ts first to seed");
+  process.exit(1);
+}
 log(`client restored as ${client.self?.username}`);
+
+// The script's gRPC factory + WASM driving below depends on a pre-existing
+// Fidelius identity (registered with the server). SnapcapClient exposes it
+// publicly on `client.fidelius` after isAuthorized() restores it.
+const fid = client.fidelius;
+if (!fid) throw new Error("no fidelius — log in fresh first");
 
 // Hook WebAssembly.instantiate to wrap imports BEFORE the WASM is built.
 // This lets us intercept __assert_fail / __cxa_throw / abort before init.
@@ -156,8 +159,7 @@ type EmModule = {
   onAbort?: (what?: unknown) => void;
   [k: string]: unknown;
 };
-const Module = (globalThis as unknown as { __snapcap_fidelius_module?: EmModule })
-  .__snapcap_fidelius_module;
+const Module = getSandbox().getGlobal<EmModule>("__snapcap_fidelius_module");
 if (!Module) throw new Error("Module not exposed");
 log(`Module ready, _malloc=${typeof Module._malloc}, HEAPU8=${Module.HEAPU8?.byteLength}B`);
 
@@ -366,27 +368,38 @@ async function unaryFetch(url: string, body: Uint8Array): Promise<Uint8Array | n
     out.set(identityKeyId, p);
     return out;
   }
-  // Route through web.snapchat.com (not us-east1-aws), with cookie jar + bearer.
-  // Mirror what client.makeRpc + stripOriginReferer would do.
-  const path = url.match(/\/snapchat\..+$/)?.[0] ?? url;
-  const fullUrl = `https://web.snapchat.com${path}`;
-  const cookieHeader = await client.jar.getCookieString("https://web.snapchat.com");
-  const headers: Record<string, string> = {
-    "accept": "*/*",
-    "content-type": "application/grpc-web+proto",
-    "x-grpc-web": "1",
-    "x-user-agent": "grpc-web-javascript/0.1",
-    "user-agent": client.userAgent,
-    "authorization": `Bearer ${client.bearer}`,
-    "cookie": cookieHeader,
-    // Note: NO origin, referer, mcs-cof-ids-bin, accept-language (stripped per Fidelius gateway requirements)
-  };
-  log(`  → ${fullUrl}`);
-  const resp = await nativeFetch(fullUrl, { method: "POST", headers, body: gRPCWebFrame(body) });
-  log(`  HTTP ${resp.status} ${resp.statusText}`);
-  if (!resp.ok) return null;
-  const ab = await resp.arrayBuffer();
-  return parseGRPCWebDataFrame(new Uint8Array(ab));
+  // TODO: rebuild on top of public API.
+  //
+  // The block below reached into private fields (client.jar, client.userAgent,
+  // client.bearer) to handcraft a Fidelius-gateway-compatible request with
+  // origin/referer stripped. After the SnapcapClient rewrite those fields are
+  // private and there's no public bytes-in/bytes-out raw-RPC entry point —
+  // client.makeRpc(stripOriginReferer) is the closest public surrogate but it
+  // wants a typed GrpcMethodDesc, not raw frames. Deciding which way to take
+  // this script is deferred.
+  //
+  // const path = url.match(/\/snapchat\..+$/)?.[0] ?? url;
+  // const fullUrl = `https://web.snapchat.com${path}`;
+  // const cookieHeader = await client.jar.getCookieString("https://web.snapchat.com");
+  // const headers: Record<string, string> = {
+  //   "accept": "*/*",
+  //   "content-type": "application/grpc-web+proto",
+  //   "x-grpc-web": "1",
+  //   "x-user-agent": "grpc-web-javascript/0.1",
+  //   "user-agent": client.userAgent,
+  //   "authorization": `Bearer ${client.bearer}`,
+  //   "cookie": cookieHeader,
+  //   // Note: NO origin, referer, mcs-cof-ids-bin, accept-language (stripped per Fidelius gateway requirements)
+  // };
+  // log(`  → ${fullUrl}`);
+  // const resp = await nativeFetch(fullUrl, { method: "POST", headers, body: gRPCWebFrame(body) });
+  // log(`  HTTP ${resp.status} ${resp.statusText}`);
+  // if (!resp.ok) return null;
+  // const ab = await resp.arrayBuffer();
+  // return parseGRPCWebDataFrame(new Uint8Array(ab));
+  log(`  [unaryFetch stub] would POST ${url} body=${body.byteLength}B`);
+  void nativeFetch; void gRPCWebFrame; void parseGRPCWebDataFrame;
+  return null;
 }
 
 // ── Wire factory into WASM ─────────────────────────────────────────
@@ -538,7 +551,7 @@ const sessionScopedStorage = loggingProxy("session", {
 const grpcCfg = loggingProxy("grpcCfg", { apiGatewayEndpoint: "https://us-east1-aws.api.snapchat.com", grpcPathPrefix: "" });
 
 // Try userId.id as 16-byte binary UUID instead of dashed string.
-const userIdStr = blob.self?.userId ?? "527be2ff-aaec-4622-9c68-79d200b8bdc1";
+const userIdStr = client.self?.userId ?? "527be2ff-aaec-4622-9c68-79d200b8bdc1";
 const userIdBytes = new Uint8Array(16);
 const hex = userIdStr.replace(/-/g, "");
 for (let i = 0; i < 16; i++) userIdBytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -559,12 +572,13 @@ const sessionCfg = loggingProxy("sessionCfg", {
 
 // ── construct + watch ──────────────────────────────────────────────
 const KeyManager = Module.e2ee_E2EEKeyManager as Record<string, Function>;
-// Use existing fidelius identity from auth blob — no need to re-register.
-const fidPub = Buffer.from(fid.publicKey, "hex");
-const fidPriv = Buffer.from(fid.privateKey, "hex");
-const fidIdentityKeyId = fid.identityKeyId ? Buffer.from(fid.identityKeyId, "hex") : new Uint8Array(32);
-const fidRwk = fid.rwk ? Buffer.from(fid.rwk, "hex") : new Uint8Array(16);
-log(`existing fidelius identity from blob: pub=${fidPub.byteLength}B priv=${fidPriv.byteLength}B identityKeyId=${fidIdentityKeyId.byteLength}B rwk=${fidRwk.byteLength}B v=${fid.version}`);
+// Use existing fidelius identity restored by SnapcapClient — no need to re-register.
+// FideliusIdentity holds raw Uint8Arrays directly (not hex like the legacy blob).
+const fidPub = fid.cleartextPublicKey;
+const fidPriv = fid.cleartextPrivateKey;
+const fidIdentityKeyId = fid.identityKeyId ?? new Uint8Array(32);
+const fidRwk = fid.rwk ?? new Uint8Array(16);
+log(`existing fidelius identity from client: pub=${fidPub.byteLength}B priv=${fidPriv.byteLength}B identityKeyId=${fidIdentityKeyId.byteLength}B rwk=${fidRwk.byteLength}B v=${fid.version}`);
 
 log(`\n=== constructWithKey (using existing identity from auth blob) ===`);
 let km: { getCurrentUserKeyAsync?: () => Promise<unknown>; registerCurrentUserKeyWithServer?: () => Promise<unknown> } | undefined;

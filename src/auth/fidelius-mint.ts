@@ -93,19 +93,20 @@ async function bootOnce(opts: MintFideliusOpts): Promise<{ km: KeyManagerStatics
   const chatDw = join(bundleDir, "cf-st.sc-cdn.net", "dw");
   const wasmPath = join(chatDw, "e4fa90570c4c2d9e59c1.wasm");
 
-  installShims({ url: "https://www.snapchat.com/web" });
+  // Pass empty opts: the singleton has almost certainly been seeded
+  // already (kameleon boot or SnapcapClient with a DataStore). Since
+  // installShims is first-call-wins, our opts here would be ignored
+  // anyway — but being explicit makes that intent obvious.
+  const sandbox = installShims({});
   installWebpackCapture();
 
   // Load chat bundle (idempotent, shared with friends.ts loader).
   ensureChatBundle({ bundleDir });
 
-  const w = globalThis as unknown as {
-    __snapcap_p?: { (id: string): unknown; m: Record<string, Function> };
-  };
-  if (!w.__snapcap_p) {
+  const wreq = sandbox.getGlobal<{ (id: string): unknown; m: Record<string, Function> }>("__snapcap_p");
+  if (!wreq) {
     throw new Error("chat-bundle webpack runtime did not expose __snapcap_p — kameleon must run first");
   }
-  const wreq = w.__snapcap_p;
 
   const factoryMod = wreq("86818") as { A?: Function };
   const factory = factoryMod.A;
@@ -152,7 +153,7 @@ async function bootOnce(opts: MintFideliusOpts): Promise<{ km: KeyManagerStatics
 
   // Stash for debug/probe scripts. Not part of the public API.
   if (process.env.SNAPCAP_EXPOSE_FIDELIUS_MODULE) {
-    (globalThis as unknown as { __snapcap_fidelius_module?: unknown }).__snapcap_fidelius_module = moduleEnv;
+    sandbox.setGlobal("__snapcap_fidelius_module", moduleEnv);
   }
 
   const km = (moduleEnv as { e2ee_E2EEKeyManager?: KeyManagerStatics }).e2ee_E2EEKeyManager;

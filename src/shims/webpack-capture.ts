@@ -1,12 +1,20 @@
 /**
  * Hook Snap's webpack chunk array so every module factory captures its
- * exports into a global `__snapcap_modules` Map keyed by module id.
+ * exports into a Map keyed by module id.
  *
  * Snap's bundle pushes chunks onto a global named `webpackChunk_N_E` (or
  * similar). Each chunk is `[chunkIds, modules, runtime?]` where `modules`
  * is an `{ [id]: factory }` object. Wrapping the factories at push time
  * lets us capture every module's exports as the page bootstraps.
+ *
+ * Storage:
+ *   - The chunk arrays themselves live on `sandbox.window` so the bundle
+ *     (running under `sandbox.runInContext`) sees them as `self.webpackChunk_*`.
+ *   - The capture maps (modules / originals / hints) are module-private
+ *     here so multiple sandboxed bundles share the same accumulator
+ *     without polluting the sandbox's namespace.
  */
+import { getSandbox } from "./runtime.ts";
 
 const HINT_PATTERNS = [
   /CreateContentMessage|sendMessage|sendChat/i,
@@ -26,33 +34,25 @@ export type ModuleHint = {
   keys: string[];
 };
 
+let installed: {
+  modules: CapturedModules;
+  originals: OriginalFactories;
+  hints: ModuleHint[];
+} | null = null;
+
 export function installWebpackCapture(): {
   modules: CapturedModules;
   originals: OriginalFactories;
   hints: ModuleHint[];
 } {
-  const g = globalThis as unknown as {
-    __snapcap_modules?: CapturedModules;
-    __snapcap_original_factories?: OriginalFactories;
-    __snapcap_module_hints?: ModuleHint[];
-  };
-  if (
-    g.__snapcap_modules &&
-    g.__snapcap_module_hints &&
-    g.__snapcap_original_factories
-  ) {
-    return {
-      modules: g.__snapcap_modules,
-      originals: g.__snapcap_original_factories,
-      hints: g.__snapcap_module_hints,
-    };
-  }
+  if (installed) return installed;
+
+  const sandbox = getSandbox();
+  const w = sandbox.window as unknown as Record<string, unknown>;
+
   const modules: CapturedModules = new Map();
   const originals: OriginalFactories = new Map();
   const hints: ModuleHint[] = [];
-  g.__snapcap_modules = modules;
-  g.__snapcap_original_factories = originals;
-  g.__snapcap_module_hints = hints;
 
   function detectHint(exp: unknown): string | null {
     if (!exp || typeof exp !== "object") return null;
@@ -79,10 +79,6 @@ export function installWebpackCapture(): {
       ) {
         continue;
       }
-      // Stash the original so source scans can find string literals that
-      // would otherwise be trapped inside the wrap closure. Prefix with a
-      // unique counter so factories from different chunk arrays don't
-      // overwrite each other on collision.
       const stamp = `m${originals.size}#${id}`;
       originals.set(stamp, factory as Function);
       const wrapped = function (
@@ -127,16 +123,11 @@ export function installWebpackCapture(): {
     if (modulesObj && typeof modulesObj === "object") {
       wrapFactories(modulesObj as Record<string, unknown>);
     }
-    // chunk[2] is the optional runtime function. Webpack calls it with `p`,
-    // its require/modules bag. By wrapping it we capture `p` for later use.
     if (chunk.length >= 3 && typeof chunk[2] === "function") {
       const origRuntime = chunk[2] as (p: unknown) => unknown;
       if (!(origRuntime as { __snapcap_runtime_wrapped?: boolean }).__snapcap_runtime_wrapped) {
         const wrappedRuntime = function (p: unknown): unknown {
           try {
-            const w = globalThis as unknown as {
-              __snapcap_webpack_p?: unknown;
-            };
             if (!w.__snapcap_webpack_p) {
               w.__snapcap_webpack_p = p;
             }
@@ -153,14 +144,7 @@ export function installWebpackCapture(): {
   }
 
   function hookChunkArray(arr: unknown[]): void {
-    // Process anything pushed before we got here.
     for (const chunk of arr) processChunk(chunk);
-
-    // Wrap push so we get a chance to capture chunk[2] (the runtime function)
-    // before webpack runs it with `p` (the require/module-dict bag). That
-    // captured `p` lets us iterate `p.m` (all webpack modules) and force-load
-    // them post-bootstrap, sidestepping the copy-before-wrap race that
-    // otherwise prevents factory wrapping from sticking.
     const origPush = arr.push.bind(arr);
     arr.push = function snapcapPush(...chunks: unknown[]): number {
       for (const c of chunks) processChunk(c);
@@ -168,15 +152,13 @@ export function installWebpackCapture(): {
     };
   }
 
-  // Pre-create the chunk array WITH our hooked push, so when the bundle
-  // does `self.webpackChunk_N_E = self.webpackChunk_N_E || []` it uses our
-  // already-hooked array and we capture every chunk push from the start.
+  // Pre-create the chunk array on the sandbox Window WITH our hooked push,
+  // so when the bundle does `self.webpackChunk_N_E = self.webpackChunk_N_E || []`
+  // it uses our already-hooked array and we capture every chunk push from
+  // the start.
   //
-  // The chunk-array name ("webpackChunk_N_E") is defined by Next.js at build
-  // time. For Snap's accounts bundle it's "webpackChunk_N_E"; the chat
-  // client at cf-st.sc-cdn.net may use a different name. We pre-create
-  // both common variants — extras are harmless.
-  const w = globalThis as unknown as Record<string, unknown>;
+  // The chunk-array name is defined by the bundle at build time. Pre-create
+  // every variant we know about — extras are harmless.
   const KNOWN_NAMES = [
     "webpackChunk_N_E",
     "webpackChunk_snapchat_web_calling_app",
@@ -191,17 +173,16 @@ export function installWebpackCapture(): {
     }
   }
 
-  // Also handle the case where the bundle has ALREADY registered (e.g.,
-  // load-after-bootstrap test scenarios) — hook any existing arrays we missed.
+  // Also handle the case where the bundle has ALREADY registered an array
+  // we missed — hook anything pre-existing.
   for (const k of Object.keys(w)) {
     if (k.startsWith("webpackChunk") && Array.isArray(w[k])) {
-      // Detect whether we've already hooked this one by checking property
-      // descriptor: our get/set form sets configurable+get+set but no value.
       const desc = Object.getOwnPropertyDescriptor(w[k], "push");
       if (desc && desc.get) continue;
       hookChunkArray(w[k] as unknown[]);
     }
   }
 
-  return { modules, originals, hints };
+  installed = { modules, originals, hints };
+  return installed;
 }

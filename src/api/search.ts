@@ -11,12 +11,11 @@
  * Lenses, Stories, etc.). For v1 we surface just user matches.
  */
 import { ProtoWriter, ProtoReader, bytesToUuid } from "../transport/proto-encode.ts";
-import type { CookieJar } from "tough-cookie";
-import { makeJarFetch } from "../transport/cookies.ts";
+import { makeJarFetch, type JarLike } from "../transport/cookies.ts";
 import { User } from "./user.ts";
 
 export type SearchUsersOpts = {
-  jar: CookieJar;
+  jar: JarLike;
   userAgent: string;
   bearer: string;
   origin?: string;

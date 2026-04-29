@@ -13,11 +13,15 @@
  * /web-chat-session/refresh is for renewing an existing bearer (it returns
  * 200 with empty body); first issuance is via this redirect fragment.
  */
-import type { CookieJar } from "tough-cookie";
-import { makeJarFetch } from "../transport/cookies.ts";
+import { makeJarFetch, type JarLike } from "../transport/cookies.ts";
 
 export type MintBearerOpts = {
-  jar: CookieJar;
+  /**
+   * Cookie source. Plain `CookieJar` or a DataStore-backed
+   * `CookieJarStore`-style wrapper — the GET to www.snapchat.com lands
+   * parent-domain cookies (sc-a-nonce/_scid/sc_at) in the jar.
+   */
+  jar: JarLike;
   userAgent: string;
   /** continueParam used at login time. Must match for SSO to issue a ticket. */
   continueParam?: string;
