@@ -117,6 +117,15 @@ export function uuidToHighLow(uuid: string): { high: bigint; low: bigint } {
   return { high: dv.getBigUint64(0, false), low: dv.getBigUint64(8, false) };
 }
 
+/** Inverse of uuidToHighLow: assemble a UUID string from the {high, low} pair. */
+export function highLowToUuid(high: bigint | string, low: bigint | string): string {
+  const out = new Uint8Array(16);
+  const dv = new DataView(out.buffer);
+  dv.setBigUint64(0, typeof high === "bigint" ? high : BigInt(high), false);
+  dv.setBigUint64(8, typeof low === "bigint" ? low : BigInt(low), false);
+  return bytesToUuid(out);
+}
+
 /** Inverse: 16-byte buffer → hyphenated UUID string. */
 export function bytesToUuid(bytes: Uint8Array): string {
   if (bytes.byteLength !== 16) {

@@ -29,6 +29,7 @@ import { mintBearer } from "./auth/sso.ts";
 import { listFriends, type RawSyncFriendData } from "./api/friends.ts";
 import { addFriends } from "./api/friending.ts";
 import { searchUsers } from "./api/search.ts";
+import { highLowToUuid } from "./transport/proto-encode.ts";
 import {
   Conversation,
   sendTypingNotification,
@@ -92,7 +93,17 @@ export class SnapcapClient {
     const jar = new CookieJar();
     await nativeLogin({ credentials: opts.credentials, jar, userAgent });
     const { bearer } = await mintBearer({ jar, userAgent });
-    return new SnapcapClient(jar, bearer, userAgent);
+    const client = new SnapcapClient(jar, bearer, userAgent);
+    // Auto-discover self user. SyncFriendData embeds the logged-in user's
+    // own metadata alongside the friend list — we just have to walk it.
+    // Best-effort: if discovery fails, leave self unset and let the caller
+    // call setSelf() manually.
+    try {
+      await client.resolveSelf(opts.credentials.username);
+    } catch {
+      // tolerate — consumer can still operate via setSelf()
+    }
+    return client;
   }
 
   static async fromAuth(opts: FromAuthOpts): Promise<SnapcapClient> {
@@ -104,12 +115,31 @@ export class SnapcapClient {
   }
 
   /**
-   * Override the self-user. Useful while we don't auto-discover the
-   * 16-byte UUID — the consumer can pass theirs in once and every
-   * subsequent Conversation method picks it up.
+   * Override the self-user. Auto-discovery covers the typical case
+   * (`fromCredentials` walks SyncFriendData and finds the logged-in
+   * user's own metadata), so this is mostly an escape hatch for callers
+   * who load auth from an old blob without `self` cached.
    */
   setSelf(user: User): void {
     this.self = user;
+  }
+
+  /**
+   * Resolve the logged-in user from server-side data. Calls SyncFriendData
+   * (which embeds the caller's own user record alongside the friend list)
+   * and matches on `mutableUsername`. Sets `this.self` and returns it.
+   *
+   * Used internally by `fromCredentials`. Consumers can call directly when
+   * loading from an old auth blob that doesn't have `self` cached.
+   */
+  async resolveSelf(username: string): Promise<User> {
+    const friends = await this.listFriends() as Record<string, unknown>;
+    const found = findSelf(friends, username);
+    if (!found) {
+      throw new Error(`could not resolve self user "${username}" from SyncFriendData response`);
+    }
+    this.self = found;
+    return found;
   }
 
   /** Serialize current session for reuse (auth.bearer may be expired; refresh-on-401 covers it). */
@@ -283,4 +313,33 @@ function inferKind(kindCode: number, participantCount: number): ConversationKind
   if (kindCode === 2 && participantCount === 2) return "dm";
   if (participantCount > 2) return "group";
   return "unknown";
+}
+
+/**
+ * Walk a SyncFriendData response looking for the logged-in user's own
+ * record (matched by `mutableUsername === username`). The self-user is
+ * included alongside the friend list — same shape as a Friend entry.
+ */
+function findSelf(payload: unknown, username: string): User | null {
+  const stack: unknown[] = [payload];
+  const seen = new Set<unknown>();
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+    const obj = node as Record<string, unknown>;
+    if (obj.mutableUsername === username && obj.userId && typeof obj.userId === "object") {
+      const id = obj.userId as { highBits?: bigint | string; lowBits?: bigint | string };
+      if (id.highBits !== undefined && id.lowBits !== undefined) {
+        return new User(
+          highLowToUuid(id.highBits, id.lowBits),
+          username,
+          typeof obj.displayName === "string" ? obj.displayName : undefined,
+        );
+      }
+    }
+    if (Array.isArray(node)) for (const x of node) stack.push(x);
+    else for (const k of Object.keys(obj)) stack.push(obj[k]);
+  }
+  return null;
 }
