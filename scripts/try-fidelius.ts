@@ -139,6 +139,40 @@ const wasmBytes = readFileSync(WASM_PATH);
 console.log(`[fidelius] wasm: ${wasmBytes.byteLength} bytes`);
 
 console.log("[fidelius] booting Module…");
+// Hook _emval_* to log every JS-side EmVal handle interaction. Lets us
+// see which arg the WASM is dereferencing when constructPostLogin fails.
+let emvalTrace = false;
+function wrapEmvalImports(imports: WebAssembly.Imports) {
+  const env = imports.env as Record<string, Function>;
+  const decodeCStr = (ptr: number): string => {
+    // Resolve memory live each call — Emscripten heap may be reset/grown.
+    const heap = (Module as { HEAPU8?: Uint8Array }).HEAPU8;
+    if (!heap) return `<${ptr}>`;
+    let end = ptr;
+    while (end < heap.length && heap[end] !== 0) end++;
+    return new TextDecoder().decode(heap.subarray(ptr, end));
+  };
+  for (const name of ["_emval_in", "_emval_get_property", "_emval_get_module_property", "_emval_call_method", "_emval_new_cstring"]) {
+    const orig = env[name];
+    if (typeof orig !== "function") continue;
+    env[name] = function (...args: unknown[]) {
+      try {
+        const r = orig.apply(this, args);
+        if (emvalTrace) {
+          let extra = "";
+          if (name === "_emval_new_cstring" && typeof args[0] === "number") {
+            extra = ` "${decodeCStr(args[0])}"`;
+          }
+          process.stderr.write(`  [emval] ${name}(${args.join(",")})${extra} → ${r}\n`);
+        }
+        return r;
+      } catch (e) {
+        if (emvalTrace) process.stderr.write(`  [emval ERR] ${name}(${args.join(",")}) → ${(e as Error).message.slice(0, 100)}\n`);
+        throw e;
+      }
+    };
+  }
+}
 let runtimeInitDone = false;
 const moduleEnv: Record<string, unknown> = {
   preRun: () => process.stderr.write("[fidelius] preRun fired\n"),
@@ -154,6 +188,7 @@ const moduleEnv: Record<string, unknown> = {
     process.stderr.write(
       `[fidelius] instantiateWasm called — imports.env has ${Object.keys(imports.env ?? {}).length} entries\n`,
     );
+    wrapEmvalImports(imports);
     WebAssembly.instantiate(wasmBytes, imports).then(
       (res) => {
         process.stderr.write(`[fidelius] WASM compiled OK — calling successCallback\n`);
@@ -435,6 +470,28 @@ for (const setter of ["setCircumstanceEngine", "setCompositeConfig", "setExperim
   }
 }
 
+// gRPC manager — bundle calls registerWebFactory({createClient}). If we
+// don't, KeyManager construction may silently bail because it can't
+// reach the server.
+const GrpcManager = Module.grpc_GrpcManager as Record<string, (...a: unknown[]) => unknown>;
+try {
+  GrpcManager.registerWebFactory({
+    createClient: (config: unknown) => {
+      process.stderr.write(`  [grpc.createClient] config: ${JSON.stringify(config).slice(0, 200)}\n`);
+      // Return a stub gRPC client — we don't need real network for round-trip
+      return {
+        unaryCall: (...args: unknown[]) => process.stderr.write(`  [grpc.unaryCall] ${args.length} args\n`),
+        clientStreamingCall: () => {},
+        serverStreamingCall: () => {},
+        bidiStreamingCall: () => {},
+      };
+    },
+  });
+  process.stderr.write(`  GrpcManager.registerWebFactory OK\n`);
+} catch (e) {
+  process.stderr.write(`  GrpcManager.registerWebFactory threw: ${(e as Error).message.slice(0, 200)}\n`);
+}
+
 // ── Try to construct E2EEKeyManager ────────────────────────────────────
 // Bundle pattern (f16f chunk) confirmed:
 //   constructPostLogin(grpcCfg, persistentStorageDelegate, sessionScopedStorageDelegate,
@@ -455,24 +512,27 @@ for (const n of ["DjinniCppProxy", "DjinniJsPromiseBuilder", "callJsProxyMethod"
   }
 }
 
-// First, mint a fresh identity using the WASM's own key generator —
-// this tells us what shape the storage delegate is expected to round-trip.
-const minted = (km.generateKeyInitializationRequest as (a: number) => unknown)(0) as {
-  keyInfo?: unknown;
-  rwk?: unknown;
-};
-process.stderr.write(`\n=== minted identity ===\n`);
-process.stderr.write(`  keyInfo: ${minted.keyInfo ? "yes" : "no"}, rwk: ${minted.rwk ? "yes" : "no"}\n`);
-
-// In-memory shared store, prefilled with the freshly minted key.
-// Bundle's `loadUserWrappedIdentityKeys` returns a serialized blob (the
-// "wrapped" form — encrypted-at-rest with the rwk). For a fresh start
-// without a stored blob, returning undefined is the documented signal
-// for "no prior key" — but maybe what's really expected is the same
-// shape as keyInfo from generateKeyInitializationRequest.
-let storedIdentity: unknown = undefined; // start "logged in but no stored key"
+// In-memory shared store. Will prefill with a freshly minted temp key.
+let storedIdentity: unknown = undefined;
 let storedRwk: unknown = undefined;
 let storedTempKey: unknown = undefined;
+
+// Mint a fresh identity using the WASM's own key generator.
+const minted = (km.generateKeyInitializationRequest as (a: number) => unknown)(0) as {
+  keyInfo?: { identity?: unknown; rwk?: unknown };
+  request?: unknown;
+};
+process.stderr.write(`\n=== minted identity ===\n`);
+process.stderr.write(`  keyInfo: ${minted.keyInfo ? "yes" : "no"}, identity: ${minted.keyInfo?.identity ? "yes" : "no"}, rwk: ${minted.keyInfo?.rwk ? "yes" : "no"}\n`);
+
+// Prime BOTH the RWK and the identity from minted output.
+// generateKeyInitializationRequest returns {keyInfo: {identity, rwk}, request}.
+// loadTemporaryIdentityKey usually returns a wrapper of `identity`.
+// readRootWrappingKey usually returns the raw rwk bytes.
+storedTempKey = minted.keyInfo?.identity;
+storedRwk = minted.keyInfo?.rwk;
+storedIdentity = minted.keyInfo?.identity; // also try via persistent storage
+process.stderr.write(`  primed: tempKey=${!!storedTempKey} rwk=${!!storedRwk} stored=${!!storedIdentity}\n`);
 
 // Class-instance form — some Embind/Djinni bindings probe with `in`
 // against own props that arrow-fn objects expose, but proto methods on
@@ -513,19 +573,30 @@ class SessionScopedStorage {
 const persistentStorage = new PersistentStorage();
 const sessionScopedStorage = new SessionScopedStorage();
 
-// UPGRADE_TO_TEN=1, TEN=1 from JS enum scan
+// Enable emval tracing only around the failing call.
+emvalTrace = true;
+// UPGRADE_TO_TEN=1, TEN=1 from JS enum scan.
+// 4th arg is the messaging config object — bundle builds it as
+// {databaseLocation, userId: {id: "uuid"}, userAgentPrefix, debug, tweaks}.
 try {
   const grpcCfg = { apiGatewayEndpoint: "https://us-east1-aws.api.snapchat.com", grpcPathPrefix: "" };
+  const sessionCfg = {
+    databaseLocation: ":memory:",
+    userId: { id: "527be2ff-aaec-4622-9c68-79d200b8bdc1" },
+    userAgentPrefix: "",
+    debug: false,
+    tweaks: { tweaks: new Map() },
+  };
   const result = (km.constructPostLogin as (...a: unknown[]) => unknown).call(
     km,
     grpcCfg,
     persistentStorage,
     sessionScopedStorage,
-    "527be2ff-aaec-4622-9c68-79d200b8bdc1",
+    sessionCfg,
     1, // UPGRADE_TO_TEN
     1, // TEN
   );
-  process.stderr.write(`  → SUCCESS! type=${typeof result}\n`);
+  process.stderr.write(`  → SUCCESS! type=${typeof result} value=${String(result).slice(0, 100)}\n`);
   if (result && typeof result === "object") {
     const r = result as Record<string, unknown>;
     process.stderr.write(`  keys: ${Object.keys(r).join(", ")}\n`);
@@ -541,11 +612,38 @@ try {
       }
     }
   }
+  // If undefined, try constructWithKey instead — pass our minted keyInfo
+  if (result === undefined) {
+    process.stderr.write(`  postLogin returned undefined — trying constructWithKey with minted key\n`);
+    const minted2 = (km.generateKeyInitializationRequest as (a: number) => unknown)(1) as {
+      keyInfo?: unknown;
+    };
+    try {
+      const result2 = (km.constructWithKey as (...a: unknown[]) => unknown).call(
+        km,
+        grpcCfg,
+        persistentStorage,
+        sessionScopedStorage,
+        sessionCfg,
+        minted2.keyInfo,
+        1,
+        1,
+      );
+      process.stderr.write(`  withKey → type=${typeof result2}\n`);
+      if (result2 && typeof result2 === "object") {
+        const r = result2 as Record<string, unknown>;
+        process.stderr.write(`  withKey keys: ${Object.keys(r).join(", ")}\n`);
+      }
+    } catch (e) {
+      process.stderr.write(`  withKey threw: ${(e as Error).message.slice(0, 200)}\n`);
+    }
+  }
 } catch (e) {
   const err = e as Error;
   process.stderr.write(`  threw: ${err.message.slice(0, 300)}\n`);
   if (err.stack) process.stderr.write(`  stack: ${err.stack.split("\n").slice(0, 5).join(" | ").slice(0, 500)}\n`);
 }
+emvalTrace = false;
 
 process.stderr.write("\n[fidelius] DONE\n");
 process.exit(0);
