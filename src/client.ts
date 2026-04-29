@@ -30,6 +30,8 @@ import { listFriends, syncFriendDataRaw } from "./api/friends.ts";
 import { addFriends } from "./api/friending.ts";
 import { searchUsers } from "./api/search.ts";
 import { buildPresenceBody, PresenceCounter } from "./api/presence.ts";
+// PresenceCounter is referenced in publishPresence's docs and
+// _publishViewing — explicit import keeps tree-shaking clean.
 import { connectDuplex, type Duplex } from "./transport/duplex.ts";
 import { highLowToUuid } from "./transport/proto-encode.ts";
 import {
@@ -173,13 +175,33 @@ export class SnapcapClient {
       this.duplex = (async () => {
         const dx = await connectDuplex({ bearer: this.bearer, jar: this.jar, userAgent: this.userAgent });
         await dx.ready;
+        // If the server kicks us off (another session displaced ours, auth
+        // dropped, etc.), drop the cached promise so the next presence
+        // call reconnects with a fresh handshake.
+        dx.onClosed((info) => {
+          this.duplex = null;
+          if (info.kind === "kicked") {
+            console.warn(
+              `[snapcap] duplex WS closed: another session connected as the same user (code=${info.code}). ` +
+              `Snap allows one active session per account; the SDK and a browser/app session for the same ` +
+              `user can't coexist. Will reconnect on next presence call.`,
+            );
+          } else if (info.kind === "auth") {
+            console.warn(`[snapcap] duplex WS closed: auth rejected (code=${info.code}, reason=${info.reason})`);
+          }
+        });
         return dx;
       })();
     }
     return this.duplex;
   }
 
-  /** Publish a presence frame on the conversation. Counter encodes the state (VIEWING / TYPING). */
+  /**
+   * Publish a presence frame on the conversation. Counter is monotonic
+   * per-WS-connection — first call returns 1 (= VIEWING), subsequent
+   * calls increment. The server reads counter==1 as "subscribe/viewing"
+   * and counter > 1 as activity (typing).
+   */
   private async publishPresence(
     conversationId: string,
     peerUserId: string,
@@ -200,17 +222,26 @@ export class SnapcapClient {
 
   /**
    * Internal: called by Conversation.setTyping(durationMs).
-   * Publishes a TYPING pulse to the duplex WS.
+   * Publishes an ACTIVITY pulse (counter > 1) to the duplex WS — server
+   * fans out as "typing…" to the recipient.
    */
   async _publishTyping(conversationId: string, peerUserId: string): Promise<void> {
-    await this.publishPresence(conversationId, peerUserId, PresenceCounter.TYPING);
+    const dx = await this.getDuplex();
+    // First-ever publish on this WS uses counter=1 which means "viewing",
+    // not "typing". Bump past 1 if we're at the start of the connection.
+    let c = dx.nextCounter();
+    if (c === 1) c = dx.nextCounter();
+    await this.publishPresence(conversationId, peerUserId, c);
   }
 
   /**
    * Internal: called by Conversation.markViewed().
-   * Publishes a VIEWING pulse — recipient sees the "in chat" indicator.
+   * Publishes a VIEWING pulse (counter=1) — recipient sees the
+   * "in chat" indicator (bitmoji avatar pose changes).
    */
   async _publishViewing(conversationId: string, peerUserId: string): Promise<void> {
+    // VIEWING is always counter=1 regardless of monotonic state — that's
+    // the protocol convention: 1 = "I'm subscribed to this conversation".
     await this.publishPresence(conversationId, peerUserId, PresenceCounter.VIEWING);
   }
 

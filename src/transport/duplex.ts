@@ -18,6 +18,13 @@
  * "http://pcs.snap/send-transient-message" with a nested envelope
  * identifying the channel ("presence" or "chat") and the conversation +
  * peer user.
+ *
+ * **Single-session-per-account constraint.** Snap allows only one active
+ * duplex WS per user account. When the SDK connects as user X, the
+ * server boots any existing session for X (browser tab, mobile app, etc.).
+ * Code consuming this module gets a `closed` signal carrying the close
+ * code/reason — `1006 ` or a server-sent code typically means "another
+ * session connected as you."
  */
 import WebSocket from "ws";
 import type { CookieJar } from "tough-cookie";
@@ -37,6 +44,19 @@ export type DuplexOpts = {
   /** Extra origin/UA hints — most callers can leave these defaulted. */
   origin?: string;
   userAgent?: string;
+};
+
+export type DuplexCloseInfo = {
+  /** Standard WebSocket close code (1000 normal, 1006 abnormal, 1011 server error, …). */
+  code: number;
+  /** Server-supplied reason if any. */
+  reason: string;
+  /**
+   * Best-effort interpretation. "kicked" = our session was displaced by
+   * another login on the same account. "auth" = bearer rejected.
+   * "transport" = network drop / non-clean close. "ok" = caller-initiated.
+   */
+  kind: "ok" | "kicked" | "auth" | "transport";
 };
 
 export type Duplex = {
@@ -59,6 +79,17 @@ export type Duplex = {
    * number — we mimic that shape here. Pass to buildPresenceBody().
    */
   sessionId: bigint;
+  /**
+   * Monotonic counter — increments on every `sendTransient`. Real browsers
+   * increment a per-session counter through type/edit/send activity; we
+   * mirror that so server-side dedupe (if any) treats every publish as a
+   * fresh event. Read this when building presence bodies.
+   */
+  nextCounter(): number;
+  /** Listener for connection close events. Fires once when the WS closes. */
+  onClosed(handler: (info: DuplexCloseInfo) => void): void;
+  /** True when the WS is in OPEN state. */
+  readonly isOpen: boolean;
 };
 
 const DEFAULT_URL = "wss://aws.duplex.snapchat.com/snapchat.gateway.Gateway/WebSocketConnect";
@@ -90,6 +121,19 @@ export async function connectDuplex(opts: DuplexOpts): Promise<Duplex> {
     rejectReady(new Error(`duplex WS error: ${msg}`));
   });
 
+  // Close-handling: classify and dispatch to listener.
+  let closeListener: ((info: DuplexCloseInfo) => void) | null = null;
+  let manualClose = false;
+  ws.on("close", (code: number, reasonBuf: Buffer) => {
+    const reason = reasonBuf?.toString?.("utf8") ?? "";
+    let kind: DuplexCloseInfo["kind"] = "transport";
+    if (manualClose) kind = "ok";
+    else if (code === 4401 || /unauth|forbidden/i.test(reason)) kind = "auth";
+    else if (code === 4409 || /conflict|displaced|another/i.test(reason)) kind = "kicked";
+    else if (code === 1000) kind = "ok";
+    closeListener?.({ code, reason, kind });
+  });
+
   const send = (channel: string, body: Uint8Array, recipientUserId: string): void => {
     if (ws.readyState !== WebSocket.OPEN) {
       throw new Error(`duplex WS not open (state=${ws.readyState})`);
@@ -109,7 +153,6 @@ export async function connectDuplex(opts: DuplexOpts): Promise<Duplex> {
       });
     });
     const proto = w.finish();
-    // gRPC-Web frame: 1-byte flag + 4-byte BE length + payload.
     const framed = new Uint8Array(5 + proto.byteLength);
     framed[0] = 0;
     new DataView(framed.buffer).setUint32(1, proto.byteLength, false);
@@ -118,15 +161,24 @@ export async function connectDuplex(opts: DuplexOpts): Promise<Duplex> {
   };
 
   // 16-digit random — matches the shape we observed from real browsers.
-  // Top 50 bits from Date.now()<<14, low 48 bits from crypto random.
   const sessionId =
     (BigInt(Date.now()) << 14n) |
     (BigInt(Math.floor(Math.random() * 0xffff_ffff_ffff)));
 
+  // Per-WS monotonic counter. Starts at 0 so the FIRST `nextCounter()`
+  // returns 1 — matching browsers, which use 1 for the initial subscribe.
+  let counter = 0;
+
   return {
     sendTransient: send,
-    close: () => ws.close(),
+    close: () => {
+      manualClose = true;
+      ws.close();
+    },
     ready,
     sessionId,
+    nextCounter: () => ++counter,
+    onClosed: (handler) => { closeListener = handler; },
+    get isOpen() { return ws.readyState === WebSocket.OPEN; },
   };
 }
