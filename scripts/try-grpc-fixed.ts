@@ -15,9 +15,12 @@ import { readFileSync } from "node:fs";
 import { nativeFetch } from "../src/transport/native-fetch.ts";  // bypasses happy-dom CORS
 import { mintFideliusIdentity } from "../src/auth/fidelius-mint.ts";
 import { SnapcapClient, type SnapcapAuthBlob } from "../src/index.ts";
-import { FileDataStore } from "../src/storage/data-store.ts";
+import { JsonFileDataStore } from "../src/storage/json-file-data-store.ts";
 
-const dataStore = new FileDataStore("/home/codingbutter/snapcap/SnapSDK/.tmp_auth/wasm-state");
+// Single-file DataStore. WASM persist + session entries land here with
+// indexdb_ prefix; bearer/cookies/etc could later land here too.
+const dataStore = new JsonFileDataStore("/home/codingbutter/snapcap/SnapSDK/.tmp_auth/auth.json");
+const KEY_PREFIX = "indexdb_";
 
 const log = (...args: unknown[]): void => {
   const s = args.map((a) => typeof a === "string" ? a : JSON.stringify(a, (_k, v) => v instanceof Uint8Array ? `<${v.byteLength}B>` : v)).join(" ");
@@ -33,7 +36,9 @@ process.on("uncaughtException", (err) => {
 });
 Error.stackTraceLimit = 100;
 
-const AUTH_PATH = "/home/codingbutter/snapcap/SnapSDK/.tmp_auth/auth.json";
+// Legacy SnapcapAuthBlob — until we fully migrate cookies/bearer/fidelius
+// into the unified DataStore, we still read login state from this side file.
+const AUTH_PATH = "/home/codingbutter/snapcap/SnapSDK/.tmp_auth/auth.legacy.json";
 const blob = JSON.parse(readFileSync(AUTH_PATH, "utf8")) as SnapcapAuthBlob;
 const fid = blob.fidelius;
 if (!fid) throw new Error("no fidelius — log in fresh first");
@@ -462,12 +467,12 @@ const persistentStorage = loggingProxy("persist", {
       if (v instanceof Uint8Array) return Array.from(v);
       return v;
     });
-    dataStore.set("e2ee/wrapped_identity_keys", new TextEncoder().encode(json))
+    dataStore.set(KEY_PREFIX + "e2ee_wrapped_identity_keys", new TextEncoder().encode(json))
       .catch((err) => log(`  err: ${(err as Error).message}`));
     log(`  → saved ${json.length}B JSON`);
   },
   async loadUserWrappedIdentityKeys() {
-    const bytes = await dataStore.get("e2ee/wrapped_identity_keys");
+    const bytes = await dataStore.get(KEY_PREFIX + "e2ee_wrapped_identity_keys");
     if (bytes && bytes.byteLength > 0) {
       // Restore the JSON-serialized shape WASM stored
       const json = new TextDecoder().decode(bytes);
@@ -484,12 +489,12 @@ const sessionScopedStorage = loggingProxy("session", {
   storeRootWrappingKey(e: unknown) {
     log(`[session.storeRwk] saving ${typeof e}`);
     const json = JSON.stringify(e, (_k, v) => v instanceof Uint8Array ? Array.from(v) : v);
-    dataStore.set("e2ee/root_wrapping_key", new TextEncoder().encode(json))
+    dataStore.set(KEY_PREFIX + "e2ee_root_wrapping_key", new TextEncoder().encode(json))
       .catch((err) => log(`  err: ${(err as Error).message}`));
     log(`  → saved ${json.length}B JSON`);
   },
   async readRootWrappingKey() {
-    const bytes = await dataStore.get("e2ee/root_wrapping_key");
+    const bytes = await dataStore.get(KEY_PREFIX + "e2ee_root_wrapping_key");
     if (bytes && bytes.byteLength > 0) {
       const json = new TextDecoder().decode(bytes);
       log(`[session.readRwk] → restored ${json.length}B JSON`);
@@ -500,10 +505,10 @@ const sessionScopedStorage = loggingProxy("session", {
   },
   async destroy() {
     log(`[session.destroy]`);
-    await dataStore.delete("e2ee/root_wrapping_key");
+    await dataStore.delete(KEY_PREFIX + "e2ee_root_wrapping_key");
   },
   async loadTemporaryIdentityKey() {
-    const bytes = await dataStore.get("e2ee/temporary_identity_key");
+    const bytes = await dataStore.get(KEY_PREFIX + "e2ee_temporary_identity_key");
     if (bytes && bytes.byteLength > 0) {
       log(`[session.loadTempKey] → bytes(${bytes.byteLength}B)`);
       return bytes;
@@ -513,13 +518,13 @@ const sessionScopedStorage = loggingProxy("session", {
   },
   async clearTemporaryIdentityKey() {
     log(`[session.clearTempKey]`);
-    await dataStore.delete("e2ee/temporary_identity_key");
+    await dataStore.delete(KEY_PREFIX + "e2ee_temporary_identity_key");
   },
   async storeTemporaryIdentityKey(e: unknown) {
     const bytes = e as Uint8Array;
     log(`[session.storeTempKey] ${bytes?.byteLength ?? typeof e}B`);
     if (bytes instanceof Uint8Array) {
-      await dataStore.set("e2ee/temporary_identity_key", bytes);
+      await dataStore.set(KEY_PREFIX + "e2ee_temporary_identity_key", bytes);
     }
   },
 });
