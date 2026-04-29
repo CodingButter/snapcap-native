@@ -51,8 +51,10 @@ while [[ ${#queue[@]} -gt 0 && $fetched -lt $MAX ]]; do
   local_path="$OUT_DIR/$host$path_part"
   mkdir -p "$(dirname "$local_path")"
 
-  # Fetch with a 15s timeout and IPv4-only.
-  if ! curl -sSL --max-time 15 --ipv4 \
+  # Fetch with a 15s timeout and IPv4-only. --compressed asks for and
+  # transparently decodes Brotli/gzip responses; without it, Snap's
+  # CDN returns Brotli-encoded WASM bytes and the saved file is unusable.
+  if ! curl -sSL --compressed --max-time 15 --ipv4 \
       -H "user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36" \
       -H "accept-language: en-US,en;q=0.9" \
       -o "$local_path" \

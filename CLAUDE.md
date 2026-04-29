@@ -8,7 +8,10 @@ Public, MIT-licensed Node SDK that talks to `web.snapchat.com` natively. Sibling
 
 - `SnapcapClient.fromCredentials({ credentials })` — full native login → cookie + bearer (~4s first time)
 - `SnapcapClient.fromAuth({ auth })` — instant restore from a 2 KB blob
-- `client.listFriends()` — AtlasGw/SyncFriendData over gRPC-Web with auto-401-refresh
+- `client.listFriends()` / `searchUsers()` / `addFriend()`
+- `client.getConversations()` / `Conversation.sendText` / `sendImage` / `sendImageWithCaption`
+- `client.postStory(bytes)` — auto-normalizes to 1080×1920 RGBA PNG, posts to MY_STORY
+- Persistent duplex WS for real-time presence (typing / viewing) with kick detection
 - `client.toAuthBlob()` — serialize cookie jar + bearer for persistence
 
 End-to-end smoke test: `bun run scripts/smoke.ts` (needs `.snapcap-smoke.json` with `{username, password}` — local file, not committed).
@@ -53,8 +56,8 @@ These are easy to break and hard to debug — read these before touching the rel
 
 ## What's still gated
 
-- **Receiving message body content** — Fidelius E2E. The two encrypted WASMs in chat bundle (`e4fa…wasm`, `ab45…wasm`) need decryption first. The Embind-trace technique that cracked kameleon should work; not yet attempted.
-- **Real-time push** — `aws.duplex.snapchat.com` WebSocket. Mostly carries body data we can't decrypt anyway.
+- **Snaps (disappearing image messages, destination kind 122)** and **receiving message body content** — both gated on the same Fidelius E2E layer. The relevant primitives live in two WASMs in the chat bundle (`e4fa…wasm` ~12 MB, `ab45…wasm` ~814 KB). They are *not* encrypted — earlier we mistook Brotli content-encoding for ciphertext. They're plain WebAssembly, ready for Embind-trace reversal like kameleon. `download-bundle.sh` now passes `--compressed` so re-pulls get plaintext WASM; old vendor/ checkouts may have garbage bytes.
+- **Receiving real-time push payloads** on `aws.duplex.snapchat.com`. Same Fidelius gate — once we have the primitives, the duplex WS becomes useful for inbound message bodies.
 
 ## Adding an API method (pattern)
 
