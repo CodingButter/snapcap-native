@@ -1,77 +1,86 @@
 # The auth model
 
-`SnapcapClient` has two ways in.
+`SnapcapClient` follows the same pattern a browser would: a long-lived cookie jar plus a short-lived bearer (JWT). Both auto-restore from the DataStore on every process boot. You almost never have to think about either.
 
-## fromCredentials
+## What gets persisted
 
-Username + password. The full native login flow runs:
+| Key in DataStore | Purpose | Lifetime |
+|---|---|---|
+| `cookie_jar` | tough-cookie serialised — `__Host-sc-a-auth-session` (refresh-style) plus parent-domain cookies (`sc-a-nonce`, `_scid`, `sc_at`) | Days–weeks until Snap revokes |
+| `session_snapcap_bearer` | Last-minted SSO bearer (JWT) | ~1 hour, then refreshed transparently |
+| `local_snapcap_self` | `{userId, username, displayName}` of the logged-in user | Stable until logout |
+| `indexdb_snapcap__fidelius__identity` | Long-lived E2E keypair + RWK | Per-account; **cannot be regenerated** if lost |
 
-1. Boot kameleon (cached process-wide; ~2s the first time, 0ms thereafter)
-2. Generate attestation token
-3. POST WebLogin with username + attestation
-4. POST WebLogin with password + sessionPayload
-5. GET /accounts/sso → bearer ticket
-6. GET www.snapchat.com/web → parent-domain cookies
+The truly durable bit is `__Host-sc-a-auth-session`. As long as it's still server-side valid, the client can re-mint a fresh bearer from it — no credentials needed.
 
-Total wall-clock: about 4 seconds the first time, 1.5 seconds for subsequent calls in the same process (kameleon is cached).
+## isAuthorized()
 
-```ts
-const client = await SnapcapClient.fromCredentials({
-  credentials: { username, password },
-  userAgent: "Mozilla/5.0 …",  // optional; falls back to Linux Chrome 147
-});
-```
+The single gate every API call passes through. Decision flow:
 
-## fromAuth
-
-Pick up a saved session. Instant.
+1. **In-memory cache hit?** — If `isAuthorized()` already returned `true` this process, return `true` immediately. Skipped if `force: true`.
+2. **Try restoring from the DataStore.** Read the cookie jar; check that `__Host-sc-a-auth-session` is present; read the cached bearer. If both exist, mark warm and return `true`.
+3. **No restored state, but credentials supplied?** Run the full native login (kameleon → WebLoginService 2-step → SSO bearer mint → cookie seed → SyncFriendData self-resolve → Fidelius identity mint+register). Persist everything to the DataStore. Return `true`.
+4. **Server rejected the credentials, or no credentials configured?** Return `false`. Does **not** throw — consumers that want to probe authorization state shouldn't have to wrap it in try/catch.
 
 ```ts
-const blob = JSON.parse(readFileSync("auth.json", "utf8"));
-const client = await SnapcapClient.fromAuth({ auth: blob });
-```
-
-The blob is what `client.toAuthBlob()` returns: a serialized cookie jar plus the most recent bearer plus the user-agent. About 2 KB on disk.
-
-The bearer in the blob may be expired. That's fine — the first API call that returns 401 triggers a transparent refresh against the long-lived `__Host-sc-a-auth-session` cookie in the jar. The retry happens once, transparently, before the result returns.
-
-## When refresh fails
-
-Refresh works as long as `__Host-sc-a-auth-session` is still server-side valid. If the cookie is dead (server-side expiration, account got logged out elsewhere, password rotated), refresh returns `null` and the original 401 surfaces:
-
-```ts
-try {
-  await client.listFriends();
-} catch (e) {
-  if (e.message.includes("HTTP 401")) {
-    // re-login from credentials
-    client = await SnapcapClient.fromCredentials({ credentials });
-  }
+if (await client.isAuthorized()) {
+  // safe to call any API method
+} else {
+  // creds were missing or rejected — show login UI, prompt for new password, etc.
 }
 ```
 
-A nicer pattern: keep credentials around, wrap the SDK in a thin retry-on-401 shim that re-logins. The full `fromCredentials → fromAuth(blob)` pipeline can fall back to `fromCredentials` automatically.
+## When to use force: true
+
+```ts
+await client.isAuthorized({ force: true });
+```
+
+Use this when:
+
+- **Password rotation.** The old bearer + cookie still look valid client-side but won't be honoured by the server. Force a re-login to mint fresh ones.
+- **You suspect server-side invalidation.** Snap's anti-fraud may revoke a session without surfacing a clear error code; a forced re-login is the cleanest reset.
+- **Periodic health check.** Some operators force-login once a week as a hygiene step. Doesn't hurt as long as you don't do it on every request.
+
+For routine warm starts, the unforced path is what you want — it's `O(milliseconds)` and never hits the network.
+
+## Bearer refresh (transparent)
+
+Bearers expire roughly hourly. You don't have to handle this:
+
+- gRPC call goes out with the cached bearer.
+- Server returns `HTTP 401`.
+- The transport layer re-mints a bearer from the cookie jar (the `__Host-sc-a-auth-session` cookie is the credential), persists it back to `session_snapcap_bearer`, and retries the call **once**.
+- If refresh succeeds, the original call returns success — caller never sees the 401.
+- If refresh fails (cookie also dead), the original 401 surfaces and the caller can call `client.isAuthorized({ force: true })` to fall back to credentials.
+
+## When the cookie dies
+
+Cookies don't live forever. Symptoms: every gRPC call returns 401, refresh keeps failing. Remediation:
+
+```ts
+if (!(await client.isAuthorized({ force: true }))) {
+  throw new Error("snap login rejected — password rotated, account locked, or captcha required");
+}
+```
+
+If you instantiate the client without credentials, the only recovery path is to construct a new client with credentials.
+
+## logout()
+
+```ts
+await client.logout();
+```
+
+Deletes the auth-state keys from the DataStore:
+
+- `cookie_jar` — gone.
+- `session_snapcap_bearer` — gone.
+- `local_snapcap_self` — gone.
+- `indexdb_snapcap__fidelius__identity` — **gone**, but think twice. Snap won't let the same user re-register a Fidelius identity, so wiping this means E2E (snaps, inbound message bodies) is unrecoverable for this account from this client.
+
+The bundle's other sandbox-storage entries (`local_*`, `session_*`, `indexdb_*` keys we don't own) are **not** deleted. Wiping them would force the next login to re-bootstrap a bunch of WASM state from scratch with no benefit.
 
 ## Multi-account
 
-Multiple clients in the same process share the kameleon Module. Each has its own cookie jar, bearer, and user agent.
-
-```ts
-const a = await SnapcapClient.fromCredentials({ credentials: c1 });
-const b = await SnapcapClient.fromCredentials({ credentials: c2 });
-const c = await SnapcapClient.fromCredentials({ credentials: c3 });
-
-// All three calls run concurrently against three separate sessions.
-const [fa, fb, fc] = await Promise.all([a.listFriends(), b.listFriends(), c.listFriends()]);
-```
-
-Memory cost per extra account: cookie jar (~2 KB) + bearer string (~300 chars) + a small SnapcapClient object. The 5 MB bundle and 814 KB WASM live in the kameleon singleton — paid once.
-
-## Why not just put the bearer in the blob and skip refresh
-
-You can. Bearers are typically valid for an hour. But:
-
-- A blob saved 24 hours ago will have a stale bearer. The 401-then-refresh path handles this for free.
-- Bearers don't survive Snap-side session invalidation (account rotation, suspicious-activity log-out). The refresh path also handles those — gracefully transitions through a 401 to a fresh bearer or a clean error.
-
-In short: the blob persists the *credential chain* (cookie jar > bearer); the SDK transparently re-derives the bearer when needed. You don't have to think about it.
+Each account gets its own DataStore — kameleon and bundle code are shared. See [Persistence](/guide/persistence) for the full layout.

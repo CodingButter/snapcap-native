@@ -1,6 +1,6 @@
 # Getting started
 
-`@snapcap/native` is a single TypeScript class. You give it credentials (or a saved auth blob), it gives you methods.
+`@snapcap/native` is a single TypeScript class. You give it a `DataStore` (and, on first run, credentials); it gives you methods.
 
 ## Install
 
@@ -8,62 +8,90 @@
 pnpm add @snapcap/native
 ```
 
-Requires Bun 1.3+ or Node 22+ (the bundle uses top-level `await` and the WASM imports lean on modern fetch).
+Requires **Bun 1.3+** or **Node 22+** — the bundle uses top-level `await`, the WASM imports lean on modern `fetch`, and the SDK relies on Node's `vm.Context` global-builtins behaviour that landed in those versions.
 
 ## First call
 
 ```ts
-import { SnapcapClient } from "@snapcap/native";
+import { SnapcapClient, FileDataStore } from "@snapcap/native";
 
-const client = await SnapcapClient.fromCredentials({
-  credentials: {
-    username: "your_username",
-    password: "your_password",
-  },
+const client = new SnapcapClient({
+  dataStore: new FileDataStore("./auth.json"),
+  username: process.env.SNAP_USER,
+  password: process.env.SNAP_PASS,
 });
 
-const friends = await client.listFriends();
-console.log(friends);
+if (await client.isAuthorized()) {
+  const friends = await client.listFriends();
+  console.log(friends);
+} else {
+  console.error("login rejected");
+}
 ```
 
-The first call takes about 4 seconds. Most of that is the kameleon WASM Module booting; the actual login round-trip is sub-second.
+That's the whole pattern. The constructor is synchronous and just wires up the sandbox + DataStore. The first network call is gated on `isAuthorized()`:
 
-## Persist the session
+- **Cold start** (`auth.json` empty / missing): kameleon WASM boots, full WebLogin → SSO → cookie-seed flow runs, identity is persisted to the DataStore, then `listFriends()` runs. Wall-clock around **5 seconds**.
+- **Warm start** (`auth.json` already has valid cookies): `isAuthorized()` rehydrates from disk and returns `true` synchronously-ish (≈ **1 ms**). `listFriends()` is whatever the gRPC round-trip costs (≈ 200 ms).
 
-Logging in every process start is wasteful. Save the auth blob:
+The username/password fields are only consulted when there's nothing valid in the DataStore. They are **not** persisted — pass them on every boot if you want to be able to recover from session expiry without manual intervention.
+
+## Cold start vs warm start
+
+Reuse the DataStore across processes (or across PMs, or across worker boots) to skip the kameleon boot + login flow:
 
 ```ts
-import { writeFileSync, readFileSync } from "node:fs";
+// Process 1, fresh disk:
+new SnapcapClient({ dataStore: new FileDataStore("./auth.json"), username, password });
+await client.isAuthorized();   // ≈ 5 s — full login
 
-// Once:
-const client = await SnapcapClient.fromCredentials({ credentials });
-writeFileSync("auth.json", JSON.stringify(await client.toAuthBlob()));
-
-// Every other time:
-const blob = JSON.parse(readFileSync("auth.json", "utf8"));
-const client = await SnapcapClient.fromAuth({ auth: blob });
+// Process 2, same auth.json:
+new SnapcapClient({ dataStore: new FileDataStore("./auth.json") });
+await client.isAuthorized();   // ≈ 1 ms — restored from disk, no network
 ```
 
-`fromAuth` is instant. The blob is about 2 KB.
+If the bearer in the DataStore has expired, the next gRPC call hits 401 and the client transparently mints a fresh bearer from the long-lived `__Host-sc-a-auth-session` cookie — no caller-side handling required.
 
-The bearer in the blob is short-lived, but the cookie jar holds a long-lived `__Host-sc-a-auth-session` cookie. When a call returns 401, the client transparently re-mints a fresh bearer from the cookie and retries — you never see the rotation.
+## Force a fresh login
+
+Pass `force: true` to bypass the warm-start cache and re-run the login flow even if the DataStore looks valid:
+
+```ts
+await client.isAuthorized({ force: true });
+```
+
+Useful for password rotations or for working around a server-side session invalidation you couldn't detect any other way.
+
+## Logout
+
+```ts
+await client.logout();
+```
+
+Clears the auth-state keys (`cookie_jar`, `session_snapcap_bearer`, `local_snapcap_self`, `indexdb_snapcap__fidelius__identity`) from the DataStore. The bundle's other sandbox storage entries are left intact so the next login doesn't have to re-bootstrap WASM state from scratch.
 
 ## Multi-account
 
-Multiple `SnapcapClient` instances share the same kameleon Module under the hood, so multi-account is cheap:
+Each account gets its own DataStore — the kameleon module and bundle code are shared across `SnapcapClient` instances:
 
 ```ts
-const accounts = await Promise.all(
-  credentialsList.map((credentials) =>
-    SnapcapClient.fromCredentials({ credentials }),
-  ),
+const accounts = users.map((u) =>
+  new SnapcapClient({
+    dataStore: new FileDataStore(`./auth/${u.username}.json`),
+    username: u.username,
+    password: u.password,
+  }),
 );
 
+await Promise.all(accounts.map((c) => c.isAuthorized()));
 const allFriends = await Promise.all(accounts.map((c) => c.listFriends()));
 ```
 
-Memory cost per extra account is roughly the size of the cookie jar (~2 KB) plus the bearer string (~300 chars).
+Memory cost per extra account is the cookie jar (~2 KB) + bearer (~300 chars) + a small client object. The 5 MB JS bundle and 814 KB WASM live in the kameleon singleton — paid once.
 
 ## What's next
 
-Head to the [Internals](/internals/architecture) section for the full story of how the bundle is loaded, how kameleon is run in Node, and how the SSO bearer dance actually works. If you just want to use the SDK, the API surface lives in [the auth guide](/guide/auth) and the method-level docs.
+- [Auth model](/guide/auth) — what `isAuthorized()` actually does, and when to use `force`.
+- [Persistence](/guide/persistence) — the DataStore key layout and how to plug in your own backend.
+- [API reference](/api/) — every public method, indexed.
+- [Internals](/internals/architecture) — how the bundle, kameleon, and SSO dance work under the hood.

@@ -147,7 +147,7 @@ Net effect: callers never see bearer expiration. They write `await client.listFr
 
 Two failure modes worth watching:
 
-1. **Cookie expiration.** `__Host-sc-a-auth-session` has `Max-Age=31536000` (one year). The actual server-side validity may be shorter — sliding window, idle-timeout, who knows. When the cookie is dead, the SSO redirect won't issue a ticket. The retry in `mintBearer` returns `null`, the original 401 surfaces, and the caller has to re-login from username + password. Catch the error, call `SnapcapClient.fromCredentials` again.
+1. **Cookie expiration.** `__Host-sc-a-auth-session` has `Max-Age=31536000` (one year). The actual server-side validity may be shorter — sliding window, idle-timeout, who knows. When the cookie is dead, the SSO redirect won't issue a ticket. The retry in `mintBearer` returns `null`, the original 401 surfaces, and the caller has to re-login from username + password. Construct a fresh `SnapcapClient({ dataStore, username, password })` (or call `client.isAuthorized({ force: true })`) to re-run the full login.
 
 2. **Continue-param mismatch.** SSO requires `client_id=web-calling-corp--prod` (or whatever `client_id` the original WebLogin used). If the values diverge between login time and bearer-mint time, SSO returns a different redirect that doesn't carry a ticket. snapcap pins the same default in both flows, so this only bites if you override one without the other.
 

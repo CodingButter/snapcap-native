@@ -175,29 +175,33 @@ Snap's server-side validation presumably decrypts the blob, verifies the embedde
 
 ## The full snapcap kameleon module
 
-Here's the entire `bootKameleon` flow in one place:
+Here's the entire `bootKameleon` flow in one place. Note: the `globalThis` referenced inside the patched bundle source is the **sandbox-realm** `globalThis`, not the host's. Bundle source is eval'd via `sandbox.runInContext(src)`, and `getSandbox().getGlobal("__snapcap_p")` reads the value back from that same realm.
 
 ```ts
 import { installShims } from "../shims/runtime.ts";
 import { installWebpackCapture } from "../shims/webpack-capture.ts";
 
 async function bootKameleonOnce(): Promise<KameleonContext> {
-  installShims({ url: "https://accounts.snapchat.com/" });
+  const sandbox = installShims({ url: "https://accounts.snapchat.com/" });
   installWebpackCapture();
 
-  // 1. Eval the accounts bundle in canonical Next.js order.
+  // 1. Eval the accounts bundle in canonical Next.js order — inside the sandbox.
   for (const file of accountsFilesInOrder) {
     let src = readFileSync(file, "utf8");
     if (file.startsWith("webpack-")) {
-      // 2. Source-patch the runtime IIFE to leak `p` to globalThis.
+      // 2. Source-patch the runtime IIFE to leak `p` to (sandbox-realm) globalThis.
       src = src.replace("p.m=s,p.amdO={}", "globalThis.__snapcap_p=p,p.m=s,p.amdO={}");
     }
-    new Function("module", "exports", "require", src)({ exports: {} }, {}, () => {
-      throw new Error("require not available");
-    });
+    // Wrap with newlines around src — bundle ends in a //# sourceMappingURL line
+    // comment with no trailing newline, which would otherwise eat the IIFE close.
+    sandbox.runInContext(
+      "(function(module, exports, require) {\n" + src + "\n})({ exports: {} }, {}, () => { throw new Error('require not available'); });",
+      file,
+    );
   }
 
-  const wreq = (globalThis as any).__snapcap_p;
+  // The patched runtime stashed `p` on the sandbox-realm globalThis.
+  const wreq = sandbox.getGlobal<any>("__snapcap_p");
 
   // 3. Force-require module 58116 (kameleon factory).
   const factory = wreq("58116").default;
@@ -238,7 +242,10 @@ Every numbered step has a non-obvious failure mode. (3) won't work without (2) �
 In the SDK, none of this is exposed. You write:
 
 ```ts
-const client = await SnapcapClient.fromCredentials({ credentials });
+const client = new SnapcapClient({ dataStore, username, password });
+if (await client.isAuthorized()) {
+  await client.listFriends();
+}
 ```
 
-Internally, the kameleon Module is booted lazily on the first call to `fromCredentials` and cached in a process-wide singleton. Subsequent `SnapcapClient` instances reuse it for free. Multi-account works because `finalize(username)` rebinds per call — the same Module mints different tokens for different users.
+Internally, the kameleon Module is booted lazily on the first cold-start `isAuthorized()` call (when no restored cookies are in the DataStore) and cached in a process-wide singleton on the sandbox. Subsequent `SnapcapClient` instances reuse it for free. Multi-account works because `finalize(username)` rebinds per call — the same Module mints different tokens for different users.

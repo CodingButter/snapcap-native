@@ -10,6 +10,9 @@ hero:
       text: Get started
       link: /guide/getting-started
     - theme: alt
+      text: API reference
+      link: /api/
+    - theme: alt
       text: How it works
       link: /internals/architecture
 
@@ -24,11 +27,12 @@ features:
       Runs Snap's kameleon Emscripten module in Node and generates the
       same attestation token a real browser would. Snap's anti-fraud
       accepts it because it's the actual code path, not a forgery.
-  - title: Tiny session blob
+  - title: Browser-shaped persistence
     details: |
-      Log in once with username + password, save a 2 KB auth blob, and
-      every subsequent process starts in a single millisecond. Reuse
-      across servers, persist to disk, ship with credentials.
+      Hand the client a <code>DataStore</code> — file, memory, Redis, KMS,
+      whatever — and the bundle's cookies, bearer, Fidelius identity, and
+      sandboxed local/session/IndexedDB writes all land under stable keys.
+      Cold start ~5 s; warm start ~1 ms.
   - title: gRPC-Web for free
     details: |
       Every Snap RPC client and protobuf encoder/decoder is shipped in
@@ -36,19 +40,33 @@ features:
       files, no codegen, no schema drift.
   - title: One-line API
     details: |
-      <code>const friends = await client.listFriends()</code>. The whole
-      auth dance, bearer rotation, cookie jar, and gRPC framing live
-      under the surface.
+      <code>if (await client.isAuthorized()) await client.listFriends()</code>.
+      Login, bearer rotation, cookie jar, and gRPC framing all live under
+      the surface.
   - title: Multi-account ready
     details: |
-      Kameleon module is shared across SnapcapClient instances. Run
-      hundreds of accounts in one Node process at a fraction of the
-      memory Playwright would burn.
+      Kameleon module is shared across SnapcapClient instances. Run many
+      accounts in one Node process at a fraction of the memory Playwright
+      would burn — each account gets its own DataStore.
 ---
 
 ## What this is
 
-A Node SDK that talks directly to `web.snapchat.com`'s gRPC-Web API the same way the browser does — by running Snap's actual JavaScript bundle. You get an idiomatic TypeScript class with methods like `listFriends()`, `sendTextMessage()`, and `postStory()`.
+A Node SDK that talks directly to `web.snapchat.com`'s gRPC-Web API the same way the browser does — by running Snap's actual JavaScript bundle in an isolated Node `vm.Context`. You get an idiomatic TypeScript class with methods like `listFriends()`, `sendText()`, and `postStory()`.
+
+```ts
+import { SnapcapClient, FileDataStore } from "@snapcap/native";
+
+const client = new SnapcapClient({
+  dataStore: new FileDataStore("./auth.json"),
+  username: process.env.SNAP_USER,
+  password: process.env.SNAP_PASS,
+});
+
+if (await client.isAuthorized()) {
+  console.log(await client.listFriends());
+}
+```
 
 ## What this is not
 
@@ -60,10 +78,11 @@ A Node SDK that talks directly to `web.snapchat.com`'s gRPC-Web API the same way
 
 | Capability | Status |
 |---|---|
-| Native login (username + password → cookie + bearer) | ✅ Working |
-| `listFriends()` via AtlasGw | ✅ Working |
-| Search users, add friend, send text DM | 🚧 Next |
-| Send media DM, post story | 🚧 Planned |
-| Receive message *content* | ❌ Blocked on Fidelius E2E |
+| Native login (username + password → cookie + bearer) | Working |
+| `listFriends()` / `searchUsers()` / `addFriend()` | Working |
+| `getConversations()` + `Conversation.sendText` / `sendImage` | Working |
+| `postStory()` (auto-normalises to 1080×1920 RGBA PNG) | Working |
+| Persistent duplex WS (real-time presence) | Working |
+| Receive message *content* | Blocked on Fidelius E2E |
 
-If you came here to understand **how** all of this works, head to the [Internals](/internals/architecture) section.
+If you came here to understand **how** all of this works, head to the [Internals](/internals/architecture) section. To dive straight into APIs, see the [Reference](/api/).

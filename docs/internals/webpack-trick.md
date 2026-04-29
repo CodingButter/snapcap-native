@@ -115,7 +115,7 @@ new Function("module", "exports", "require", src)({ exports: {} }, {}, () => {
 });
 ```
 
-After this runs, `globalThis.__snapcap_p` is the real `__webpack_require__`. We can call `wreq("58116")` and get the kameleon Module factory. Done.
+After this runs, `globalThis.__snapcap_p` is the real `__webpack_require__` — `globalThis` here is the **sandbox-realm** global, not the host's. The bundle is eval'd via `sandbox.runInContext(src)` (see [the sandbox chapter](/internals/sandbox)), so `globalThis.__snapcap_p=p,…` lands on the vm.Context's global. SDK code reads it back via `getSandbox().getGlobal("__snapcap_p")`. Then we call `wreq("58116")` and get the kameleon Module factory. Done.
 
 Why this is durable:
 
@@ -156,10 +156,10 @@ Snap ships the bundle as multiple webpack chunks loaded from different hosts:
 
 Each bundle uses its own webpack chunk-array name (`webpackChunk_N_E` vs `webpackChunk_snapchat_web_calling_app`) and its own webpack runtime. Module IDs are scoped per-bundle: module 74052 in the chat bundle is AtlasGw; module 74052 in the accounts bundle is something completely different (if it exists at all).
 
-When we boot kameleon, only the accounts bundle is loaded. The first time anything calls `listFriends()`, `api/friends.ts` lazy-loads the chat bundle and merges its factories into the accounts `p.m`:
+When we boot kameleon, only the accounts bundle is loaded. The first time anything calls `listFriends()`, `api/friends.ts` lazy-loads the chat bundle and merges its factories into the accounts `p.m`. As above, `globalThis` here is the sandbox-realm global — both chunk arrays live in the vm.Context, not the host:
 
 ```ts
-const arr = globalThis["webpackChunk_snapchat_web_calling_app"] as unknown[];
+const arr = sandbox.getGlobal<unknown[]>("webpackChunk_snapchat_web_calling_app")!;
 for (const chunk of arr) {
   const mods = chunk[1] as Record<string, Function>;
   for (const id in mods) {
