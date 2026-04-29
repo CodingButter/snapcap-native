@@ -61,6 +61,17 @@ export class ProtoWriter {
     return this;
   }
 
+  /** Field with a fixed32 value (4 bytes, little-endian on wire). */
+  fieldFixed32(field: number, value: number): this {
+    this.tag(field, 5);
+    let v = value < 0 ? (0x1_0000_0000 + value) >>> 0 : value >>> 0;
+    for (let i = 0; i < 4; i++) {
+      this.buf.push(v & 0xff);
+      v = (v >>> 8) >>> 0;
+    }
+    return this;
+  }
+
   /** Field with a string (UTF-8 encoded). */
   fieldString(field: number, str: string): this {
     return this.fieldBytes(field, new TextEncoder().encode(str));

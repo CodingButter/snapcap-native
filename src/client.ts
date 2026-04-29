@@ -321,6 +321,27 @@ export class SnapcapClient {
   }
 
   /**
+   * Post an image to MY_STORY (the user's own story feed). Returns when
+   * the server accepts the post; friends see it in their story feeds via
+   * Snap's normal fanout. Requires `client.self.username`.
+   *
+   * The image is auto-normalized to 1080×1920 RGBA PNG (center-cropped to
+   * 9:16) — Snap's server silently drops stories built from anything else
+   * that doesn't look like what its own camera produces. Pass
+   * `skipNormalize: true` only if you've pre-conformed the bytes yourself.
+   */
+  async postStory(bytes: Uint8Array, opts?: { skipNormalize?: boolean }): Promise<void> {
+    if (!this.self?.username) {
+      throw new Error("postStory requires self.username — call fromCredentials() or resolveSelf() first");
+    }
+    const { postStory } = await import("./api/media.ts");
+    const { nativeFetch } = await import("./transport/native-fetch.ts");
+    await postStory(this.makeRpc(), nativeFetch, this.self.userId, this.self.username, {
+      bytes, skipNormalize: opts?.skipNormalize,
+    });
+  }
+
+  /**
    * Search Snap's user index by query string. Returns User objects with
    * userId, username, and displayName populated where available.
    */

@@ -49,6 +49,7 @@
   "dependencies": {
     "@happy-dom/global-registrator": "^15.0.0",
     "happy-dom": "^15.0.0",
+    "sharp": "^0.34.5",
     "tough-cookie": "^5.0.0",
     "ws": "^8.18.0"
   },
