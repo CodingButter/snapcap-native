@@ -190,6 +190,10 @@ export class ProtoReader {
   /**
    * Skip a field whose wire type we don't care about. Required for forward
    * compatibility — Snap can add fields without breaking us.
+   *
+   * Wire types covered: 0 (varint), 1 (fixed64), 2 (length-delimited),
+   * 5 (fixed32). The spec also defines 3/4 (start/end-group, deprecated);
+   * we don't see them in modern Snap protos and treat them as fatal.
    */
   skip(wireType: number): void {
     switch (wireType) {

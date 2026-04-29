@@ -28,6 +28,7 @@ import { nativeLogin, type LoginCredentials } from "./auth/login.ts";
 import { mintBearer } from "./auth/sso.ts";
 import { listFriends, type RawSyncFriendData } from "./api/friends.ts";
 import { addFriends } from "./api/friending.ts";
+import { searchUsers } from "./api/search.ts";
 import {
   Conversation,
   sendTypingNotification,
@@ -194,6 +195,19 @@ export class SnapcapClient {
   async addFriend(userId: string | string[], source?: string): Promise<void> {
     const ids = Array.isArray(userId) ? userId : [userId];
     await addFriends(this.makeRpc(), ids, source);
+  }
+
+  /**
+   * Search Snap's user index by query string. Returns User objects with
+   * userId, username, and displayName populated where available.
+   */
+  async searchUsers(query: string, pageSize?: number): Promise<User[]> {
+    return await searchUsers(query, {
+      jar: this.jar,
+      userAgent: this.userAgent,
+      bearer: this.bearer,
+      refreshBearer: () => this.refreshBearer(),
+    }, pageSize);
   }
 
   /**
