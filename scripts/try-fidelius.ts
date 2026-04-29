@@ -242,5 +242,111 @@ const interesting = exportNames.filter((k) =>
 process.stderr.write(`[fidelius] interesting exports (${interesting.length}):\n`);
 for (const k of interesting) process.stderr.write(`  ${k}\n`);
 
-process.stderr.write("[fidelius] DONE — calling process.exit(0)\n");
+// Probe key Embind classes for static methods + instance method signatures.
+function probeClass(name: string): void {
+  const klass = (Module as Record<string, unknown>)[name] as Record<string, unknown> | undefined;
+  process.stderr.write(`\n=== ${name} ===\n`);
+  if (!klass) {
+    process.stderr.write("  (not present)\n");
+    return;
+  }
+  process.stderr.write(`  type: ${typeof klass}\n`);
+  // Static methods/properties
+  const staticKeys = Object.getOwnPropertyNames(klass).filter((k) => !k.startsWith("__"));
+  process.stderr.write(`  static keys: ${staticKeys.join(", ") || "(none)"}\n`);
+  // Prototype methods
+  const proto = (klass as { prototype?: unknown }).prototype;
+  if (proto) {
+    const protoKeys = Object.getOwnPropertyNames(proto).filter(
+      (k) => !k.startsWith("__") && k !== "constructor",
+    );
+    process.stderr.write(`  prototype methods: ${protoKeys.join(", ") || "(none)"}\n`);
+  }
+}
+
+for (const name of [
+  "e2ee_E2EEKeyManager",
+  "e2ee_KeyProvider",
+  "e2ee_KeyPersistentStorageDelegate",
+  "e2ee_GetKeyForCurrentUserCallback",
+  "e2ee_BlizzardEventDelegate",
+]) {
+  probeClass(name);
+}
+
+// Probe E2EEKeyManager static method arg counts
+process.stderr.write("\n=== e2ee_E2EEKeyManager static arg counts ===\n");
+const km = Module.e2ee_E2EEKeyManager as Record<string, unknown>;
+for (const m of [
+  "constructPostLogin",
+  "constructWithKey",
+  "createSharedSecretKeys",
+  "generateKeyInitializationRequest",
+]) {
+  const fn = km[m] as { argCount?: number; length?: number } | undefined;
+  process.stderr.write(`  ${m}: argCount=${fn?.argCount}, length=${fn?.length}\n`);
+}
+
+// Try generateKeyInitializationRequest — wants an int (probably enum).
+process.stderr.write("\n--- generateKeyInitializationRequest(int) ---\n");
+const genFn = km.generateKeyInitializationRequest as (...a: unknown[]) => unknown;
+for (const arg of [0, 1, 2, 3, 4, 5]) {
+  try {
+    const r = genFn(arg);
+    const view = r instanceof Uint8Array ? `Uint8Array(${r.byteLength}) ${Buffer.from(r).toString("hex").slice(0, 80)}` : JSON.stringify(r);
+    process.stderr.write(`  ${arg} → ${typeof r}: ${view}\n`);
+  } catch (e) {
+    process.stderr.write(`  ${arg} threw: ${(e as Error).message.slice(0, 150)}\n`);
+  }
+}
+
+// createSharedSecretKeys(2 args) — likely (privateKey, publicKey) returning shared secret
+process.stderr.write("\n--- createSharedSecretKeys(2 args) ---\n");
+const cssFn = km.createSharedSecretKeys as (...a: unknown[]) => unknown;
+for (const [a, b] of [
+  [new Uint8Array(32).fill(0x01), new Uint8Array(32).fill(0x02)],
+  ["a", "b"],
+]) {
+  try {
+    const r = cssFn(a, b);
+    process.stderr.write(`  args=(${typeof a}, ${typeof b}) → ${typeof r}; ${r instanceof Uint8Array ? `Uint8Array(${r.byteLength})` : JSON.stringify(r)?.slice(0, 200)}\n`);
+  } catch (e) {
+    process.stderr.write(`  args=(${typeof a}, ${typeof b}) threw: ${(e as Error).message.slice(0, 200)}\n`);
+  }
+}
+
+// Show all top-level Module keys (not just our filter) — free functions
+// for creation likely show up here.
+process.stderr.write("\n=== ALL Module keys ===\n");
+const allKeys = Object.keys(Module).sort();
+const nonClass = allKeys.filter((k) => typeof (Module as Record<string, unknown>)[k] !== "function" || !((Module as Record<string, unknown>)[k] as { prototype?: unknown }).prototype);
+process.stderr.write(`free functions / values (${nonClass.length}):\n`);
+for (const k of nonClass) {
+  const v = (Module as Record<string, unknown>)[k];
+  process.stderr.write(`  ${k}: ${typeof v}${typeof v === "function" ? ` (argCount=${(v as { argCount?: number }).argCount})` : ""}\n`);
+}
+const classes = allKeys.filter((k) => !nonClass.includes(k));
+process.stderr.write(`\nEmbind classes (${classes.length}): ${classes.join(", ")}\n`);
+
+// Probe StatelessSession argCount + show methods' arity
+const SS = Module.messaging_StatelessSession as Record<string, unknown> & { argCount?: number };
+process.stderr.write(`\n=== StatelessSession constructor argCount: ${SS.argCount}\n`);
+const proto = (SS as { prototype?: Record<string, unknown> }).prototype;
+if (proto) {
+  for (const m of ["sendMessageWithContent", "extractMessage", "consumeMessagingPayloadOrSyncConversation", "getConversationMetadata"]) {
+    const fn = proto[m] as { argCount?: number; length?: number } | undefined;
+    process.stderr.write(`  ${m}: argCount=${fn?.argCount}, length=${fn?.length}\n`);
+  }
+}
+
+// Try to construct one with no args, see what the error says (it'll list expected args)
+process.stderr.write("\n--- attempting `new messaging_StatelessSession()` ---\n");
+try {
+  const inst = new (SS as new (...args: unknown[]) => unknown)();
+  process.stderr.write(`  succeeded! inst keys: ${Object.keys(inst as object).join(", ")}\n`);
+} catch (e) {
+  process.stderr.write(`  threw: ${(e as Error).message}\n`);
+}
+
+process.stderr.write("\n[fidelius] DONE\n");
 process.exit(0);
