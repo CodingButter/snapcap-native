@@ -10,6 +10,8 @@
  */
 
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import type { DataStore } from "../storage/data-store.ts";
+import { StorageShim } from "../storage/storage-shim.ts";
 
 let installed = false;
 
@@ -22,6 +24,12 @@ export type InstallShimOpts = {
   viewportWidth?: number;
   /** Height of the (virtual) viewport. Default 900. */
   viewportHeight?: number;
+  /**
+   * Backing DataStore for localStorage + sessionStorage shims.
+   * If omitted, happy-dom's default in-memory storage is used (data lost
+   * on process exit). Pass a FileDataStore to persist across runs.
+   */
+  dataStore?: DataStore;
 };
 
 export function installShims(opts: InstallShimOpts = {}): void {
@@ -48,9 +56,27 @@ export function installShims(opts: InstallShimOpts = {}): void {
     },
   });
 
+  const g = globalThis as unknown as Record<string, unknown>;
+
+  // If a DataStore was provided, replace happy-dom's default in-memory
+  // localStorage/sessionStorage with shims that persist into it.
+  // Snap's bundle then transparently reads/writes via window.localStorage
+  // (or bare `localStorage`) and we capture the state across runs.
+  if (opts.dataStore) {
+    const localShim = new StorageShim(opts.dataStore, "local_");
+    const sessionShim = new StorageShim(opts.dataStore, "session_");
+    // happy-dom's Storage properties are read-only — must use defineProperty.
+    Object.defineProperty(g, "localStorage", { value: localShim, writable: true, configurable: true });
+    Object.defineProperty(g, "sessionStorage", { value: sessionShim, writable: true, configurable: true });
+    const win = g.window as Record<string, unknown> | undefined;
+    if (win) {
+      Object.defineProperty(win, "localStorage", { value: localShim, writable: true, configurable: true });
+      Object.defineProperty(win, "sessionStorage", { value: sessionShim, writable: true, configurable: true });
+    }
+  }
+
   // Snap's bundle commonly checks for the `chrome` global (Chrome runtime
   // hooks). Provide a minimal stub.
-  const g = globalThis as unknown as Record<string, unknown>;
   if (!g.chrome) {
     g.chrome = {
       runtime: {},

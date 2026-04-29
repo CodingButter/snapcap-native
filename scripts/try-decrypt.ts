@@ -190,6 +190,8 @@ for (const sz of kdfSizes) {
       { name: '"snap_phi"', b: new TextEncoder().encode("snap_phi") },
       { name: '"snapchat_e2ee"', b: new TextEncoder().encode("snapchat_e2ee") },
       { name: '"e2ee_chat"', b: new TextEncoder().encode("e2ee_chat") },
+      { name: '"FIDELIUS_SNAP_PHI"', b: new TextEncoder().encode("FIDELIUS_SNAP_PHI") },
+      { name: '"FIDELIUS_SNAP_INVERSE_PHI"', b: new TextEncoder().encode("FIDELIUS_SNAP_INVERSE_PHI") },
     ]) {
       try {
         allKeys.push({

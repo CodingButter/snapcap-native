@@ -51,10 +51,13 @@ export class FileDataStore implements DataStore {
   }
 
   private async flush(): Promise<void> {
-    const obj: OnDiskShape = {};
-    for (const [k, v] of this.cache) obj[k] = Array.from(v);
+    const entries: string[] = [];
+    for (const [k, v] of this.cache) {
+      entries.push(`  ${JSON.stringify(k)}: ${JSON.stringify(Array.from(v))}`);
+    }
+    const out = entries.length === 0 ? "{}" : `{\n${entries.join(",\n")}\n}`;
     await mkdir(dirname(this.filePath), { recursive: true });
-    writeFileSync(this.filePath, JSON.stringify(obj));
+    writeFileSync(this.filePath, out);
   }
 
   /** Synchronous read — for Web Storage shims that can't await. */

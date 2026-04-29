@@ -16,11 +16,17 @@ import { nativeFetch } from "../src/transport/native-fetch.ts";  // bypasses hap
 import { mintFideliusIdentity } from "../src/auth/fidelius-mint.ts";
 import { SnapcapClient, type SnapcapAuthBlob } from "../src/index.ts";
 import { FileDataStore } from "../src/storage/data-store.ts";
+import { installShims } from "../src/shims/runtime.ts";
 
 // Single-file DataStore. WASM persist + session entries land here with
 // indexdb_ prefix; bearer/cookies/etc could later land here too.
 const dataStore = new FileDataStore("/home/codingbutter/snapcap/SnapSDK/.tmp_auth/auth.json");
 const KEY_PREFIX = "indexdb_";
+
+// Install shims BEFORE anything (mint, auth restore) — wires the
+// DataStore-backed StorageShim into globalThis.localStorage/sessionStorage
+// so Snap's bundle's reads/writes persist into our auth.json.
+installShims({ url: "https://www.snapchat.com/web", dataStore });
 
 const log = (...args: unknown[]): void => {
   const s = args.map((a) => typeof a === "string" ? a : JSON.stringify(a, (_k, v) => v instanceof Uint8Array ? `<${v.byteLength}B>` : v)).join(" ");
