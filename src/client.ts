@@ -27,6 +27,7 @@ import { CookieJar } from "tough-cookie";
 import { nativeLogin, type LoginCredentials } from "./auth/login.ts";
 import { mintBearer } from "./auth/sso.ts";
 import { listFriends, type RawSyncFriendData } from "./api/friends.ts";
+import { addFriends } from "./api/friending.ts";
 import {
   Conversation,
   sendTypingNotification,
@@ -183,6 +184,16 @@ export class SnapcapClient {
 
   async listFriends(): Promise<RawSyncFriendData> {
     return await listFriends(this.makeRpc());
+  }
+
+  /**
+   * Send a friend request to the given user(s). `source` defaults to
+   * "dweb_add_friend" (the value the web client sends when the user clicks
+   * "Add" on a search result).
+   */
+  async addFriend(userId: string | string[], source?: string): Promise<void> {
+    const ids = Array.isArray(userId) ? userId : [userId];
+    await addFriends(this.makeRpc(), ids, source);
   }
 
   /**

@@ -9,4 +9,5 @@
 export { SnapcapClient, type SnapcapAuthBlob, type FromCredentialsOpts, type FromAuthOpts } from "./client.ts";
 export { Conversation, TypingActivity, ConversationViewState, type ConversationKind } from "./api/messaging.ts";
 export { User } from "./api/user.ts";
-export { uuidToBytes, bytesToUuid } from "./transport/proto-encode.ts";
+export { FriendAction } from "./api/friending.ts";
+export { uuidToBytes, bytesToUuid, uuidToHighLow } from "./transport/proto-encode.ts";

@@ -50,6 +50,17 @@ export class ProtoWriter {
     return this;
   }
 
+  /** Field with a fixed64 value (8 bytes, little-endian on wire — proto3 spec). */
+  fieldFixed64(field: number, value: bigint): this {
+    this.tag(field, 1);
+    let v = value < 0n ? (1n << 64n) + value : value;
+    for (let i = 0; i < 8; i++) {
+      this.buf.push(Number(v & 0xffn));
+      v >>= 8n;
+    }
+    return this;
+  }
+
   /** Field with a string (UTF-8 encoded). */
   fieldString(field: number, str: string): this {
     return this.fieldBytes(field, new TextEncoder().encode(str));
@@ -88,6 +99,22 @@ export function uuidToBytes(uuid: string): Uint8Array {
     out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
   return out;
+}
+
+/**
+ * Split a UUID into the {highBits, lowBits} fixed64 pair Snap uses in some
+ * RPCs (e.g. FriendAction.AddFriends) instead of the bytes16 wrapper.
+ *
+ * - highBits = big-endian uint64 of UUID bytes 0..7
+ * - lowBits  = big-endian uint64 of UUID bytes 8..15
+ *
+ * Caller passes them through ProtoWriter.fieldFixed64 (LE-encoded on wire,
+ * matching what we see in captured traffic).
+ */
+export function uuidToHighLow(uuid: string): { high: bigint; low: bigint } {
+  const bytes = uuidToBytes(uuid);
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { high: dv.getBigUint64(0, false), low: dv.getBigUint64(8, false) };
 }
 
 /** Inverse: 16-byte buffer → hyphenated UUID string. */
