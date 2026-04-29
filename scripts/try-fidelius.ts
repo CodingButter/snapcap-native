@@ -152,7 +152,9 @@ function wrapEmvalImports(imports: WebAssembly.Imports) {
     while (end < heap.length && heap[end] !== 0) end++;
     return new TextDecoder().decode(heap.subarray(ptr, end));
   };
-  for (const name of ["_emval_in", "_emval_get_property", "_emval_get_module_property", "_emval_call_method", "_emval_new_cstring"]) {
+  // Trace ALL emval-named imports
+  const emvalNames = Object.keys(env).filter((n) => n.startsWith("_emval_"));
+  for (const name of emvalNames) {
     const orig = env[name];
     if (typeof orig !== "function") continue;
     env[name] = function (...args: unknown[]) {
@@ -160,7 +162,8 @@ function wrapEmvalImports(imports: WebAssembly.Imports) {
         const r = orig.apply(this, args);
         if (emvalTrace) {
           let extra = "";
-          if (name === "_emval_new_cstring" && typeof args[0] === "number") {
+          // Decode cstrings for any function that takes a c-string ptr first arg
+          if (typeof args[0] === "number" && (name === "_emval_new_cstring" || name === "_emval_get_global" || name === "_emval_get_module_property")) {
             extra = ` "${decodeCStr(args[0])}"`;
           }
           process.stderr.write(`  [emval] ${name}(${args.join(",")})${extra} → ${r}\n`);
@@ -410,6 +413,33 @@ for (const name of allKeys) {
   }
 }
 
+// ── Install JS-side proxy dispatch helpers ────────────────────────────
+// The 06c chunk's Emscripten setup adds these to Module. Without them,
+// Djinni JS-proxy method calls fall through and the WASM crashes invoking
+// a virtual function pointer that should have been routed via JS.
+process.stderr.write("\n=== installing proxy helpers on Module ===\n");
+const M = Module as Record<string, unknown>;
+const prevCallJs = M.callJsProxyMethod;
+M.callJsProxyMethod = function (obj: Record<string, Function>, methodName: string, ...args: unknown[]) {
+  process.stderr.write(`  [callJsProxyMethod] ${methodName}(${args.length} args)\n`);
+  try {
+    return obj[methodName].apply(obj, args);
+  } catch (e) {
+    return e;
+  }
+};
+process.stderr.write(`  callJsProxyMethod replaced (was ${typeof prevCallJs})\n`);
+// Same with makeNativeProviderCallback if it isn't behaving correctly
+const prevMakeCb = M.makeNativeProviderCallback;
+const finalReg = (M.nativeProviderCallbackFinalizerRegistry ?? new FinalizationRegistry(() => {})) as FinalizationRegistry<unknown>;
+M.makeNativeProviderCallback = function (e: unknown) {
+  process.stderr.write(`  [makeNativeProviderCallback] called\n`);
+  const t = () => (M._callNativeProviderCallback as (x: unknown) => unknown)?.(e);
+  try { finalReg.register(t, e as object); } catch {}
+  return t;
+};
+process.stderr.write(`  makeNativeProviderCallback replaced (was ${typeof prevMakeCb})\n`);
+
 // ── Replicate bundle's WASM init sequence ──────────────────────────────
 // Bundle calls these on `s` (the Module) right after instantiate:
 //   s.shims_Platform.init({assertionMode, minLogLevel}, {logTimedEvent, log})
@@ -475,18 +505,39 @@ for (const setter of ["setCircumstanceEngine", "setCompositeConfig", "setExperim
 // reach the server.
 const GrpcManager = Module.grpc_GrpcManager as Record<string, (...a: unknown[]) => unknown>;
 try {
-  GrpcManager.registerWebFactory({
+  // The factory itself is a Djinni-bridged interface. Inside it,
+  // createClient must return a grpc_UnifiedGrpcService — but the WASM
+  // accepts a plain JS object that satisfies the interface (Djinni auto-
+  // proxies it). The OOB crash on Oe(idx)(t,n) suggests the C++ side is
+  // looking up our method via a function-table index that wasn't registered.
+  //
+  // Theory: our client method NAMES need to match exactly + the object
+  // has to have ONLY those methods (no extras the WASM iterates and
+  // chokes on). Let's match the bundle's shape exactly.
+  // Keep strong refs so the FinalizationRegistry doesn't reap them
+  const grpcClients: unknown[] = [];
+  (globalThis as unknown as { __grpcClients: unknown[] }).__grpcClients = grpcClients;
+
+  const grpcClientFactory = {
     createClient: (config: unknown) => {
       process.stderr.write(`  [grpc.createClient] config: ${JSON.stringify(config).slice(0, 200)}\n`);
-      // Return a stub gRPC client — we don't need real network for round-trip
-      return {
-        unaryCall: (...args: unknown[]) => process.stderr.write(`  [grpc.unaryCall] ${args.length} args\n`),
-        clientStreamingCall: () => {},
-        serverStreamingCall: () => {},
-        bidiStreamingCall: () => {},
+      const client = {
+        unaryCall(methodPath: string, body: Uint8Array, options: unknown, callback: unknown) {
+          process.stderr.write(`  [grpc.unaryCall] method=${methodPath} body=${body?.byteLength ?? "?"}B\n`);
+        },
+        serverStreamingCall() {
+          throw new Error("unsupported");
+        },
+        bidiStreamingCall() {
+          throw new Error("unsupported");
+        },
       };
+      grpcClients.push(client);
+      return client;
     },
-  });
+  };
+  (globalThis as unknown as { __grpcFactory: unknown }).__grpcFactory = grpcClientFactory;
+  GrpcManager.registerWebFactory(grpcClientFactory);
   process.stderr.write(`  GrpcManager.registerWebFactory OK\n`);
 } catch (e) {
   process.stderr.write(`  GrpcManager.registerWebFactory threw: ${(e as Error).message.slice(0, 200)}\n`);
@@ -498,6 +549,12 @@ try {
 //                       userId, upgradeMode, version)
 // The two delegates are plain JS objects with the methods Embind expects.
 process.stderr.write("\n--- attempting constructPostLogin ---\n");
+
+// Probe gRPC interfaces specifically — methods our client/factory must expose
+process.stderr.write("\n=== gRPC interfaces ===\n");
+for (const n of ["grpc_UnifiedGrpcService", "grpc_GrpcWebFactory"]) {
+  probeClass(n);
+}
 
 // Probe Djinni / Cpp proxy classes — Snap uses Djinni-style bindings,
 // JS-implemented interfaces likely need wrapping via DjinniCppProxy.
