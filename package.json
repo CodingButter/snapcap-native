@@ -48,7 +48,9 @@
   },
   "dependencies": {
     "@happy-dom/global-registrator": "^15.0.0",
+    "chrome-remote-interface": "^0.34.0",
     "happy-dom": "^15.0.0",
+    "hpke-js": "^1.8.0",
     "sharp": "^0.34.5",
     "tough-cookie": "^5.0.0",
     "ws": "^8.18.0"

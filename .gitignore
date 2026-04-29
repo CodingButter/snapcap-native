@@ -27,3 +27,7 @@ vendor/
 *.log
 .nyc_output/
 coverage/
+
+# Local auth state — never commit
+.tmp_auth/
+
