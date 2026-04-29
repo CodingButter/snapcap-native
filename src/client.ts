@@ -48,6 +48,7 @@ import { User } from "./api/user.ts";
 import { callRpc, type GrpcMethodDesc, type HeaderTransform } from "./transport/grpc-web.ts";
 import { mintFideliusIdentity, type FideliusIdentity } from "./auth/fidelius-mint.ts";
 import { initializeWebKey, stripOriginReferer } from "./api/fidelius.ts";
+import { queryMessages, type QueryMessagesResponse } from "./api/inbox.ts";
 
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
@@ -399,6 +400,26 @@ export class SnapcapClient {
     const { nativeFetch } = await import("./transport/native-fetch.ts");
     await postStory(this.makeRpc(), nativeFetch, this.self.userId, this.self.username, {
       bytes, skipNormalize: opts?.skipNormalize,
+    });
+  }
+
+  /**
+   * Fetch recent messages for a conversation. Returns the raw response
+   * payload — caller decodes (typed walker not yet available because we
+   * haven't captured a non-empty inbox-fetch in the wild yet).
+   *
+   * Used as the first half of inbound message retrieval; the second half
+   * (Fidelius decryption) lives in api/inbox.ts as `decryptFideliusEnvelope`.
+   */
+  async fetchMessages(conversationId: string, opts?: { limit?: number; secondary?: number }): Promise<QueryMessagesResponse> {
+    if (!this.self?.userId) {
+      throw new Error("fetchMessages requires self.userId — call resolveSelf() or fromCredentials() first");
+    }
+    return await queryMessages(this.makeRpc(), {
+      conversationId,
+      selfUserId: this.self.userId,
+      limit: opts?.limit,
+      secondary: opts?.secondary,
     });
   }
 
