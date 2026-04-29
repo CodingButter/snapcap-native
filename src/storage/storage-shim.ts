@@ -8,7 +8,7 @@
  *   localStorage.setItem("foo", "bar") → store.set("local_foo", utf8("bar"))
  *
  * The Web Storage interface is synchronous, so this shim relies on a
- * synchronous read on the DataStore. `JsonFileDataStore.getSync` provides
+ * synchronous read on the DataStore. `FileDataStore.getSync` provides
  * exactly that. For other DataStore impls without sync access, this shim
  * loads the prefix-matching keys at construction.
  */

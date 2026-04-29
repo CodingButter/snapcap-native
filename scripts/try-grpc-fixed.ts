@@ -15,11 +15,11 @@ import { readFileSync } from "node:fs";
 import { nativeFetch } from "../src/transport/native-fetch.ts";  // bypasses happy-dom CORS
 import { mintFideliusIdentity } from "../src/auth/fidelius-mint.ts";
 import { SnapcapClient, type SnapcapAuthBlob } from "../src/index.ts";
-import { JsonFileDataStore } from "../src/storage/json-file-data-store.ts";
+import { FileDataStore } from "../src/storage/data-store.ts";
 
 // Single-file DataStore. WASM persist + session entries land here with
 // indexdb_ prefix; bearer/cookies/etc could later land here too.
-const dataStore = new JsonFileDataStore("/home/codingbutter/snapcap/SnapSDK/.tmp_auth/auth.json");
+const dataStore = new FileDataStore("/home/codingbutter/snapcap/SnapSDK/.tmp_auth/auth.json");
 const KEY_PREFIX = "indexdb_";
 
 const log = (...args: unknown[]): void => {

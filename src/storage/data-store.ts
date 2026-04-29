@@ -1,18 +1,19 @@
 /**
  * Persistent key-value storage abstraction for the SDK.
  *
- * Used to back the chat-bundle WASM's persist and session-scoped storage
- * delegates so the WASM can save and load its own state (wrapped identity
- * keys, root wrapping key, temp identity key) across runs without our SDK
- * having to understand the wire shape.
+ * Used to back the chat-bundle WASM's persist + session-scoped storage
+ * delegates so the WASM can save and load its own state across runs
+ * without our SDK having to understand its serialization. Also backs the
+ * Web Storage shims (localStorage, sessionStorage) and the cookie jar
+ * via stable key prefixes.
  *
- * Default impl writes each key as a separate file under a directory.
- * Consumers can plug in their own (Redis, KMS, in-memory, etc.) by
- * implementing the `DataStore` interface.
+ * Default impl is `FileDataStore`: a single JSON file with an in-memory
+ * cache that flushes on every write. Consumers can plug in their own
+ * (Redis, KMS, IndexedDB) by implementing the `DataStore` interface.
  */
-import { readFile, writeFile, unlink, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 
 export interface DataStore {
   get(key: string): Promise<Uint8Array | undefined>;
@@ -20,31 +21,70 @@ export interface DataStore {
   delete(key: string): Promise<void>;
 }
 
-/** Filesystem-backed DataStore. Each key becomes a file under `dir`. */
-export class FileDataStore implements DataStore {
-  constructor(private dir: string) {}
+type OnDiskShape = Record<string, number[]>;
 
-  private path(key: string): string {
-    // Replace path separators in keys so nested keys are safe.
-    return join(this.dir, key.replace(/\//g, "__"));
+/**
+ * File-backed DataStore. Single JSON file holds all entries; loaded into
+ * memory at construction; eager flush on every set/delete.
+ *
+ * Exposes synchronous getSync/setSync/keys for the Storage shims, which
+ * implement the synchronous Web Storage API.
+ */
+export class FileDataStore implements DataStore {
+  private cache = new Map<string, Uint8Array>();
+
+  constructor(private filePath: string) {
+    this.loadSync();
+  }
+
+  private loadSync(): void {
+    if (!existsSync(this.filePath)) return;
+    try {
+      const raw = readFileSync(this.filePath, "utf8");
+      const obj = JSON.parse(raw) as OnDiskShape;
+      for (const [k, v] of Object.entries(obj)) {
+        if (Array.isArray(v)) this.cache.set(k, new Uint8Array(v));
+      }
+    } catch {
+      // corrupt file → start fresh
+    }
+  }
+
+  private async flush(): Promise<void> {
+    const obj: OnDiskShape = {};
+    for (const [k, v] of this.cache) obj[k] = Array.from(v);
+    await mkdir(dirname(this.filePath), { recursive: true });
+    writeFileSync(this.filePath, JSON.stringify(obj));
+  }
+
+  /** Synchronous read — for Web Storage shims that can't await. */
+  getSync(key: string): Uint8Array | undefined {
+    return this.cache.get(key);
+  }
+
+  /** Synchronous variant of set — fire-and-forget flush. */
+  setSync(key: string, value: Uint8Array): void {
+    this.cache.set(key, new Uint8Array(value));
+    void this.flush();
   }
 
   async get(key: string): Promise<Uint8Array | undefined> {
-    const path = this.path(key);
-    if (!existsSync(path)) return undefined;
-    const buf = await readFile(path);
-    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    return this.cache.get(key);
   }
 
   async set(key: string, value: Uint8Array): Promise<void> {
-    const path = this.path(key);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, value);
+    this.cache.set(key, new Uint8Array(value));
+    await this.flush();
   }
 
   async delete(key: string): Promise<void> {
-    const path = this.path(key);
-    if (existsSync(path)) await unlink(path);
+    if (this.cache.delete(key)) await this.flush();
+  }
+
+  /** Iterate keys, optionally filtered by prefix. */
+  keys(prefix?: string): string[] {
+    const all = [...this.cache.keys()];
+    return prefix ? all.filter((k) => k.startsWith(prefix)) : all;
   }
 }
 
@@ -52,16 +92,28 @@ export class FileDataStore implements DataStore {
 export class MemoryDataStore implements DataStore {
   private store = new Map<string, Uint8Array>();
 
+  getSync(key: string): Uint8Array | undefined {
+    return this.store.get(key);
+  }
+
+  setSync(key: string, value: Uint8Array): void {
+    this.store.set(key, new Uint8Array(value));
+  }
+
   async get(key: string): Promise<Uint8Array | undefined> {
     return this.store.get(key);
   }
 
   async set(key: string, value: Uint8Array): Promise<void> {
-    // Copy to avoid aliasing on mutating callers.
     this.store.set(key, new Uint8Array(value));
   }
 
   async delete(key: string): Promise<void> {
     this.store.delete(key);
+  }
+
+  keys(prefix?: string): string[] {
+    const all = [...this.store.keys()];
+    return prefix ? all.filter((k) => k.startsWith(prefix)) : all;
   }
 }
