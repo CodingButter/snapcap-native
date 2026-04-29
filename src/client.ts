@@ -45,7 +45,7 @@ import {
   type ConversationKind,
 } from "./api/messaging.ts";
 import { User } from "./api/user.ts";
-import { callRpc, type GrpcMethodDesc } from "./transport/grpc-web.ts";
+import { callRpc, type GrpcMethodDesc, type HeaderTransform } from "./transport/grpc-web.ts";
 
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
@@ -394,8 +394,18 @@ export class SnapcapClient {
     return this.makeRpc();
   }
 
-  /** Build an `rpc.unary` impl bound to this client's jar/bearer/refresh. */
-  private makeRpc(): {
+  /**
+   * Build an `rpc.unary` impl bound to this client's jar/bearer/refresh.
+   *
+   * Pass `transformHeaders` to mutate the default header bag for every
+   * call routed through this rpc instance. Useful when a service
+   * rejects headers our regular calls add — e.g. Fidelius's gateway
+   * 401s if Origin/Referer are present, so its API module builds its
+   * own rpc with `(h) => { delete h.origin; delete h.referer; return h; }`.
+   *
+   * Returning a NEW object is recommended (don't mutate input).
+   */
+  makeRpc(transformHeaders?: HeaderTransform): {
     unary: (
       method: GrpcMethodDesc<unknown, unknown>,
       request: unknown,
@@ -416,6 +426,7 @@ export class SnapcapClient {
           refreshBearer: () => this.refreshBearer(),
           origin: "https://www.snapchat.com",
           referer: "https://www.snapchat.com/",
+          transformHeaders,
         });
       },
     };

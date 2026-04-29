@@ -708,123 +708,39 @@ try {
 }
 emvalTrace = false;
 
-// ── Pragmatic angle: register the key with Snap's server ──────────────
-// The minted `request` bytes are exactly the InitializeWebKey gRPC body.
-// If posting succeeds → our key is registered as a Fidelius identity. We
-// can then call GetFriendKeys for recipients and have everything we need
-// to encrypt manually (or, eventually, drive the WASM with a real auth
-// context).
-process.stderr.write("\n=== posting InitializeWebKey to live server ===\n");
-const requestBytes = (minted as { request?: Uint8Array }).request;
-process.stderr.write(`  request size: ${requestBytes?.byteLength ?? "?"} bytes\n`);
-
-// The generator produces a 3-field "v9-ish" shape under field 1.
-// Captured browser request uses a 4-field shape under field 2 with the
-// RWK. Hand-build that wire form using our minted material.
-const { ProtoWriter } = await import("../src/transport/proto-encode.ts");
-const id = (minted.keyInfo as { identity?: { cleartextPublicKey?: Uint8Array | object; identityKeyId?: { data?: Uint8Array | object }; version?: number } }).identity;
-const rwk = (minted.keyInfo as { rwk?: { data?: Uint8Array | object } }).rwk;
+// ── Register the WASM-minted identity via the SDK Fidelius API ────────
+process.stderr.write("\n=== registering identity via SDK ===\n");
+const id = (minted.keyInfo as { identity?: { cleartextPublicKey?: object; cleartextPrivateKey?: object; identityKeyId?: { data?: object }; version?: number } }).identity;
+const rwk = (minted.keyInfo as { rwk?: { data?: object } }).rwk;
 const toBytes = (x: unknown): Uint8Array => {
   if (x instanceof Uint8Array) return x;
   if (Array.isArray(x)) return new Uint8Array(x);
   if (x && typeof x === "object") return new Uint8Array(Object.values(x as Record<string, number>));
   throw new Error("not bytes");
 };
-const pubKey = toBytes(id?.cleartextPublicKey);
-const identityKeyId = toBytes(id?.identityKeyId?.data);
-const rwkData = toBytes(rwk?.data);
-const version = id?.version ?? 10;
-process.stderr.write(`  hand-build: pub=${pubKey.byteLength} id=${identityKeyId.byteLength} rwk=${rwkData.byteLength} v=${version}\n`);
+const fideliusIdentity = {
+  cleartextPublicKey: toBytes(id?.cleartextPublicKey),
+  cleartextPrivateKey: toBytes(id?.cleartextPrivateKey),
+  identityKeyId: toBytes(id?.identityKeyId?.data),
+  rwk: toBytes(rwk?.data),
+  version: id?.version ?? 10,
+};
+process.stderr.write(`  identity: pub=${fideliusIdentity.cleartextPublicKey.byteLength}B priv=${fideliusIdentity.cleartextPrivateKey.byteLength}B id=${fideliusIdentity.identityKeyId.byteLength}B rwk=${fideliusIdentity.rwk.byteLength}B v=${fideliusIdentity.version}\n`);
 
-const pwr = new ProtoWriter();
-pwr.fieldMessage(2, (m) => {
-  m.fieldBytes(1, pubKey);
-  m.fieldBytes(2, identityKeyId);
-  m.fieldBytes(3, rwkData);
-  m.fieldVarint(4, version);
-});
-const handBuilt = pwr.finish();
-process.stderr.write(`  hand-built request: ${handBuilt.byteLength} bytes\n`);
+try {
+  const { readFileSync: r2 } = await import("node:fs");
+  const blob = JSON.parse(r2("/tmp/snapcap-smoke-auth.json", "utf8"));
+  const { SnapcapClient } = await import("../src/index.ts");
+  const client = await SnapcapClient.fromAuth({ auth: blob });
+  process.stderr.write(`  using auth for ${client.self?.username}\n`);
 
-if (requestBytes instanceof Uint8Array) {
-  const fs3 = await import("node:fs");
-  fs3.writeFileSync("/tmp/our_initwebkey_v2.bin", requestBytes);
-  fs3.writeFileSync("/tmp/our_initwebkey_handbuilt.bin", handBuilt);
-}
-if (requestBytes) {
-  // Need bearer + cookie jar from a valid SnapcapClient session.
-  try {
-    const { readFileSync: r2 } = await import("node:fs");
-    const blob = JSON.parse(r2("/tmp/snapcap-smoke-auth.json", "utf8"));
-    const { SnapcapClient } = await import("../src/index.ts");
-    const client = await SnapcapClient.fromAuth({ auth: blob });
-    process.stderr.write(`  using auth for ${client.self?.username}\n`);
-
-    // Build a 5-byte gRPC-Web framed body: flag(0) + length(BE u32) + bytes
-    const framed = new Uint8Array(5 + requestBytes.byteLength);
-    framed[0] = 0;
-    new DataView(framed.buffer).setUint32(1, requestBytes.byteLength, false);
-    framed.set(requestBytes, 5);
-
-    // Use the SDK's existing makeRpc → callRpc infrastructure (web.snapchat.com).
-    const rpc = (client as unknown as { makeRpc: () => unknown }).makeRpc();
-    const desc = {
-      methodName: "InitializeWebKey",
-      service: { serviceName: "snapchat.fidelius.FideliusIdentityService" },
-      requestType: { serializeBinary: () => handBuilt },
-      responseType: { decode: (b: Uint8Array) => ({ raw: b }) },
-    };
-    process.stderr.write(`  calling InitializeWebKey via SDK rpc (web.snapchat.com)…\n`);
-
-    // Send raw via nativeFetch first so we can fully control headers
-    const fr2 = new Uint8Array(5 + handBuilt.byteLength);
-    fr2[0] = 0;
-    new DataView(fr2.buffer).setUint32(1, handBuilt.byteLength, false);
-    fr2.set(handBuilt, 5);
-
-    const url = "https://web.snapchat.com/snapchat.fidelius.FideliusIdentityService/InitializeWebKey";
-    const cookieJar = (client as unknown as { jar: { getCookieString(u: string): Promise<string> } }).jar;
-    const bearer = (client as unknown as { bearer: string }).bearer;
-    const cookies = await cookieJar.getCookieString(url);
-
-    // Match captured headers EXACTLY (no Referer, no Origin even though our SDK adds them)
-    const headers: Record<string, string> = {
-      "authorization": `Bearer ${bearer}`,
-      "x-user-agent": "grpc-web-javascript/0.1",
-      "x-snap-client-user-agent": "SnapchatWeb/13.79.0 PROD (linux 0.0.0; chrome 147.0.0.0)",
-      "accept": "*/*",
-      "content-type": "application/grpc-web+proto",
-      "x-grpc-web": "1",
-      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-    };
-    if (cookies) headers["cookie"] = cookies;
-
-    const resp2 = await nativeFetch(url, {
-      method: "POST",
-      headers,
-      body: fr2.buffer.slice(fr2.byteOffset, fr2.byteOffset + fr2.byteLength) as ArrayBuffer,
-    });
-    process.stderr.write(`  → HTTP ${resp2.status}\n`);
-    const buf = new Uint8Array(await resp2.arrayBuffer());
-    process.stderr.write(`  response: ${buf.byteLength} bytes head: ${Buffer.from(buf.slice(0, 80)).toString("hex")}\n`);
-    if (buf.byteLength > 0 && buf.byteLength < 200) {
-      process.stderr.write(`  response text: ${new TextDecoder().decode(buf).slice(0, 200)}\n`);
-    }
-
-    try {
-      const r = await (rpc as { unary: Function }).unary(desc, {});
-      process.stderr.write(`  → response: ${typeof r}\n`);
-      if (r && typeof r === "object") {
-        const rr = r as { raw?: Uint8Array };
-        process.stderr.write(`  raw bytes: ${rr.raw?.byteLength ?? "?"} hex: ${rr.raw ? Buffer.from(rr.raw).toString("hex").slice(0, 100) : ""}\n`);
-      }
-    } catch (e) {
-      process.stderr.write(`  rpc threw: ${(e as Error).message.slice(0, 300)}\n`);
-    }
-    const resp = { status: 0, statusText: "delegated to callRpc", arrayBuffer: async () => new ArrayBuffer(0) };
-  } catch (e) {
-    process.stderr.write(`  posting threw: ${(e as Error).message}\n`);
-  }
+  const { initializeWebKey, stripOriginReferer } = await import("../src/api/fidelius.ts");
+  const fideliusRpc = client.makeRpc(stripOriginReferer);
+  const resp = await initializeWebKey(fideliusRpc, fideliusIdentity);
+  process.stderr.write(`  ✅ registered: identityKeyId=${resp.identityKeyId.byteLength}B rwk=${resp.rwk.byteLength}B\n`);
+  process.stderr.write(`     id hex: ${Buffer.from(resp.identityKeyId).toString("hex").slice(0, 64)}\n`);
+} catch (e) {
+  process.stderr.write(`  ❌ ${(e as Error).message.slice(0, 300)}\n`);
 }
 
 process.stderr.write("\n[fidelius] DONE\n");

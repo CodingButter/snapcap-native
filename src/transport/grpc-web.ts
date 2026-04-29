@@ -27,6 +27,15 @@ export type GrpcMethodDesc<Req, Resp> = {
     | { deserializeBinary: (b: Uint8Array) => Resp };
 };
 
+/**
+ * Header transform hook — receives the SDK's default header bag and
+ * returns the bag the request should actually send. Pure: don't mutate
+ * the input, return a new object. Use it to strip headers some
+ * gateways reject (e.g. Fidelius rejects Origin/Referer) or to add
+ * service-specific headers.
+ */
+export type HeaderTransform = (headers: Record<string, string>) => Record<string, string>;
+
 export type CallRpcOpts<Req, Resp> = {
   method: GrpcMethodDesc<Req, Resp>;
   request: Req;
@@ -40,6 +49,11 @@ export type CallRpcOpts<Req, Resp> = {
   refreshBearer?: () => Promise<string | null>;
   origin?: string;
   referer?: string;
+  /**
+   * Last-mile header customizer. If provided, it's invoked with the
+   * default headers bag right before the fetch fires — return a new bag.
+   */
+  transformHeaders?: HeaderTransform;
 };
 
 export async function callRpc<Req, Resp>(opts: CallRpcOpts<Req, Resp>): Promise<Resp> {
@@ -49,7 +63,7 @@ export async function callRpc<Req, Resp>(opts: CallRpcOpts<Req, Resp>): Promise<
   const jarFetch = makeJarFetch(opts.jar, opts.userAgent);
 
   const send = async (bearer: string | undefined): Promise<Response> => {
-    const headers: Record<string, string> = {
+    const defaultHeaders: Record<string, string> = {
       "content-type": "application/grpc-web+proto",
       "x-grpc-web": "1",
       // grpc-web library version — Snap's gateways check this is set.
@@ -69,9 +83,10 @@ export async function callRpc<Req, Resp>(opts: CallRpcOpts<Req, Resp>): Promise<
       "accept": "*/*",
       "accept-language": "en-US,en;q=0.9",
     };
-    if (bearer) headers["authorization"] = `Bearer ${bearer}`;
-    if (opts.origin) headers["origin"] = opts.origin;
-    if (opts.referer) headers["referer"] = opts.referer;
+    if (bearer) defaultHeaders["authorization"] = `Bearer ${bearer}`;
+    if (opts.origin) defaultHeaders["origin"] = opts.origin;
+    if (opts.referer) defaultHeaders["referer"] = opts.referer;
+    const headers = opts.transformHeaders ? opts.transformHeaders(defaultHeaders) : defaultHeaders;
     return jarFetch(url, {
       method: "POST",
       headers,
