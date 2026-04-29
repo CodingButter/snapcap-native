@@ -21,7 +21,7 @@ const state = JSON.parse(readFileSync(SDK_STATE_PATH, "utf8")) as {
   password: string;
   fingerprint?: { userAgent: string };
 };
-const STORE_PATH = join(import.meta.dir, "..", ".tmp_auth", "auth.json");
+const STORE_PATH = join(import.meta.dir, "..", ".tmp", "auth", "auth.json");
 
 console.log(`[smoke] === Phase A: cold-start (DataStore=${STORE_PATH}) ===`);
 const dataStoreA = new FileDataStore(STORE_PATH);

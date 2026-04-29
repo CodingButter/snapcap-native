@@ -6,15 +6,16 @@ Public, MIT-licensed Node SDK that talks to `web.snapchat.com` natively. Sibling
 
 ## What works today
 
-- `SnapcapClient.fromCredentials({ credentials })` — full native login → cookie + bearer (~4s first time)
-- `SnapcapClient.fromAuth({ auth })` — instant restore from a 2 KB blob
+- `new SnapcapClient({ dataStore, username?, password? })` — DataStore-backed ctor; sandbox installs eagerly so kameleon boot reuses the same realm
+- `await client.isAuthorized()` — restore-first, login-fallback, idempotent (cold ~5s, warm ~1ms); pass `{ force: true }` to re-login
+- `await client.logout()` — clears `cookie_jar`, `session_snapcap_bearer`, `local_snapcap_self`, `indexdb_snapcap__fidelius__identity`
 - `client.listFriends()` / `searchUsers()` / `addFriend()`
 - `client.getConversations()` / `Conversation.sendText` / `sendImage` / `sendImageWithCaption`
 - `client.postStory(bytes)` — auto-normalizes to 1080×1920 RGBA PNG, posts to MY_STORY
 - Persistent duplex WS for real-time presence (typing / viewing) with kick detection
-- `client.toAuthBlob()` — serialize cookie jar + bearer for persistence
+- All persistence routes through standard browser APIs (`localStorage` / `sessionStorage` / `indexedDB` / `document.cookie`) inside an isolated `vm.Context`; consumers plug in any `DataStore` impl
 
-End-to-end smoke test: `bun run scripts/smoke.ts` (needs `.snapcap-smoke.json` with `{username, password}` — local file, not committed).
+End-to-end smoke test: `bun run scripts/smoke.ts` (needs `.snapcap-smoke.json` with `{username, password}` — local file, not committed; lands at `.tmp/auth/auth.json`).
 
 ## Layout
 

@@ -18,7 +18,7 @@ import { getSandbox } from "../src/shims/runtime.ts";
 
 // Single-file DataStore. WASM persist + session entries land here with
 // indexdb_ prefix; bearer/cookies/etc all land here too via SnapcapClient.
-const dataStore = new FileDataStore("/home/codingbutter/snapcap/SnapSDK/.tmp_auth/auth.json");
+const dataStore = new FileDataStore("/home/codingbutter/snapcap/SnapSDK/.tmp/auth/auth.json");
 const KEY_PREFIX = "indexdb_";
 
 // SnapcapClient ctor calls installShims() internally — wires the

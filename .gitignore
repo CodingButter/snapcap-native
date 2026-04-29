@@ -28,6 +28,6 @@ vendor/
 .nyc_output/
 coverage/
 
-# Local auth state — never commit
-.tmp_auth/
+# Local scratch (auth state, recon HARs, etc) — never commit
+.tmp/
 
