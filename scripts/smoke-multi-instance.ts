@@ -52,16 +52,18 @@ const introspect = (c: SnapcapClient): Promise<InspectableSandbox> =>
 async function runMode(label: string, throttleA: ThrottleConfig | ThrottleGate, throttleB: ThrottleConfig | ThrottleGate): Promise<boolean> {
   console.log(`\n[multi] ─────────── ${label} ───────────`);
 
+  const ua = cfg.fingerprint?.userAgent ??
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
   const clientA = new SnapcapClient({
     dataStore: new FileDataStore(join(root, acctA.authPath)),
-    username: acctA.username, password: acctA.password,
-    userAgent: cfg.fingerprint?.userAgent,
+    credentials: { username: acctA.username, password: acctA.password },
+    browser: { userAgent: ua },
     throttle: throttleA,
   });
   const clientB = new SnapcapClient({
     dataStore: new FileDataStore(join(root, acctB.authPath)),
-    username: acctB.username, password: acctB.password,
-    userAgent: cfg.fingerprint?.userAgent,
+    credentials: { username: acctB.username, password: acctB.password },
+    browser: { userAgent: ua },
     throttle: throttleB,
   });
 

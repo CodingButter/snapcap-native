@@ -28,9 +28,11 @@ const dataStoreA = new FileDataStore(STORE_PATH);
 const t0 = Date.now();
 const clientA = new SnapcapClient({
   dataStore: dataStoreA,
-  username: state.username,
-  password: state.password,
-  userAgent: state.fingerprint?.userAgent,
+  credentials: { username: state.username, password: state.password },
+  browser: {
+    userAgent: state.fingerprint?.userAgent ??
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+  },
 });
 await clientA.authenticate();
 const okA = clientA.isAuthenticated();
@@ -52,9 +54,11 @@ const t2 = Date.now();
 // the cookie path rejects. Pass through the same creds.
 const clientB = new SnapcapClient({
   dataStore: dataStoreB,
-  username: state.username,
-  password: state.password,
-  userAgent: state.fingerprint?.userAgent,
+  credentials: { username: state.username, password: state.password },
+  browser: {
+    userAgent: state.fingerprint?.userAgent ??
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+  },
 });
 await clientB.authenticate();
 const okB = clientB.isAuthenticated();

@@ -37,9 +37,11 @@ beforeAll(async () => {
   const dataStore = new FileDataStore(join(SDK_ROOT, authPath));
   client = new SnapcapClient({
     dataStore,
-    username: creds.username,
-    password: creds.password,
-    userAgent: creds.fingerprint?.userAgent,
+    credentials: { username: creds.username, password: creds.password },
+    browser: {
+      userAgent: creds.fingerprint?.userAgent ??
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    },
     throttle: { rules: RECOMMENDED_THROTTLE_RULES },
   });
   await client.authenticate();

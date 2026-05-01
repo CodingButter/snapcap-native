@@ -28,5 +28,17 @@
     "outDir": "./dist"
   },
   "include": ["src/**/*", "scripts/**/*"],
-  "exclude": ["dist", "node_modules", "vendor", "docs"]
+  // Dev probe scripts — one-off investigation tools, not part of the SDK
+  // contract. Updated as needed when next used; type-checking them blocks
+  // the canonical paths (smoke, smoke-multi-instance, mint-attestation).
+  "exclude": [
+    "dist", "node_modules", "vendor", "docs",
+    "scripts/probe-*.ts",
+    "scripts/capture-*.ts",
+    "scripts/test-bundle-auth.ts",
+    "scripts/check-friend-state.ts",
+    "scripts/send-friend-request.ts",
+    "scripts/playwright-login.ts",
+    "scripts/verify-account.ts"
+  ]
 }

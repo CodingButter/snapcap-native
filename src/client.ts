@@ -48,27 +48,41 @@ import type { DataStore } from "./storage/data-store.ts";
 import type { ThrottleConfig, ThrottleGate } from "./transport/throttle.ts";
 import { CookieJarStore } from "./storage/cookie-store.ts";
 
-const DEFAULT_USER_AGENT =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
+// `Credentials`, `BrowserContext`, and `activeIdentifier` live in
+// `./types.ts` so `api/auth.ts` can import them without forming a cycle
+// with `client.ts`. Re-exported here so consumers can import the public
+// types from either location.
+export { activeIdentifier, type Credentials, type BrowserContext } from "./types.ts";
+import { activeIdentifier, type Credentials, type BrowserContext } from "./types.ts";
 
 /**
  * Public constructor options for `SnapcapClient`.
  *
- * The DataStore is required and acts as the canonical persistence
- * backbone — cookies, bearer, and the Snap-bundle's own
- * `local_*`/`session_*`/`indexdb_*` sandbox storage all share it.
+ * Four top-level concerns:
+ *   - `dataStore`     — persistence backbone (cookies, bearer, sandbox storage).
+ *   - `credentials`   — login identity (username|email|phone + password).
+ *                       Optional for warm-start scenarios.
+ *   - `browser`       — browser-context fingerprint (UA required, others optional).
+ *   - `throttle`      — opt-in HTTP rate limiting (off by default).
  *
- * `username`/`password` are only consulted on cold start (no restored
- * cookies). They are NOT persisted to the DataStore — pass them again
- * on subsequent process boots if you want to be able to recover from
- * a session expiry.
+ * Credentials are NOT persisted to the DataStore — pass them again on
+ * subsequent process boots if you want to be able to recover from a
+ * session expiry.
  */
 export type SnapcapClientOpts = {
   dataStore: DataStore;
-  username?: string;
-  password?: string;
-  /** UA fingerprint used at login. Persists with the cookies for consistency. */
-  userAgent?: string;
+  /**
+   * Login credentials. Optional — warm-start with cached cookies works
+   * without credentials, but cold-login (no cookies) requires them.
+   * See `Credentials` type for shape (username | email | phone + password).
+   */
+  credentials?: Credentials;
+  /**
+   * Browser-context fingerprint. REQUIRED — `userAgent` inside is the
+   * key field. See `BrowserContext` for the full shape and the
+   * fingerprint-hygiene rationale.
+   */
+  browser: BrowserContext;
   /**
    * Optional opt-in HTTP throttling. Default: no throttle (browser-cadence,
    * zero overhead). Two valid shapes:
@@ -118,8 +132,14 @@ export class SnapcapClient implements ISnapcapClient {
   private readonly sandbox: Sandbox;
 
   constructor(opts: SnapcapClientOpts) {
+    if (!opts.browser?.userAgent) {
+      throw new Error(
+        "SnapcapClient requires opts.browser.userAgent — pass a recent realistic UA. " +
+        "If every consumer defaults to the same UA, it becomes a snapcap fingerprint signature.",
+      );
+    }
     this.opts = opts;
-    this.userAgent = opts.userAgent ?? DEFAULT_USER_AGENT;
+    this.userAgent = opts.browser.userAgent;
 
     // Construct a per-instance Sandbox directly — no `installShims`
     // singleton dance. The Sandbox owns the vm.Context + happy-dom
@@ -127,6 +147,9 @@ export class SnapcapClient implements ISnapcapClient {
     // gets its own fresh Sandbox with zero shared state.
     this.sandbox = new Sandbox({
       url: "https://www.snapchat.com/web",
+      userAgent: opts.browser.userAgent,
+      viewportWidth: opts.browser.viewport?.width,
+      viewportHeight: opts.browser.viewport?.height,
       dataStore: this.opts.dataStore,
       throttle: this.opts.throttle,
     });
@@ -164,13 +187,14 @@ export class SnapcapClient implements ISnapcapClient {
   // ── Auth surface ────────────────────────────────────────────────────
 
   async authenticate(): Promise<void> {
-    if (!this.opts.username || !this.opts.password) {
+    if (!this.opts.credentials) {
       throw new Error(
-        "authenticate requires username + password in SnapcapClient constructor opts",
+        "authenticate requires opts.credentials in SnapcapClient constructor opts " +
+        "(username|email|phone + password)",
       );
     }
     const ctx = await this._getCtx();
-    return authBundle(ctx, { username: this.opts.username, password: this.opts.password });
+    return authBundle(ctx, { credentials: this.opts.credentials });
   }
 
   async logout(force?: boolean): Promise<void> {
@@ -186,11 +210,12 @@ export class SnapcapClient implements ISnapcapClient {
   }
 
   async refreshAuthToken(): Promise<void> {
-    if (!this.opts.username) {
+    if (!this.opts.credentials) {
       throw new Error("refreshAuthToken requires the client to be constructed with credentials");
     }
     const ctx = await this._getCtx();
-    return refreshAuthTokenBundle(ctx, this.opts.username);
+    const id = activeIdentifier(this.opts.credentials);
+    return refreshAuthTokenBundle(ctx, id.value);
   }
 
   /** Live read: true iff the Zustand auth slice currently reports `LoggedIn`. */

@@ -40,6 +40,7 @@ import { getOrCreateJar } from "../shims/cookie-jar.ts";
 import { authSlice, chatWreq, loginClient } from "../bundle/register.ts";
 import type { UnaryFn, WebLoginRequest, WebLoginResponse } from "../bundle/types.ts";
 import type { ClientContext } from "./_context.ts";
+import { activeIdentifier, type Credentials } from "../types.ts";
 
 export type { ClientContext } from "./_context.ts";
 
@@ -71,7 +72,7 @@ const SSO_URL =
  */
 export async function authenticate(
   ctx: ClientContext,
-  opts: { username: string; password: string },
+  opts: { credentials: Credentials },
 ): Promise<void> {
   await bringUp(ctx);
   if (await tryMintFromExistingCookies(ctx)) return;
@@ -286,8 +287,13 @@ async function tryMintFromExistingCookies(ctx: ClientContext): Promise<boolean> 
  */
 async function fullLogin(
   ctx: ClientContext,
-  opts: { username: string; password: string },
+  opts: { credentials: Credentials },
 ): Promise<void> {
+  // Pull the active identifier (username | email | phone) — Snap's
+  // WebLogin proto loginIdentifier is a oneof of the three. The
+  // attestation also gets bound to whichever identifier the consumer
+  // passed in (kameleon.finalize takes the identifier as its input).
+  const id = activeIdentifier(opts.credentials);
   const { ctx: kameleon, wreq } = await getKameleon(ctx.sandbox, { page: "www_login" });
 
   // Force-eval module 13150 to fire the WebLoginServiceClientImpl
@@ -319,7 +325,7 @@ async function fullLogin(
   // bundle's `instanceof Uint8Array` cross-realm checks pass).
   const TextEncoderCtor = ctx.sandbox.runInContext("TextEncoder") as typeof TextEncoder;
   const enc = new TextEncoderCtor();
-  const attestation = await kameleon.finalize(opts.username);
+  const attestation = await kameleon.finalize(id.value);
 
   const headerBrowserBase = {
     authenticationSessionPayload: new Uint8Array(),
@@ -335,7 +341,12 @@ async function fullLogin(
   // Step 1: identifier + attestation.
   const r1 = await submitLogin({
     webLoginHeaderBrowser: headerBrowserBase,
-    loginIdentifier: { $case: "username", username: opts.username },
+    // Snap's WebLogin loginIdentifier is a ts-proto oneof keyed by `$case`.
+    // Build the variant matching whichever identifier the consumer passed.
+    loginIdentifier:
+      id.type === "username" ? { $case: "username", username: id.value } :
+      id.type === "email"    ? { $case: "email",    email:    id.value } :
+                               { $case: "phone",    phone:    id.value },
   });
   const r1Payload = r1.payload as
     | { $case?: string; challengeData?: { challenge?: { $case?: string } } }
@@ -360,7 +371,7 @@ async function fullLogin(
     challengeAnswer: {
       challengeAnswer: {
         $case: "passwordChallengeAnswer",
-        passwordChallengeAnswer: { password: opts.password },
+        passwordChallengeAnswer: { password: opts.credentials.password },
       },
     },
   });
