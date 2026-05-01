@@ -1,0 +1,142 @@
+---
+title: 'Logging'
+description: 'Structured network observability. Every fetch and XHR the SDK and the bundle issue, surfaced through one opt-in handler.'
+---
+
+The SDK and the bundle inside the sandbox emit structured events for every outbound HTTP and XHR request. The channel is **opt-in** — when no logger is installed the internal emit point is a one-instruction null check, so the cost when off is zero.
+
+**Body bytes are NEVER logged — only sizes.** Bearer tokens and message content stay out of the logs. Sizes are safe to leave on in production.
+
+## Quick start
+
+The fastest path: set `SNAP_NETLOG=1` in the environment. Module load installs the built-in text formatter for you.
+
+```bash
+SNAP_NETLOG=1 node ./your-script.js
+```
+
+```text
+[net.xhr.open  ] POST https://web.snapchat.com/.../AddFriends
+[net.xhr.done  ] POST https://web.snapchat.com/.../AddFriends -> 200 (req 87B / resp 0B / 437ms / grpc-status:0)
+[net.xhr.error ] POST https://web.snapchat.com/.../SyncFriendData -> "Network error" (1203ms)
+```
+
+Or install the formatter explicitly from code:
+
+```ts
+import { setLogger, defaultTextLogger } from "@snapcap/native";
+setLogger(defaultTextLogger);
+```
+
+## Custom handlers
+
+Pass any function with the [`Logger`](/docs/api/type-aliases/Logger) signature to [`setLogger`](/docs/api/functions/setLogger). The handler is called synchronously on every emitted [`LogEvent`](/docs/api/type-aliases/LogEvent).
+
+```ts
+import { setLogger } from "@snapcap/native";
+
+setLogger((event) => {
+  process.stdout.write(JSON.stringify({ ts: Date.now(), ...event }) + "\n");
+});
+```
+
+Handler crashes are caught and swallowed by the internal emit point so a bad logger can never break the network path. They're silently dropped — defensive code matters in your handler.
+
+## Disabling
+
+Pass `undefined` to clear:
+
+```ts
+setLogger(undefined);
+```
+
+Or if you started with `SNAP_NETLOG=1`, call `setLogger(undefined)` after import to opt back out.
+
+## Event shape
+
+[`LogEvent`](/docs/api/type-aliases/LogEvent) is a closed discriminated union. Switch on `event.kind` to narrow:
+
+```ts
+type LogEvent =
+  | { kind: "net.xhr.open";   method: string; url: string }
+  | { kind: "net.xhr.done";   method: string; url: string; status: number; reqBytes: number; respBytes: number; durMs: number; grpcStatus?: string; grpcMessage?: string }
+  | { kind: "net.xhr.error";  method: string; url: string; error: string; durMs: number }
+  | { kind: "net.fetch.open"; method: string; url: string }
+  | { kind: "net.fetch.done"; method: string; url: string; status: number; reqBytes: number; respBytes: number; durMs: number; grpcStatus?: string; grpcMessage?: string }
+  | { kind: "net.fetch.error";method: string; url: string; error: string; durMs: number };
+```
+
+Variants pair on protocol (`xhr` vs `fetch`) and lifecycle stage (`open` / `done` / `error`). `done` events include `grpcStatus` and `grpcMessage` for gRPC-Web responses where the bundle's transport has already parsed them.
+
+## Routing into your log pipeline
+
+Pino, Winston, OpenTelemetry, or anything that takes structured events. One example with Pino:
+
+```ts
+import pino from "pino";
+import { setLogger, type LogEvent } from "@snapcap/native";
+
+const log = pino({ level: "info" });
+
+setLogger((event: LogEvent) => {
+  switch (event.kind) {
+    case "net.xhr.done":
+    case "net.fetch.done":
+      log.info(
+        { url: event.url, status: event.status, dur: event.durMs, grpcStatus: event.grpcStatus },
+        "snap.net",
+      );
+      return;
+    case "net.xhr.error":
+    case "net.fetch.error":
+      log.warn({ url: event.url, error: event.error, dur: event.durMs }, "snap.net.error");
+      return;
+    default:
+      // open events — usually too noisy for production
+      return;
+  }
+});
+```
+
+## Filtering
+
+The handler is the filter. Drop events you don't care about:
+
+```ts
+setLogger((event) => {
+  // Skip the chatty bundle prefetches — only log mutations and errors.
+  if (event.kind === "net.xhr.open" || event.kind === "net.fetch.open") return;
+  if (
+    (event.kind === "net.xhr.done" || event.kind === "net.fetch.done") &&
+    !event.url.includes("/JzFriendAction/")
+  ) {
+    return;
+  }
+  defaultTextLogger(event);
+});
+```
+
+## Multi-tenant
+
+The logger is process-wide — every `SnapcapClient` in the process emits through the same handler. URLs are full and include the host, so you can group events per tenant by parsing the cookie/auth context out of your own runner — but the SDK itself doesn't tag events with a tenant id.
+
+If you need per-tenant attribution, wrap the gate handler:
+
+```ts
+const tagByUserAgent = new Map<string, string>();
+// populate from your tenant config: ua → tenantId
+
+setLogger((event) => {
+  // The bundle emits events from inside whichever Sandbox issued the request.
+  // For now, parse the URL or correlate to your runner state externally.
+  log.info({ ...event }, "snap.net");
+});
+```
+
+## What's next
+
+- [Throttling](/docs/guide/throttle) — see what's being throttled in the logs (`durMs` jumps when the gate waits).
+- [Multi-tenant](/docs/guide/multi-tenant) — running many clients with one logger.
+- [API: setLogger](/docs/api/functions/setLogger)
+- [API: Logger](/docs/api/type-aliases/Logger)
+- [API: LogEvent](/docs/api/type-aliases/LogEvent)

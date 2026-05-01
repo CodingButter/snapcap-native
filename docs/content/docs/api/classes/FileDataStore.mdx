@@ -4,7 +4,7 @@ title: FileDataStore
 
 # Class: FileDataStore
 
-Defined in: [storage/data-store.ts:97](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L97)
+Defined in: [storage/data-store.ts:97](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L97)
 
 File-backed [DataStore](../interfaces/DataStore.mdx) implementation.
 
@@ -37,7 +37,7 @@ const client = new SnapcapClient({ dataStore, username, password });
 new FileDataStore(filePath: string): FileDataStore;
 ```
 
-Defined in: [storage/data-store.ts:105](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L105)
+Defined in: [storage/data-store.ts:105](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L105)
 
 #### Parameters
 
@@ -57,7 +57,7 @@ Defined in: [storage/data-store.ts:105](https://github.com/CodingButter/snapcap-
 delete(key: string): Promise<void>;
 ```
 
-Defined in: [storage/data-store.ts:167](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L167)
+Defined in: [storage/data-store.ts:167](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L167)
 
 Delete the entry at `key`. No-op if the key is absent.
 
@@ -85,7 +85,7 @@ get(key: string): Promise<
 | undefined>;
 ```
 
-Defined in: [storage/data-store.ts:156](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L156)
+Defined in: [storage/data-store.ts:156](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L156)
 
 Read the value at `key`.
 
@@ -117,7 +117,7 @@ getSync(key: string):
   | undefined;
 ```
 
-Defined in: [storage/data-store.ts:138](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L138)
+Defined in: [storage/data-store.ts:138](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L138)
 
 Synchronous read — for Web Storage shims that can't await.
 
@@ -142,7 +142,7 @@ The stored bytes, or `undefined` if absent.
 keys(prefix?: string): string[];
 ```
 
-Defined in: [storage/data-store.ts:178](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L178)
+Defined in: [storage/data-store.ts:178](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L178)
 
 Iterate cached keys, optionally filtered by prefix.
 
@@ -166,7 +166,7 @@ A snapshot array of matching keys.
 set(key: string, value: Uint8Array): Promise<void>;
 ```
 
-Defined in: [storage/data-store.ts:161](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L161)
+Defined in: [storage/data-store.ts:161](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L161)
 
 Write `value` to `key`, overwriting any prior entry. Implementations
 SHOULD make this durable before resolving.
@@ -194,7 +194,7 @@ SHOULD make this durable before resolving.
 setSync(key: string, value: Uint8Array): void;
 ```
 
-Defined in: [storage/data-store.ts:150](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L150)
+Defined in: [storage/data-store.ts:150](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L150)
 
 Synchronous variant of [FileDataStore.set](#set) — fire-and-forget
 flush. The in-memory cache update is immediate; the file write happens

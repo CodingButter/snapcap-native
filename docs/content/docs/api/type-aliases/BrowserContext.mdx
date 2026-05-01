@@ -16,7 +16,7 @@ type BrowserContext = {
 };
 ```
 
-Defined in: [types.ts:86](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/types.ts#L86)
+Defined in: [types.ts:86](https://github.com/CodingButter/snapcap-native/blob/main/src/types.ts#L86)
 
 Browser-context fingerprint settings — what "browser" the SDK pretends to
 be when talking to Snap.
@@ -54,9 +54,9 @@ const browser: BrowserContext = {
 
 | Property | Type | Description | Defined in |
 | ------ | ------ | ------ | ------ |
-| <a id="locale"></a> `locale?` | `string` | Locale tag (BCP-47). Reserved for future Accept-Language threading. | [types.ts:97](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/types.ts#L97) |
-| <a id="timezone"></a> `timezone?` | `string` | Timezone identifier (IANA). Reserved for future happy-dom timezone setting. | [types.ts:101](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/types.ts#L101) |
-| <a id="useragent"></a> `userAgent` | `string` | REQUIRED — User-Agent header sent on every request, AND surfaced to bundle code via `navigator.userAgent`. Match a recent real browser. Vary per client in multi-tenant deployments. **Example** ``"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"`` | [types.ts:95](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/types.ts#L95) |
-| <a id="viewport"></a> `viewport?` | \{ `height`: `number`; `width`: `number`; \} | Virtual viewport dimensions for happy-dom Window. Defaults to 1440×900. | [types.ts:99](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/types.ts#L99) |
-| `viewport.height` | `number` | - | [types.ts:99](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/types.ts#L99) |
-| `viewport.width` | `number` | - | [types.ts:99](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/types.ts#L99) |
+| <a id="locale"></a> `locale?` | `string` | Locale tag (BCP-47). Reserved for future Accept-Language threading. | [types.ts:97](https://github.com/CodingButter/snapcap-native/blob/main/src/types.ts#L97) |
+| <a id="timezone"></a> `timezone?` | `string` | Timezone identifier (IANA). Reserved for future happy-dom timezone setting. | [types.ts:101](https://github.com/CodingButter/snapcap-native/blob/main/src/types.ts#L101) |
+| <a id="useragent"></a> `userAgent` | `string` | REQUIRED — User-Agent header sent on every request, AND surfaced to bundle code via `navigator.userAgent`. Match a recent real browser. Vary per client in multi-tenant deployments. **Example** ``"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"`` | [types.ts:95](https://github.com/CodingButter/snapcap-native/blob/main/src/types.ts#L95) |
+| <a id="viewport"></a> `viewport?` | \{ `height`: `number`; `width`: `number`; \} | Virtual viewport dimensions for happy-dom Window. Defaults to 1440×900. | [types.ts:99](https://github.com/CodingButter/snapcap-native/blob/main/src/types.ts#L99) |
+| `viewport.height` | `number` | - | [types.ts:99](https://github.com/CodingButter/snapcap-native/blob/main/src/types.ts#L99) |
+| `viewport.width` | `number` | - | [types.ts:99](https://github.com/CodingButter/snapcap-native/blob/main/src/types.ts#L99) |

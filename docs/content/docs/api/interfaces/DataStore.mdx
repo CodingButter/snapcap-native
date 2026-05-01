@@ -4,7 +4,7 @@ title: DataStore
 
 # Interface: DataStore
 
-Defined in: [storage/data-store.ts:52](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L52)
+Defined in: [storage/data-store.ts:52](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L52)
 
 Persistent key-value storage interface — the SDK's pluggable persistence
 backbone.
@@ -45,7 +45,7 @@ class MyStore implements DataStore {
 delete(key: string): Promise<void>;
 ```
 
-Defined in: [storage/data-store.ts:74](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L74)
+Defined in: [storage/data-store.ts:74](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L74)
 
 Delete the entry at `key`. No-op if the key is absent.
 
@@ -69,7 +69,7 @@ get(key: string): Promise<
 | undefined>;
 ```
 
-Defined in: [storage/data-store.ts:59](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L59)
+Defined in: [storage/data-store.ts:59](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L59)
 
 Read the value at `key`.
 
@@ -95,7 +95,7 @@ The stored bytes, or `undefined` if the key is absent.
 set(key: string, value: Uint8Array): Promise<void>;
 ```
 
-Defined in: [storage/data-store.ts:68](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L68)
+Defined in: [storage/data-store.ts:68](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/data-store.ts#L68)
 
 Write `value` to `key`, overwriting any prior entry. Implementations
 SHOULD make this durable before resolving.

@@ -245,10 +245,9 @@ Every numbered step has a non-obvious failure mode. (3) won't work without (2) �
 In the SDK, none of this is exposed. You write:
 
 ```ts
-const client = new SnapcapClient({ dataStore, username, password });
-if (await client.isReady()) {
-  await client.listFriends();
-}
+const client = new SnapcapClient({ dataStore, browser, credentials });
+await client.authenticate();
+const friends = await client.friends.list();
 ```
 
-Internally, the kameleon Module is booted lazily on the first cold-start `isReady()` call (when no restored cookies are in the DataStore) and cached in a process-wide singleton on the sandbox. Subsequent `SnapcapClient` instances in the same process reuse it for free. The same Module mints different tokens for different users because `finalize(username)` rebinds per call — though see the [single-account-per-VM constraint](/docs/internals/architecture#single-account-per-vm-constraint) for why running multiple accounts in one process isn't actually safe.
+Internally, the kameleon Module is booted lazily on the first cold-start `authenticate()` call (when no restored cookies are in the DataStore) and cached on the per-instance Sandbox. Each `SnapcapClient` boots its own kameleon Module — there is no process-wide singleton. The Module mints different tokens for different users because `finalize(username)` rebinds per call.

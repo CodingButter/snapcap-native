@@ -3,34 +3,40 @@ title: '@snapcap/native'
 description: 'Browser-free Snap client. Native Node bridge to web.snapchat.com — no Playwright, no Frida, no rooted phone.'
 ---
 
-A Node SDK that talks directly to `web.snapchat.com`'s gRPC-Web API the same way the browser does — by running Snap's actual JavaScript bundle in an isolated Node `vm.Context`. You get an idiomatic TypeScript class with methods like `listFriends()`, `sendText()`, and `postStory()`.
+A Node SDK that talks directly to `web.snapchat.com`'s gRPC-Web API the same way the browser does — by running Snap's actual JavaScript bundle in an isolated Node `vm.Context`. You get an idiomatic TypeScript class with a small auth surface and per-domain managers (`client.friends`, etc.).
 
 ```ts
 import { SnapcapClient, FileDataStore } from "@snapcap/native";
 
 const client = new SnapcapClient({
   dataStore: new FileDataStore("./auth.json"),
-  username: process.env.SNAP_USER,
-  password: process.env.SNAP_PASS,
+  credentials: {
+    username: process.env.SNAP_USER,
+    password: process.env.SNAP_PASS!,
+  },
+  browser: {
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+  },
 });
 
-if (await client.isReady()) {
-  console.log(await client.listFriends());
-}
+await client.authenticate();
+const friends = await client.friends.list();
+console.log(friends.map((f) => f.username));
 ```
 
 ## Where to go next
 
 <Cards>
   <Card title="Get started" href="/docs/guide/getting-started" description="Install, authenticate, and make your first call in under five minutes." />
-  <Card title="API reference" href="/docs/api" description="Every public method on SnapcapClient and Conversation, with signatures and examples." />
+  <Card title="API reference" href="/docs/api" description="Every public method on SnapcapClient and the per-domain managers, with signatures and examples." />
   <Card title="How it works" href="/docs/internals/architecture" description="For the curious: vm sandbox, shim layer, kameleon, SSO, bundle session." />
 </Cards>
 
 ## What this is not
 
 - It's **not** a wrapper around an emulator, Frida, or a rooted phone — those approaches were tried and failed against Snap's mobile risk engine.
-- It's **not** Snap's official Login Kit or Snap Kit — those don't expose story posting or friend management.
+- It's **not** Snap's official Login Kit or Snap Kit — those don't expose friend management or story posting.
 - It's **not** Playwright-driven. There is zero headless browser at runtime.
 
 ## Status
@@ -39,12 +45,12 @@ Working today, exercised by the smoke test on a real account:
 
 | Capability | Status |
 |---|---|
-| Native login (username + password → cookie + bearer) | Working |
-| `listFriends()` / `searchUsers()` / `addFriend()` | Working |
-| `getConversations()` / `Conversation.sendText` / `sendImage` | Working |
-| `postStory()` (auto-normalises to 1080×1920 RGBA PNG) | Working |
-| Inbound message stream via `client.onMessage(...)` | Working |
-| Mark-as-viewed, typing/viewing presence | Working |
-| Sending snaps (kind 122) | Migrating to bundle session — not yet routed end-to-end |
+| `authenticate()` — warm cookies + cold WebLogin | Working |
+| `client.friends` — `list` / `search` / `add` / `remove` / `block` / `unblock` / `ignore` / `snapshot` | Working |
+| `client.friends.onChange()` — real-time graph subscription | Working |
+| Per-instance `Sandbox` (multi-tenant in one process) | Working |
+| Opt-in HTTP throttling (per-instance + shared gates) | Working |
+| Structured network observability (`SNAP_NETLOG=1`, `setLogger`) | Working |
+| `client.messaging` / `presence` / `stories` / `inbox` / `media` | Placeholder — interface stubs, no public methods yet |
 
-The bundle-native messaging session (lazy-brought-up by the SDK) owns Fidelius E2E identity now — there is no SDK-side identity to manage. See [Messaging session](/docs/internals/messaging-session) for the implementation story.
+The bundle-native messaging session (lazy-brought-up by the SDK) owns Fidelius E2E identity now — there is no SDK-side identity to manage. See [Messaging session](/docs/internals/messaging-session) for the implementation story, and [Multi-tenant](/docs/guide/multi-tenant) for running many accounts in one process.

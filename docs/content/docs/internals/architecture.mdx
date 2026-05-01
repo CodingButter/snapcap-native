@@ -11,29 +11,26 @@ description: 'The mental model: layered architecture from consumer API down thro
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ CONSUMER (your app)                                                     │
 │   import { SnapcapClient, FileDataStore } from "@snapcap/native"        │
-│   const client = new SnapcapClient({ dataStore, username, password })   │
-│   if (await client.isReady()) await client.listFriends()                │
+│   const client = new SnapcapClient({ dataStore, browser, credentials }) │
+│   await client.authenticate(); await client.friends.list()              │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ SnapcapClient                            (src/client.ts)                │
-│  ─ owns: cookieStore, bearer, self, lazy MessagingSession               │
-│  ─ public: isReady, logout, listFriends, getConversations, postStory…   │
-│  ─ private: ensureMessagingSession (lazy bundle bring-up)               │
+│  ─ owns: per-instance Sandbox, lazy ClientContext                       │
+│  ─ auth: authenticate, logout, refreshAuthToken, isAuthenticated…       │
+│  ─ managers: friends / messaging / presence / stories / inbox / media   │
 └─────────────────────────────────────────────────────────────────────────┘
-        │                                              │
-        │  (legacy direct gRPC path)                   │  (bundle-native path)
-        ▼                                              ▼
-┌──────────────────────────────┐    ┌─────────────────────────────────────┐
-│ src/api/* + src/transport/*  │    │ MessagingSession                    │
-│  ─ proto encoders/decoders   │    │   (src/auth/messaging-session.ts)   │
-│  ─ AtlasGw / MessagingCore   │    │  ─ session, module, codec, events   │
-│  ─ gRPC-Web framing          │    │  ─ getConversationManager() etc.    │
-│  ─ tough-cookie + native     │    │  ─ inbound message pump → events    │
-│    fetch                     │    │  ─ Snap's natural code path         │
-└──────────────────────────────┘    └─────────────────────────────────────┘
-        │                                              │
-        ▼                                              ▼
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Bundle-driven api layer  (src/api/* + src/bundle/register.ts)           │
+│  ─ tier-1 registry: flat verbs that pass through to webpack methods     │
+│  ─ tier-2 api files: compose registry verbs, marshal UUID/proto shapes  │
+│  ─ ClientContext: per-instance sandbox + jar + dataStore + UA           │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ Sandbox (src/shims/sandbox.ts)                                          │
 │   Empty vm.Context with V8 built-ins                                    │
@@ -75,26 +72,24 @@ description: 'The mental model: layered architecture from consumer API down thro
 
 Three layers of foreign code execute inside the sandbox's `vm.Context`:
 
-1. **Snap's accounts bundle** (~5 MB webpacked JS) — contains the WebLoginService gRPC client, the protobuf encoders for every Janus auth message, and the loader for `kameleon.wasm`. Loaded by `auth/kameleon.ts`.
-2. **The kameleon WebAssembly module** (814 KB Emscripten) — generates the attestation token Snap's server uses to decide whether the client is a legitimate browser. Booted once per process by `auth/kameleon.ts`. See [the kameleon chapter](/docs/internals/kameleon).
-3. **The chat bundle** (~1.5 MB JS + 12 MB Fidelius WASM + 814 KB sibling) — contains the AtlasGw client, MessagingCoreService, the upload helpers, and the Fidelius E2E key management. Loaded lazily by `auth/chat-bundle.ts` the first time something needs it (friend list, sending a message, the `MessagingSession` bring-up).
+1. **Snap's accounts bundle** (~5 MB webpacked JS) — contains the WebLoginService gRPC client, the protobuf encoders for every Janus auth message, and the loader for `kameleon.wasm`. Loaded by `bundle/accounts-loader.ts`.
+2. **The kameleon WebAssembly module** (814 KB Emscripten) — generates the attestation token Snap's server uses to decide whether the client is a legitimate browser. Booted once per Sandbox by `bundle/accounts-loader.ts`. See [the kameleon chapter](/docs/internals/kameleon).
+3. **The chat bundle** (~1.5 MB JS + 12 MB Fidelius WASM + 814 KB sibling) — contains the AtlasGw client, MessagingCoreService, the upload helpers, and the Fidelius E2E key management. Loaded by `bundle/chat-loader.ts` during `authenticate()`.
 
 All three run in the sandbox. The host realm's `globalThis` is never modified — see [Why we don't use happy-dom's GlobalRegistrator](/docs/internals/sandbox#why-globalregistrator-had-to-go).
 
-## Two paths to Snap's API
+## Bundle-driven api layer
 
-Today the SDK reaches Snap's services through two separate paths, and you'll see references to both in the source:
+The SDK no longer hand-rolls protobuf encoders or gRPC-Web framing for outbound calls. Instead, every public method calls into Snap's webpack methods directly through a two-tier registry:
 
-- **Legacy direct gRPC** (`src/api/*.ts` + `src/transport/grpc-web.ts`) — the SDK encodes a protobuf, frames it as gRPC-Web, attaches the bearer + cookies, sends through Node `fetch`. Used today by `listFriends`, `searchUsers`, `addFriend`, `getConversations`, `Conversation.sendText`, `Conversation.sendImage`, `postStory`, `fetchMessages`, presence, etc. Driver: `src/transport/grpc-web.ts`.
-- **Bundle-native messaging session** (`src/auth/messaging-session.ts`) — the SDK calls `En.createMessagingSession(...)` (the same function the browser SPA uses). Returns the same managers (`getConversationManager`, `getFeedManager`, `getSnapManager`, `getFriendsManager`) the SPA gets. Inbound message decryption flows through here naturally because it's Snap's own code. See [Messaging session](/docs/internals/messaging-session).
+- **Tier 1 — `src/bundle/register.ts`.** Flat exports that pass through to webpack-resolved functions in the chat or accounts bundle (`authSlice`, `loginClient`, `chatWreq`, etc.). Pure pass-through, no consumer-shape adaptation.
+- **Tier 2 — `src/api/*.ts`.** Each domain file (`auth.ts`, `friends.ts`, `messaging.ts`, …) composes tier-1 verbs and translates between consumer-friendly shapes (UUID strings, plain numbers) and the bundle-realm shapes the registry expects (16-byte buffers, `{highBits, lowBits}` pairs). Stateless — every export takes a `ClientContext` first arg.
 
-The bundle-native path is gradually replacing the direct-gRPC path. The migration is per-method, not all-at-once. Reading received messages already routes through the bundle session.
+Inbound decryption flows through the bundle session naturally because it's Snap's own code. The migration off hand-rolled gRPC is complete — `src/transport/grpc-web.ts` and `src/transport/proto-encode.ts` have been retired.
 
 ## Real network I/O leaves the sandbox
 
-`src/transport/native-fetch.ts` snapshots Node's `fetch` at module load. Outgoing requests go straight to Node, with cookies attached by `transport/cookies.ts` and bearer by `transport/grpc-web.ts`. The bundle's own `fetch` is happy-dom's, scoped to the sandbox, and never used for real traffic — it's only there because the bundle won't run without a `fetch` global.
-
-The exception is the bundle-native gRPC factory: `messaging-session.ts` registers its own `nativeFetch`-backed factory via `GrpcManager.registerWebFactory`, so the bundle's bundle-side gRPC traffic flows through Node fetch too. See [I/O overrides](/docs/internals/io-overrides).
+`src/transport/native-fetch.ts` snapshots Node's `fetch` at module load. Outgoing requests go straight to Node, with cookies attached by `transport/cookies.ts`. The bundle's own `fetch` is shimmed to route through `nativeFetch` too — the bundle's `GrpcManager.registerWebFactory` is wired so its outbound gRPC traffic uses the same path. See [I/O overrides](/docs/internals/io-overrides).
 
 ## The auth flow
 
@@ -121,20 +116,20 @@ Three phases on cold start:
    ← 303 Location: https://www.snapchat.com/web#ticket=<bearer>
    GET https://www.snapchat.com/web (follow redirect)
    ← Set-Cookie: sc-a-nonce, _scid, sc_at      (parent-domain → cookie_jar)
-   bearer    → session_snapcap_bearer
+   bearer    → bundle Zustand auth slice
 ```
 
-After phase 3 the cookie jar holds one host-scoped refresh cookie, three parent-domain cookies that gate `web.snapchat.com` gRPC calls, and a Bearer string that pretends to be the access token. From there every API call is a framed gRPC-Web POST with `Authorization: Bearer …` and the cookie header riding along.
+After phase 3 the cookie jar holds one host-scoped refresh cookie, three parent-domain cookies that gate `web.snapchat.com` gRPC calls, and a Bearer string the bundle has stashed in its Zustand auth slice. From there every API call routes through bundle code that attaches `Authorization: Bearer …` and the cookie header automatically.
 
-Then `SyncFriendData` is walked to resolve `client.self`. Persisted to the DataStore. Done — until 401, which transparently re-mints from the cookie jar. See [SSO flow](/docs/internals/sso-flow).
+Done — until 401, which transparently re-mints from the cookie jar. See [SSO flow](/docs/internals/sso-flow).
 
-## Single-account-per-VM constraint
+## Multi-account in one process
 
-The sandbox is a process-wide singleton (`installShims()` is first-call-wins, `getSandbox()` returns the same instance forever). The bundle's `localStorage` / `sessionStorage` / `indexedDB` namespace is bound to whichever DataStore wins that race — typically the first `SnapcapClient` constructed.
+Each `SnapcapClient` constructs its own per-instance `Sandbox` — its own `vm.Context`, happy-dom Window, shimmed I/O layer, and per-Sandbox bring-up caches (kameleon boot, chat bundle eval, chat WASM Module, throttle gate). Two clients in the same process never share Zustand state, bearer tokens, or webpack runtime caches; they're isolated at the V8 vm.Context boundary.
 
-For multi-tenant deployments, **run one process per account**. A medium-sized refactor would make the sandbox per-client; that work is not done.
+A single process can drive many accounts simultaneously — see [Multi-tenant](/docs/guide/multi-tenant) for the recommended runner shape, including shared throttle gates so aggregate request rate stays constant in N.
 
 ## What's deferred
 
-- **Sending snaps end-to-end via the bundle session.** The Fidelius encryption path is wired (the bundle does it for us), but `sendImage` and `postStory` haven't been migrated off the legacy direct-gRPC + manual-AES path yet.
+- **Per-domain manager interfaces beyond Friends.** `client.messaging` / `presence` / `stories` / `inbox` / `media` are stub classes today — the surfaces are designed at migration time, not pre-emptively.
 - **Public inbound-message API.** The bundle session already pumps decrypted messages through `MessagingSession.events`; surfacing this as a stable `client.onMessage(...)` is in flight.

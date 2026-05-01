@@ -18,7 +18,7 @@ The chat bundle exports a function called `createMessagingSession(...)` from a c
 
 These are the exact managers the browser SPA uses. Migrating an API method off raw gRPC and onto one of these managers automatically inherits Fidelius decryption, server-side state syncing, etc.
 
-The MessagingSession is **lazily** brought up. The SDK never mints it during `isReady()` — the auth probe stays cheap. The first call that needs the bundle session (`ensureMessagingSession()`, called by API methods that have been migrated) drives the full bring-up.
+The MessagingSession is brought up during `client.authenticate()` as part of the chat-bundle bring-up. Once the bundle is loaded inside the per-instance Sandbox, the session managers are available to every tier-2 api call without further setup.
 
 ## Public shape
 

@@ -4,7 +4,7 @@ title: StorageShim
 
 # Class: StorageShim
 
-Defined in: [storage/storage-shim.ts:49](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/storage-shim.ts#L49)
+Defined in: [storage/storage-shim.ts:49](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/storage-shim.ts#L49)
 
 Web Storage API (`localStorage` / `sessionStorage`) implementation backed
 by a [DataStore](../interfaces/DataStore.mdx).
@@ -37,7 +37,7 @@ local.getItem("foo"); // "bar"
 new StorageShim(store: DataStore, prefix: string): StorageShim;
 ```
 
-Defined in: [storage/storage-shim.ts:62](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/storage-shim.ts#L62)
+Defined in: [storage/storage-shim.ts:62](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/storage-shim.ts#L62)
 
 #### Parameters
 
@@ -60,7 +60,7 @@ Defined in: [storage/storage-shim.ts:62](https://github.com/CodingButter/snapcap
 get length(): number;
 ```
 
-Defined in: [storage/storage-shim.ts:82](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/storage-shim.ts#L82)
+Defined in: [storage/storage-shim.ts:82](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/storage-shim.ts#L82)
 
 Number of stored keys under this shim's prefix.
 
@@ -82,7 +82,7 @@ Storage.length
 clear(): void;
 ```
 
-Defined in: [storage/storage-shim.ts:150](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/storage-shim.ts#L150)
+Defined in: [storage/storage-shim.ts:150](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/storage-shim.ts#L150)
 
 Web Storage `clear()` — delete every entry under this shim's prefix.
 
@@ -104,7 +104,7 @@ Storage.clear
 getItem(key: string): string | null;
 ```
 
-Defined in: [storage/storage-shim.ts:112](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/storage-shim.ts#L112)
+Defined in: [storage/storage-shim.ts:112](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/storage-shim.ts#L112)
 
 Web Storage `getItem(key)` — read the string value at `key`.
 
@@ -134,7 +134,7 @@ Storage.getItem
 key(index: number): string | null;
 ```
 
-Defined in: [storage/storage-shim.ts:95](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/storage-shim.ts#L95)
+Defined in: [storage/storage-shim.ts:95](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/storage-shim.ts#L95)
 
 Web Storage `key(index)` — return the Nth key under this shim's prefix.
 
@@ -164,7 +164,7 @@ Storage.key
 removeItem(key: string): void;
 ```
 
-Defined in: [storage/storage-shim.ts:143](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/storage-shim.ts#L143)
+Defined in: [storage/storage-shim.ts:143](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/storage-shim.ts#L143)
 
 Web Storage `removeItem(key)` — delete the entry at `key`.
 
@@ -192,7 +192,7 @@ Storage.removeItem
 setItem(key: string, value: string): void;
 ```
 
-Defined in: [storage/storage-shim.ts:127](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/storage-shim.ts#L127)
+Defined in: [storage/storage-shim.ts:127](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/storage-shim.ts#L127)
 
 Web Storage `setItem(key, value)` — UTF-8 encode and store.
 

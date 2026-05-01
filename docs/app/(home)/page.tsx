@@ -14,7 +14,7 @@ const features = [
   {
     title: 'Browser-shaped persistence',
     body:
-      'Hand the client a DataStore — file, memory, Redis, KMS, whatever — and cookies, bearer, the bundle\'s sandboxed local/session/IndexedDB writes (including its own wrapped E2E identity) all land under stable keys. Cold start ~5 s; warm start ~1 ms.',
+      'Hand the client a DataStore — file, memory, Redis, KMS, whatever — and cookies plus the bundle\'s sandboxed local/session/IndexedDB writes (including its own wrapped E2E identity) all land under stable keys. Cold start ~5 s; warm start ~100 ms.',
   },
   {
     title: 'gRPC-Web for free',
@@ -24,12 +24,12 @@ const features = [
   {
     title: 'One-line API',
     body:
-      'if (await client.isReady()) await client.listFriends(). Login, bearer rotation, cookie jar, and gRPC framing all live under the surface.',
+      'await client.authenticate() then client.friends.list(). Login, bearer rotation, cookie jar, and gRPC framing all live under the surface.',
   },
   {
     title: 'Multi-account ready',
     body:
-      'The kameleon module is shared across SnapcapClient instances. Run many accounts in one Node process at a fraction of the memory Playwright would burn — each account gets its own DataStore.',
+      'Each SnapcapClient owns its own per-instance Sandbox — vm.Context, happy-dom Window, shimmed I/O, bundle bring-up caches. One Node process drives many accounts simultaneously, each with its own DataStore and browser fingerprint, at a fraction of the memory Playwright would burn.',
   },
 ];
 

@@ -4,7 +4,7 @@ title: IFriendsManager
 
 # Interface: IFriendsManager
 
-Defined in: [api/friends.ts:215](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L215)
+Defined in: [api/friends.ts:215](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L215)
 
 Friends domain manager — all friend-graph operations live here.
 
@@ -40,7 +40,7 @@ throw.
 acceptRequest(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:291](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L291)
+Defined in: [api/friends.ts:291](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L291)
 
 Accept an incoming friend request.
 
@@ -66,7 +66,7 @@ Currently always throws — not yet wired.
 add(userId: string, source?: FriendSource): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:238](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L238)
+Defined in: [api/friends.ts:238](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L238)
 
 Send a friend request / add a user to the friend list.
 
@@ -103,7 +103,7 @@ await client.friends.add(userId, FriendSource.ADDED_BY_SEARCH);
 block(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:268](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L268)
+Defined in: [api/friends.ts:268](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L268)
 
 Block a user — also removes any existing friend link.
 
@@ -131,7 +131,7 @@ await client.friends.block(userId);
 ignore(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:282](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L282)
+Defined in: [api/friends.ts:282](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L282)
 
 Ignore an incoming friend request without explicitly rejecting.
 
@@ -153,7 +153,7 @@ Ignore an incoming friend request without explicitly rejecting.
 incomingRequests(): Promise<FriendRequest[]>;
 ```
 
-Defined in: [api/friends.ts:323](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L323)
+Defined in: [api/friends.ts:323](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L323)
 
 All pending incoming friend requests.
 
@@ -172,7 +172,7 @@ reject / ignore.
 list(): Promise<Friend[]>;
 ```
 
-Defined in: [api/friends.ts:315](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L315)
+Defined in: [api/friends.ts:315](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L315)
 
 All friends in the logged-in user's social graph (excluding self).
 
@@ -197,7 +197,7 @@ for (const f of friends) console.log(f.username);
 onChange(cb: (snap: FriendsSnapshot) => void): Unsubscribe;
 ```
 
-Defined in: [api/friends.ts:386](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L386)
+Defined in: [api/friends.ts:386](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L386)
 
 Fire `cb` whenever any part of the friend graph changes — mutuals,
 incoming requests, or outgoing requests.
@@ -237,7 +237,7 @@ unsub();
 outgoingRequests(): Promise<OutgoingRequest[]>;
 ```
 
-Defined in: [api/friends.ts:331](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L331)
+Defined in: [api/friends.ts:331](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L331)
 
 All pending outgoing friend requests (the logged-in user's adds
 waiting for the recipient to accept).
@@ -256,7 +256,7 @@ Outbound [OutgoingRequest](OutgoingRequest.mdx) records.
 rejectRequest(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:300](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L300)
+Defined in: [api/friends.ts:300](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L300)
 
 Reject an incoming friend request.
 
@@ -282,7 +282,7 @@ Currently always throws — not yet wired.
 remove(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:256](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L256)
+Defined in: [api/friends.ts:256](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L256)
 
 Remove a friend from the social graph.
 
@@ -317,7 +317,7 @@ await client.friends.remove(userId);
 search(query: string): Promise<FriendsUser[]>;
 ```
 
-Defined in: [api/friends.ts:360](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L360)
+Defined in: [api/friends.ts:360](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L360)
 
 Search Snap's user index by username / display-name fragment.
 
@@ -348,7 +348,7 @@ const users = await client.friends.search("alice");
 snapshot(): Promise<FriendsSnapshot>;
 ```
 
-Defined in: [api/friends.ts:344](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L344)
+Defined in: [api/friends.ts:344](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L344)
 
 Canonical point-in-time view of the friend graph — mutuals + pending
 requests in both directions.
@@ -373,7 +373,7 @@ The split read accessors ([IFriendsManager.list](#list),
 unblock(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:275](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L275)
+Defined in: [api/friends.ts:275](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L275)
 
 Unblock a previously-blocked user.
 

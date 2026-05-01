@@ -1,0 +1,143 @@
+---
+title: 'Multi-tenant'
+description: 'Run many accounts in one process. Per-instance Sandbox, per-tenant DataStore + browser context, and shared throttle gates so aggregate request rate stays constant in N.'
+---
+
+`SnapcapClient` is per-instance — every client owns its own `Sandbox` (`vm.Context` + happy-dom Window + shimmed I/O), its own bundle bring-up caches, and its own DataStore. One process can drive many accounts simultaneously without collisions.
+
+Multi-tenant is the supported pattern. The pieces:
+
+- **One `DataStore` per tenant** so cookies and bundle storage don't collide on `cookie_jar` / `local_*` / `session_*` / `indexdb_*` keys.
+- **One `BrowserContext.userAgent` per tenant** for fingerprint diversity. Snap's anti-fraud watches for "many sessions with identical UA + Node TLS fingerprint."
+- **One shared `ThrottleGate` across all tenants** so aggregate request rate respects Snap's anti-spam thresholds regardless of tenant count.
+
+## Tenant config shape
+
+A JSON file with one entry per tenant is the natural shape:
+
+```ts
+type Tenant = {
+  id: string;
+  username: string;
+  password: string;
+  userAgent: string;
+};
+
+const tenants: Tenant[] = JSON.parse(readFileSync("./tenants.json", "utf8"));
+```
+
+Vary `userAgent` per tenant — pick from a pool of recent realistic Chrome/Edge/Safari UAs.
+
+## Wire up clients
+
+```ts
+import {
+  SnapcapClient,
+  FileDataStore,
+  createSharedThrottle,
+  RECOMMENDED_THROTTLE_RULES,
+} from "@snapcap/native";
+
+const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES });
+
+const clients = tenants.map((t) =>
+  new SnapcapClient({
+    dataStore: new FileDataStore(`./auth-store/${t.id}.json`),
+    credentials: { username: t.username, password: t.password },
+    browser: { userAgent: t.userAgent },
+    throttle: gate,
+  }),
+);
+
+await Promise.all(clients.map((c) => c.authenticate()));
+```
+
+`createSharedThrottle` returns a `ThrottleGate` that every client awaits before each wire request. Aggregate request rate respects the rules regardless of how many clients are coordinating — the multi-tenant anti-spam pattern.
+
+## Why a shared gate matters
+
+Per-instance throttles each enforce their own floor independently. Two clients each throttling at "1500ms between AddFriends" can both fire AddFriends at the same instant — Snap sees two calls in 0ms.
+
+A shared gate coordinates the floor across every client that holds a reference to it. Two clients sharing a 1500ms gate fire AddFriends in sequence, 1500ms apart, regardless of who called first.
+
+Trade-off: one slow tenant's wait blocks all others on the same rule. For a 100-tenant runner where one tenant's `add()` is queued, the next 99 wait `~1500ms × 99` in the worst case. If you need different rates per group, build multiple gates and partition clients across them.
+
+```ts
+// Two pools, two gates.
+const fastGate = createSharedThrottle({
+  rules: [{ match: "/JzFriendAction/", minIntervalMs: 750 }],
+});
+const slowGate = createSharedThrottle({
+  rules: [{ match: "/JzFriendAction/", minIntervalMs: 3000 }],
+});
+
+const fastClients = fastTenants.map((t) =>
+  new SnapcapClient({ ...t, throttle: fastGate }),
+);
+const slowClients = slowTenants.map((t) =>
+  new SnapcapClient({ ...t, throttle: slowGate }),
+);
+```
+
+See [Throttling](/docs/guide/throttle) for the full rule shape and `RECOMMENDED_THROTTLE_RULES` breakdown.
+
+## DataStore layout
+
+A directory of `FileDataStore` files works for development:
+
+```
+auth-store/
+  alice.json
+  bob.json
+  carol.json
+```
+
+For production, swap the backing store — Redis with one key prefix per tenant, Postgres `BYTEA` keyed on `(tenant_id, key)`, or an envelope-encrypted store keyed by KMS — and implement the [`DataStore`](/docs/api/interfaces/DataStore) interface. See [Persistence → Plugging in your own backend](/docs/guide/persistence#plugging-in-your-own-backend).
+
+```ts
+const clients = tenants.map((t) =>
+  new SnapcapClient({
+    dataStore: new RedisDataStore(redis, `snap:${t.id}`),
+    credentials: { username: t.username, password: t.password },
+    browser: { userAgent: t.userAgent },
+    throttle: gate,
+  }),
+);
+```
+
+## Network observability
+
+Install one logger for the whole process — every client's wire traffic flows through the same emit point:
+
+```ts
+import { setLogger, defaultTextLogger } from "@snapcap/native";
+setLogger(defaultTextLogger);
+```
+
+Or set `SNAP_NETLOG=1` in the environment. See [Logging](/docs/guide/logging) for custom handlers and event shapes.
+
+## What stays separate per tenant
+
+- `vm.Context` realm (every `SnapcapClient` builds its own).
+- happy-dom `Window` — `localStorage`, `sessionStorage`, `indexedDB`, `document.cookie`.
+- Bundle Zustand state, webpack runtime caches, kameleon attestation token.
+- DataStore keys (one store per tenant).
+
+## What's shared at the process level
+
+- The downloaded bundle source under `vendor/snap-bundle/` (read-only on disk).
+- The `ThrottleGate` (when constructed via `createSharedThrottle` and passed into every client).
+- The active `Logger` registered via `setLogger` — every client's traffic flows through it.
+
+## What's still per-process
+
+- **TLS fingerprint.** Node's TLS stack is monolithic per process — every client shares the same JA3. Real fingerprint diversity requires separate processes (or a custom undici Dispatcher with a different SSLContext, which is a bigger lift). For most use cases this is a non-issue; for fleets being scrutinized, run multiple processes.
+- **Outbound IP.** Every client uses the same source address by default. Per-tenant residential proxies (different IP per tenant) are the biggest diversity win available in-process — `BrowserContext.httpAgent` is reserved for this and will plumb through an undici `Dispatcher` per client when implemented.
+
+## What's next
+
+- [Throttling](/docs/guide/throttle) — rule shape, recommended rules, per-instance vs shared mode.
+- [Logging](/docs/guide/logging) — structured network observability.
+- [Persistence](/docs/guide/persistence) — DataStore backends, key layout, encryption at rest.
+- [API reference: createSharedThrottle](/docs/api/functions/createSharedThrottle)
+- [API reference: SnapcapClient](/docs/api/classes/SnapcapClient)

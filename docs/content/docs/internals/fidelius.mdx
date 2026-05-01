@@ -9,7 +9,7 @@ The current architecture: **the bundle owns identity bootstrap, mint, registrati
 
 ## What changed
 
-An earlier version of the SDK pre-minted a Fidelius identity during login (`auth/fidelius-mint.ts` was called from `nativeLogin`), serialized it to the DataStore at `indexdb_snapcap__fidelius__identity`, and re-read it on warm boots. That code path is **removed**. The legacy `client.fidelius` field is permanently `null`. The legacy `FideliusIdentityBlob` type is still exported for backwards-compat with consumers that imported it; nothing in the SDK reads or writes it.
+An earlier version of the SDK pre-minted a Fidelius identity during login, serialized it to the DataStore at `indexdb_snapcap__fidelius__identity`, and re-read it on warm boots. That code path is **removed**. There is no consumer-facing `client.fidelius` field — Fidelius identity is an internal detail of the `MessagingSession` and lands in the DataStore as opaque wrapped bytes under `local_uds_uds.e2eeIdentityKey.shared`.
 
 ## What the bundle does on first login
 

@@ -1,9 +1,9 @@
 ---
 title: 'Getting started'
-description: 'Install @snapcap/native, construct a SnapcapClient with a DataStore, gate on isReady(), and call your first method.'
+description: 'Install @snapcap/native, construct a SnapcapClient with a DataStore + browser context, call authenticate(), and make your first request.'
 ---
 
-`@snapcap/native` is one TypeScript class. You hand it a `DataStore` (and, on first run, credentials); it gives you methods. Everything else — the kameleon WASM boot, the WebLogin two-step, the SSO bearer mint, the cookie seeding, the bundle-native messaging session — is owned by the SDK.
+`@snapcap/native` is one TypeScript class. You hand it a `DataStore`, a `BrowserContext` (UA required), and — on first run — credentials. It gives you a small auth surface plus per-domain managers (`client.friends`, etc.). Everything else — the kameleon WASM boot, the WebLogin two-step, the SSO bearer mint, the cookie seeding, the bundle-native messaging session — is owned by the SDK.
 
 ## Install
 
@@ -22,24 +22,27 @@ import { SnapcapClient, FileDataStore } from "@snapcap/native";
 
 const client = new SnapcapClient({
   dataStore: new FileDataStore("./auth.json"),
-  username: process.env.SNAP_USER,
-  password: process.env.SNAP_PASS,
+  credentials: {
+    username: process.env.SNAP_USER,
+    password: process.env.SNAP_PASS!,
+  },
+  browser: {
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+  },
 });
 
-if (await client.isReady()) {
-  const friends = await client.listFriends();
-  console.log(friends.map((f) => f.username));
-} else {
-  console.error("login rejected — bad credentials, captcha gate, or session locked");
-}
+await client.authenticate();
+
+const friends = await client.friends.list();
+console.log(friends.map((f) => f.username));
 ```
 
-That is the entire pattern. The constructor does no I/O — it just wires the consumer's `DataStore` into the singleton sandbox via `installShims({ dataStore })`. The first network call is gated on `isReady()`:
+That is the entire pattern. The constructor does no I/O — it just constructs a per-instance `Sandbox` (vm.Context + happy-dom Window + shimmed I/O layer) wired to your `DataStore`. The first network call happens inside `authenticate()`.
 
-- **Cold start** (`auth.json` missing or empty): kameleon WASM boots (~5MB JS + 814KB WASM, one-time per process), WebLoginService two-step runs, SSO redirect mints a bearer, parent-domain cookies seed the jar, `SyncFriendData` walks the friend list and resolves `client.self`. Persisted to the DataStore. Wall-clock around **5 seconds**.
-- **Warm start** (`auth.json` already has valid cookies + bearer): `isReady()` rehydrates from disk and returns `true` without network. **~1 ms**.
+The constructor **throws** if `browser.userAgent` is missing. There's no shared default — every consumer defaulting to the same UA would itself become a snapcap fingerprint. Pass a recent realistic UA from a real browser; in multi-tenant deployments, vary it per tenant.
 
-`username` / `password` are **not** persisted to the DataStore. Pass them on every boot if you want automatic recovery from server-side session expiry.
+`credentials` are **not** persisted to the DataStore. Pass them again on every boot if you want automatic recovery from server-side session expiry.
 
 ## A complete script
 
@@ -53,75 +56,115 @@ const { username, password } = JSON.parse(readFileSync(".snapcap-smoke.json", "u
 
 const client = new SnapcapClient({
   dataStore: new FileDataStore("./.tmp/auth/auth.json"),
-  username,
-  password,
+  credentials: { username, password },
+  browser: {
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+  },
 });
 
-if (!(await client.isReady())) {
-  throw new Error("login failed");
+await client.authenticate();
+
+// List the social graph.
+const friends = await client.friends.list();
+console.log(`${friends.length} mutual friends`);
+
+// Search Snap's user index, then add the first hit by user id.
+const hits = await client.friends.search("perdyjamie");
+if (hits.length > 0) {
+  await client.friends.add(hits[0].userId);
+  console.log(`added ${hits[0].username}`);
 }
 
-// Friends.
-const friends = await client.listFriends();
-console.log(`${friends.length} friends`);
+// Subscribe to real-time graph changes.
+const unsub = client.friends.onChange((snap) => {
+  console.log(`mutuals=${snap.mutuals.length} incoming=${snap.incoming.length}`);
+});
 
-// Conversations + send a text into the first one.
-const chats = await client.getConversations();
-if (chats.length > 0) {
-  const chat = chats[0];
-  await chat.typeAndSendText(2000, "hello from snapcap");
-}
-
-// Post an image to MY_STORY.
-const png = readFileSync("./story.png");
-await client.postStory(png);
+// ...later
+unsub();
 ```
 
 ## Cold start vs warm start
 
-Reuse the DataStore across processes (or workers, or PM restarts) to skip the kameleon boot + login flow:
+Reuse the DataStore across processes (or workers, or PM restarts) to skip the kameleon boot + full WebLogin flow:
 
 ```ts
 // Process 1 — fresh disk:
-const a = new SnapcapClient({ dataStore: new FileDataStore("./auth.json"), username, password });
-await a.isReady();   // ~5 s — full login flow
+const a = new SnapcapClient({
+  dataStore: new FileDataStore("./auth.json"),
+  credentials: { username, password },
+  browser: { userAgent },
+});
+await a.authenticate();   // ~5 s — kameleon WASM + WebLoginService 2-step + SSO bearer mint
 
-// Process 2 — same auth.json, no creds:
-const b = new SnapcapClient({ dataStore: new FileDataStore("./auth.json") });
-await b.isReady();   // ~1 ms — restored from disk
+// Process 2 — same auth.json, credentials still required for refresh recovery:
+const b = new SnapcapClient({
+  dataStore: new FileDataStore("./auth.json"),
+  credentials: { username, password },
+  browser: { userAgent },
+});
+await b.authenticate();   // ~100 ms — warm SSO redirect, bundle still loads
 ```
 
-If the bearer in the DataStore has expired, the next gRPC call gets a 401 and the SDK transparently mints a fresh bearer from the long-lived `__Host-sc-a-auth-session` cookie — no caller-side handling required.
+- **Cold start** (`auth.json` missing or empty): kameleon WASM boots (~5 MB JS + 814 KB WASM), `WebLoginService` two-step runs, SSO redirect mints a bearer, parent-domain cookies seed the jar. Persisted to the DataStore. Wall-clock around **5 seconds**.
+- **Warm start** (`auth.json` already has valid cookies): the SSO redirect short-circuits in roughly **one redirect, ~100 ms**. The bundle still loads — `authenticate()` always brings up the chat bundle so the friend graph and Zustand auth slice are populated.
 
-## Force a fresh login
+If the bearer in the DataStore has expired, the next gRPC call gets a 401 and the SDK transparently mints a fresh bearer from the long-lived `__Host-sc-a-auth-session` cookie — no caller-side handling required. For a manual bearer-only refresh, call `await client.refreshAuthToken()`.
+
+## Re-authenticate
+
+There's no `force` flag. To re-run the login flow — say after a password rotation, or to recover from server-side session invalidation that didn't surface as a clean error — just call `authenticate()` again:
 
 ```ts
-await client.isReady({ force: true });
+await client.authenticate();
 ```
 
-Bypasses the warm-start cache and re-runs the login flow even when the DataStore looks valid. Useful for password rotations or to recover from server-side session invalidation that didn't surface as a clean error.
+For a bearer-only refresh in place (cookies still valid), use `refreshAuthToken()` instead.
 
 ## Logout
 
 ```ts
 await client.logout();
+// or, force the local teardown even if the server-side revoke fails:
+await client.logout(true);
 ```
 
-Clears the SDK's auth-state keys (`cookie_jar`, `session_snapcap_bearer`, `local_snapcap_self`) from the DataStore. The bundle's other sandbox storage entries (other `local_*` / `session_*` / `indexdb_*` keys, including any bundle-minted Fidelius wrapped identity at `local_uds_uds.e2eeIdentityKey.shared`) are intentionally **left intact** — wiping them would force the next `isReady()` to re-bootstrap Fidelius WASM state from scratch, which costs an extra round-trip and ~250 ms WASM init.
+`logout()` calls Snap's own `state.auth.logout` thunk to tear down the bundle's Zustand slice, then deletes `cookie_jar` from the DataStore. Bundle-owned `local_*` / `session_*` / `indexdb_*` entries — including the bundle-minted Fidelius wrapped identity at `local_uds_uds.e2eeIdentityKey.shared` — are intentionally left intact. Wiping them would force the next `authenticate()` to re-bootstrap WASM state from scratch, which costs an extra round-trip and ~250 ms. If you want a true wipe, drop the underlying DataStore.
 
-## Multi-account
+## Multi-account in one process
 
-The sandbox is a process-wide singleton. Each `SnapcapClient` you construct in this process shares the same `vm.Context`, the same kameleon Module, and the same chat bundle. **It does NOT share the same `localStorage` namespace per account** — the DataStore-backed Web Storage shim is bound to the first DataStore that wins the `installShims()` race.
+Each `SnapcapClient` owns its own `Sandbox` — its own `vm.Context`, its own happy-dom Window, its own shimmed I/O layer, its own bundle bring-up caches. Two clients in the same process do **not** share Zustand state, bearer tokens, or webpack runtime caches. They're isolated at the V8 vm.Context boundary.
 
 In practice this means:
 
-- **One process can only drive one account safely.** Different `SnapcapClient` instances pointed at different DataStores in the same process will collide on `local_*` / `session_*` / `indexdb_*` writes (the bundle treats those as the active session's storage).
-- **For multi-tenant deployments, run one process per account.** This is the recommendation today — `SnapAutomate` does exactly this.
-- A medium-sized refactor would be to make the sandbox per-client rather than process-global, but that is not the current shape.
+- **One process can drive many accounts simultaneously.**
+- Each client needs its own `DataStore` — they collide on the shared persistence keys otherwise.
+- Each client should use a **different `browser.userAgent`** for fingerprint diversity.
+
+```ts
+const a = new SnapcapClient({
+  dataStore: new FileDataStore("./auth/alice.json"),
+  credentials: { username: "alice", password: aPass },
+  browser: { userAgent: alicesUA },
+});
+const b = new SnapcapClient({
+  dataStore: new FileDataStore("./auth/bob.json"),
+  credentials: { username: "bob", password: bPass },
+  browser: { userAgent: bobsUA },
+});
+
+await Promise.all([a.authenticate(), b.authenticate()]);
+```
+
+See [Multi-tenant](/docs/guide/multi-tenant) for the recommended layout, including shared throttle gates so aggregate request rate stays constant in N.
 
 ## What's next
 
-- [Auth model](/docs/guide/auth) — what `isReady()` actually does, when to use `force`.
+- [Auth model](/docs/guide/auth) — what `authenticate()` actually does, the auth-state enum, refresh paths.
 - [Persistence](/docs/guide/persistence) — the DataStore key layout and how to plug in a custom backend.
+- [Multi-tenant](/docs/guide/multi-tenant) — running many accounts in one process.
+- [Throttling](/docs/guide/throttle) — opt-in HTTP rate limiting, per-instance and shared gates.
+- [Logging](/docs/guide/logging) — structured network observability via `SNAP_NETLOG=1` and `setLogger`.
 - [API reference](/docs/api) — every public method.
 - [Internals](/docs/internals/architecture) — sandbox, shim layer, kameleon, SSO, bundle session.

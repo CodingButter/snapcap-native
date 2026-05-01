@@ -1,6 +1,6 @@
 ---
 title: 'The auth model'
-description: 'The cookie + bearer dance, what isReady() actually does, when to force-login, and what gets persisted.'
+description: 'The cookie + bearer dance, what authenticate() actually does, the auth-state enum, refresh paths, and what gets persisted.'
 ---
 
 `SnapcapClient` follows the same pattern a browser would: a long-lived cookie jar plus a short-lived bearer. Both auto-restore from the DataStore on every process boot, and the bearer auto-refreshes from the cookie jar on 401. You almost never have to think about it.
@@ -12,84 +12,105 @@ After a successful login, the DataStore contains:
 | Key | Owner | Purpose | Lifetime |
 |---|---|---|---|
 | `cookie_jar` | SDK | tough-cookie serialised — `__Host-sc-a-auth-session` (refresh-style) plus parent-domain `sc-a-nonce` / `_scid` / `sc_at` etc. | Days–weeks until Snap revokes |
-| `session_snapcap_bearer` | SDK (via sandbox `sessionStorage`) | last-minted SSO bearer | ~1 hour, refreshed transparently on 401 |
-| `local_snapcap_self` | SDK (via sandbox `localStorage`) | `{userId, username, displayName}` JSON of the logged-in user | Stable until logout |
 | `local_uds_uds.e2eeIdentityKey.shared` | Bundle | Wrapped Fidelius identity (RWK-encrypted private key + public key + identityKeyId) | Per-account; minted by the bundle on first `MessagingSession` bring-up |
-| Other `local_*` / `session_*` / `indexdb_*` | Bundle | Snap's own browser-storage writes | Bundle-managed |
+| Other `local_*` / `session_*` / `indexdb_*` | Bundle | Snap's own browser-storage writes (Zustand auth slice, analytics ids, feature flags, etc.) | Bundle-managed |
 
 The truly durable bit is `__Host-sc-a-auth-session`. As long as it's still server-side valid, the SDK can re-mint a fresh bearer from it without credentials.
 
-The Fidelius E2E identity (used by the chat bundle for message-body encryption) lands under `local_uds_uds.e2eeIdentityKey.shared` and is owned entirely by the bundle — the SDK doesn't mint, read, or rotate it. You don't need to think about it.
+The bearer and self-user are no longer SDK-owned concepts — they live inside the bundle's Zustand auth slice (which spills into `local_*` / `session_*` like everything else the bundle persists). The Fidelius E2E identity at `local_uds_uds.e2eeIdentityKey.shared` is also entirely bundle-owned — the SDK doesn't mint, read, or rotate it.
 
-## isReady()
+## authenticate()
 
-The single gate every API call passes through. Decision flow:
+The single eager bring-up call. What it does:
 
-1. **In-memory cache hit?** — If `isReady()` already returned `true` this process, return `true` immediately. Skipped if `{force:true}`.
-2. **Try restoring from the DataStore.** Read the cookie jar; check that `__Host-sc-a-auth-session` is present; read the cached bearer. If both exist, mark warm and return `true`. Also restore `client.self` from `local_snapcap_self` if present.
-3. **No restored state, but credentials supplied?** Run the full native login (kameleon → WebLoginService 2-step → SSO bearer → cookie seed → SyncFriendData self-resolve). Persist everything to the DataStore. Return `true`.
-4. **Server rejected credentials, or no credentials configured?** Return `false`. **Does not throw.**
+1. **Loads the bundles.** First call brings up the accounts and chat bundles inside the per-instance Sandbox. One-time per `SnapcapClient`.
+2. **Runs kameleon attestation.** Cold-start only — the kameleon WASM boot is what mints the attestation token threaded through `WebLoginService`.
+3. **Drives `WebLoginService`.** Cold-start runs the two-step (`PreLogin` → `Login`); warm-start with cached cookies short-circuits to a single SSO redirect.
+4. **Populates the Zustand auth slice.** Bearer, self-user, and `hasEverLoggedIn` flag all land in the bundle's own state.
+5. **Resolves when `authState === LoggedIn`.**
 
 ```ts
-if (await client.isReady()) {
-  // safe to call any API method
-} else {
-  // creds were missing or rejected — show login UI, prompt for new password, etc.
+const client = new SnapcapClient({ dataStore, browser, credentials });
+await client.authenticate();
+console.log(client.isAuthenticated()); // true
+```
+
+Cold-start is ~5 seconds (kameleon WASM + WebLogin two-step + SSO redirect). Warm-start with restored cookies is ~one redirect, ~100 ms — the bundle still loads either way, so it's not free, just much cheaper.
+
+`authenticate()` **throws** on failure — missing credentials on cold-start, server-rejected login, server-side session invalidation. It does not return `false`. Catch it if you need to surface a re-prompt UI:
+
+```ts
+try {
+  await client.authenticate();
+} catch (err) {
+  // creds rejected, captcha gate, account locked, etc.
 }
 ```
 
-`isReady()` deliberately does NOT bring up the bundle-native messaging session. That happens lazily on the first call that needs it (sending text, fetching messages by the new path, etc.) — the auth probe stays cheap.
+## Auth state enum
 
-## When to use force: true
+A live read of the bundle's `state.auth.authState`:
 
 ```ts
-await client.isReady({ force: true });
+const state = client.getAuthState();
+// 0 = LoggedOut
+// 1 = LoggedIn
+// 2 = Processing
+// 3 = MoreChallengesRequired
 ```
 
-Use this when:
+The boolean shorthand `client.isAuthenticated()` returns `true` iff `authState === 1`. There's also `client.hasEverLoggedIn()` — survives `logout()`, useful for distinguishing a fresh install from a signed-out returning user. And `client.getAuthToken()` returns the current bearer string from the slice.
 
-- **Password rotation.** The old bearer + cookie still look valid client-side but won't be honoured server-side. Force a re-login to mint fresh ones.
-- **Suspected server-side invalidation.** Snap's anti-fraud may revoke a session without surfacing a clear error code; a forced re-login is the cleanest reset.
-- **Periodic health check.** Some operators force-login once a week as hygiene. Doesn't hurt as long as you don't do it on every request.
+All four are synchronous live reads — no I/O, no Promise. They return defaults (`false` / empty string / `0`) before `authenticate()` has been called, since the slice doesn't exist yet.
 
-## Bearer refresh (transparent)
+## When the bearer expires
 
-Bearers expire roughly hourly. You don't have to handle this:
+Bearers expire roughly hourly. You don't have to handle this manually:
 
 - gRPC call goes out with the cached bearer.
 - Server returns `HTTP 401`.
-- The transport layer re-mints a bearer from the cookie jar (the `__Host-sc-a-auth-session` cookie is the credential), persists it back to `session_snapcap_bearer`, and retries the call **once**.
+- The transport layer re-mints a bearer from the cookie jar (the `__Host-sc-a-auth-session` cookie is the credential), persists it back into the slice, and retries the call **once**.
 - If refresh succeeds, the original call returns success — caller never sees the 401.
-- If refresh fails (cookie also dead), the original 401 surfaces and the caller can call `client.isReady({ force: true })` to re-run the full login.
+- If refresh fails (cookie also dead), the original 401 surfaces.
 
-See [`internals/sso-flow`](/docs/internals/sso-flow) for the redirect-fragment mechanics.
-
-## When the cookie dies
-
-Cookies don't live forever. Symptoms: every gRPC call returns 401, refresh keeps failing. Remediation:
+For a manual bearer-only refresh — bypass the 401 dance, mint a fresh bearer eagerly:
 
 ```ts
-if (!(await client.isReady({ force: true }))) {
+await client.refreshAuthToken();
+```
+
+This requires the client to have been constructed with credentials — Snap's refresh path mints a fresh kameleon attestation bound to the active identifier. Throws if credentials weren't supplied.
+
+## When cookies die
+
+Cookies don't live forever. Symptoms: every gRPC call returns 401, refresh keeps failing. Remediation: re-run `authenticate()`.
+
+```ts
+try {
+  await client.authenticate();
+} catch (err) {
   throw new Error("snap login rejected — password rotated, account locked, or captcha required");
 }
 ```
 
 If you instantiated the client without credentials, the only recovery path is to construct a new client with credentials.
 
+See [`internals/sso-flow`](/docs/internals/sso-flow) for the redirect-fragment mechanics.
+
 ## logout()
 
 ```ts
 await client.logout();
+// or, force-revoke even if the server-side revoke call fails:
+await client.logout(true);
 ```
 
-Deletes only the SDK-owned auth-state keys from the DataStore:
-
-- `cookie_jar`
-- `session_snapcap_bearer` (via sandbox `sessionStorage.removeItem("snapcap_bearer")`)
-- `local_snapcap_self` (via sandbox `localStorage.removeItem("snapcap_self")`)
+Calls Snap's own `state.auth.logout` thunk — the bundle clears its Zustand slice, fires any subscribed teardown hooks, and (best-effort) revokes server-side. Then the SDK deletes `cookie_jar` from the DataStore.
 
 Bundle-owned entries (other `local_*` / `session_*` / `indexdb_*` keys, **including** the bundle-minted Fidelius wrapped identity at `local_uds_uds.e2eeIdentityKey.shared`) are deliberately left intact. Wiping them would force the next login to re-bootstrap a bunch of WASM state from scratch with no benefit. If you want a true wipe, drop the underlying DataStore (delete the file, drop the Redis namespace) — there's no SDK-supported way to selectively delete bundle keys without breaking the next session.
 
-## Multi-account
+## Multi-account in one process
 
-Each account gets its own DataStore. Because the sandbox is currently a process-wide singleton, **you should run one process per account** for multi-tenant deployments. See [Persistence → multi-account](/docs/guide/persistence#multi-account) for the layout.
+The Sandbox is per-instance: each `SnapcapClient` owns its own `vm.Context`, happy-dom Window, shimmed I/O layer, and bundle bring-up caches. Two clients in the same process never share Zustand auth state, bearer tokens, or webpack runtime caches.
+
+That means a single process can drive many accounts simultaneously — each with its own `DataStore`, its own `Credentials`, and its own `BrowserContext.userAgent` for fingerprint diversity. See [Persistence → multi-account](/docs/guide/persistence#multi-account) for the layout and [Multi-tenant](/docs/guide/multi-tenant) for the recommended runner shape (including shared throttle gates).

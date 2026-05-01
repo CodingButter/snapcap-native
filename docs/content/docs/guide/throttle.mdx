@@ -1,0 +1,140 @@
+---
+title: 'Throttling'
+description: 'Opt-in HTTP rate limiting. Per-instance and shared gates, the recommended starter rules, and how to write your own.'
+---
+
+Browsers naturally pace requests through human behaviour — clicks, typing debounce, scroll-stop. An automated SDK has none of that, so back-to-back mutations look like spam to Snap's anti-fraud. Throttling restores human-cadence pacing.
+
+The throttle channel is **opt-in**. The default behaviour with no throttle config is a pure pass-through — zero overhead, no surprise behaviour for consumers managing their own pacing.
+
+## Quick start
+
+```ts
+import { SnapcapClient, RECOMMENDED_THROTTLE_RULES } from "@snapcap/native";
+
+const client = new SnapcapClient({
+  dataStore,
+  credentials: { username, password },
+  browser: { userAgent },
+  throttle: { rules: RECOMMENDED_THROTTLE_RULES },
+});
+```
+
+That's the per-instance form. Each `SnapcapClient` has its own throttle state.
+
+## Two modes
+
+### Per-instance
+
+Pass a [`ThrottleConfig`](/docs/api/type-aliases/ThrottleConfig) directly. Fine for single-tenant or low-volume runners.
+
+```ts
+const client = new SnapcapClient({
+  dataStore,
+  credentials,
+  browser,
+  throttle: {
+    rules: [
+      { match: "/JzFriendAction/", minIntervalMs: 1500 },
+      { match: "/AtlasGw/SyncFriendData", minIntervalMs: 5000 },
+    ],
+  },
+});
+```
+
+Trade-off: aggregate rate scales with instance count. Two clients each throttling at "1500ms between AddFriends" can each fire AddFriends at the same instant — Snap sees two calls in 0ms.
+
+### Shared (multi-tenant)
+
+Build a [`ThrottleGate`](/docs/api/type-aliases/ThrottleGate) via [`createSharedThrottle`](/docs/api/functions/createSharedThrottle) and pass the same gate into every client. Aggregate rate respects the rules regardless of how many clients coordinate.
+
+```ts
+import {
+  SnapcapClient,
+  createSharedThrottle,
+  RECOMMENDED_THROTTLE_RULES,
+} from "@snapcap/native";
+
+const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES });
+
+const clients = tenants.map((t) =>
+  new SnapcapClient({
+    dataStore: t.store,
+    credentials: { username: t.username, password: t.password },
+    browser: { userAgent: t.userAgent },
+    throttle: gate,
+  }),
+);
+```
+
+Recommended for runners with more than two clients. See [Multi-tenant](/docs/guide/multi-tenant) for the full pattern.
+
+Trade-off: one slow tenant's wait blocks all others on the same rule. For a 100-tenant runner where one tenant's `add()` is queued, the next 99 `add()`s wait `~1500ms × 99` in the worst case. Partition clients across multiple gates if some need different rates.
+
+## Recommended rules
+
+[`RECOMMENDED_THROTTLE_RULES`](/docs/api/variables/RECOMMENDED_THROTTLE_RULES) is the curated starter set:
+
+| Match | Floor | Burst | Why |
+|---|---|---|---|
+| `/JzFriendAction/` | `1500ms` | — | Friend mutations — humans don't click "add" sub-second |
+| `/FriendRequests/` | `1500ms` | — | Same shape as above |
+| `/AtlasGw/SyncFriendData` | `5000ms` | — | Roster sync; Snap aggressively rate-limits sustained polling |
+| `/AtlasGw/GetSnapchatterPublicInfo` | `100ms` | `10` | In-app prefetch behaviour for chat-row avatars and friend-grid hydration |
+| `/search/search` | `300ms` | — | Debounced typing in the browser search box |
+
+Each entry models what a real human user would plausibly do.
+
+## Rule shape
+
+A [`ThrottleRule`](/docs/api/type-aliases/ThrottleRule) has three fields:
+
+```ts
+type ThrottleRule = {
+  match: string | RegExp;
+  minIntervalMs: number;
+  burst?: number;
+};
+```
+
+- `match` — substring or regex matched against the outbound URL. String match is case-sensitive.
+- `minIntervalMs` — floor between consecutive matching requests, in milliseconds.
+- `burst` — optional. The first N matching requests fire freely before the floor kicks in. Useful for batched fetches like avatar prefetches.
+
+**First-match wins** inside `rules`. Order from most-specific to least-specific:
+
+```ts
+const rules: ThrottleRule[] = [
+  { match: "/AtlasGw/AddFriends", minIntervalMs: 1500 },     // specific first
+  { match: "/AtlasGw/", minIntervalMs: 200 },                // catch-all after
+];
+```
+
+## Custom rules
+
+Add your own to the recommended set, or replace it entirely.
+
+```ts
+import { RECOMMENDED_THROTTLE_RULES } from "@snapcap/native";
+
+const rules = [
+  { match: "/aws.api.snapchat.com/snapchat.messaging.MessagingCoreService/", minIntervalMs: 1000 },
+  ...RECOMMENDED_THROTTLE_RULES,
+];
+
+const gate = createSharedThrottle({ rules });
+```
+
+## Wire-level placement
+
+The gate is awaited once per actual wire request, inside the sandbox fetch + XHR shims. Same point of control whether you chose per-instance or shared mode — the only difference is whether the gate's state is owned by one Sandbox or shared across many.
+
+This means **bundle-issued requests are throttled too** — not just SDK-issued ones. The bundle's own polling and prefetch behaviour goes through the same gate.
+
+## What's next
+
+- [Multi-tenant](/docs/guide/multi-tenant) — running many clients in one process with a shared gate.
+- [Logging](/docs/guide/logging) — observe what's actually being throttled.
+- [API: ThrottleConfig](/docs/api/type-aliases/ThrottleConfig)
+- [API: ThrottleRule](/docs/api/type-aliases/ThrottleRule)
+- [API: createSharedThrottle](/docs/api/functions/createSharedThrottle)

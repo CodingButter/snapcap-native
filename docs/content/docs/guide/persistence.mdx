@@ -54,22 +54,22 @@ const store = new MemoryDataStore();
 
 ## Key layout
 
-A populated DataStore looks like this after one successful login + first `MessagingSession` bring-up:
+A populated DataStore looks like this after one successful `authenticate()`:
 
 | Key | Owner | Format | Role |
 |---|---|---|---|
 | `cookie_jar` | SDK / `CookieJarStore` | tough-cookie JSON | Durable session cookies — `__Host-sc-a-auth-session` is the refresh credential |
-| `session_snapcap_bearer` | SDK (via `sessionStorage` shim) | UTF-8 JWT | Most recent SSO bearer; ~1 h lifetime, auto-refreshed on 401 |
-| `local_snapcap_self` | SDK (via `localStorage` shim) | UTF-8 JSON `{userId, username, displayName}` | Restored self-user metadata so warm starts skip the SyncFriendData round-trip |
-| `local_uds_uds.e2eeIdentityKey.shared` | Bundle | UTF-8 JSON | Wrapped Fidelius identity — RWK-encrypted private key + public key + identityKeyId, persisted by the bundle's UDS-namespaced `pr()` wrapper (slot 8 of `createMessagingSession`) |
+| `local_uds_uds.e2eeIdentityKey.shared` | Bundle | UTF-8 JSON | Wrapped Fidelius identity — RWK-encrypted private key + public key + identityKeyId, persisted by the bundle's UDS-namespaced wrapper |
 | `local_uds_uds.*` (other) | Bundle | UTF-8 strings | Other UDS-prefixed bundle state (per-message E2EE temp keys, etc.) |
-| `local_*` (other) | Bundle | UTF-8 strings | Snap-bundle's own `localStorage` writes (analytics ids, feature flags, etc.) |
+| `local_*` (other) | Bundle | UTF-8 strings | Snap-bundle's own `localStorage` writes (Zustand auth slice, analytics ids, feature flags, etc.) |
 | `session_*` (other) | Bundle | UTF-8 strings | Snap-bundle's own `sessionStorage` writes |
 | `indexdb_*` (other) | Bundle | JSON | Snap-bundle's own `indexedDB` writes |
 
 The `local_` / `session_` / `indexdb_` prefixes come from the `StorageShim` and `IndexedDbShim`, which namespace each Web Storage area onto a shared DataStore. The exact same DataStore can back all four areas — the prefixes keep them collision-free. See [internals/io-overrides](/docs/internals/io-overrides) for why these specific override points are chosen.
 
-You should treat `cookie_jar` and `session_snapcap_bearer` as **credential-grade**. Anyone with read access to those keys can call APIs as the user. The bundle-owned `local_uds_uds.e2eeIdentityKey.shared` blob is the long-lived root of E2E encryption — losing it forces the bundle to re-run `constructPostLogin` against a fresh server-issued identity, which Snap's server may rate-limit.
+The bearer and self-user are no longer SDK-owned keys — they live inside the bundle's Zustand auth slice (which spills into `local_*` / `session_*` like any other bundle storage write). The SDK only owns `cookie_jar` directly.
+
+You should treat `cookie_jar` as **credential-grade**. Anyone with read access can re-mint a bearer from the long-lived `__Host-sc-a-auth-session` cookie inside it. The bundle-owned `local_uds_uds.e2eeIdentityKey.shared` blob is the long-lived root of E2E encryption — losing it forces the bundle to mint a fresh server-issued identity, which Snap's server may rate-limit.
 
 ## Plugging in your own backend
 
@@ -95,8 +95,8 @@ class RedisDataStore implements DataStore {
 
 const client = new SnapcapClient({
   dataStore: new RedisDataStore(redis, `snap:${userId}`),
-  username,
-  password,
+  credentials: { username, password },
+  browser: { userAgent },
 });
 ```
 
@@ -148,17 +148,29 @@ auth-store/
 
 Or one Redis/Postgres key prefix per account.
 
-> **Single-account-per-VM constraint.** The sandbox (and therefore the bundle's `localStorage` namespace) is a process-wide singleton — `installShims()` is first-call-wins. Two `SnapcapClient` instances pointed at different DataStores in the same process will collide on `local_*` / `session_*` / `indexdb_*` writes. **For multi-tenant deployments, run one process per account.** A medium-sized refactor would make the sandbox per-client; that work is not done.
+Each `SnapcapClient` constructs its own per-instance `Sandbox` (`vm.Context` + happy-dom Window + shimmed I/O layer), so two clients in the same process do **not** collide on `local_*` / `session_*` / `indexdb_*` writes — they're isolated at the V8 vm-realm boundary. One process can drive many accounts simultaneously.
 
 ```ts
-// One process per account is the supported pattern:
-const client = new SnapcapClient({
-  dataStore: new FileDataStore(`./auth-store/${process.env.ACCOUNT_ID}.json`),
-  username: process.env.SNAP_USER,
-  password: process.env.SNAP_PASS,
+const a = new SnapcapClient({
+  dataStore: new FileDataStore(`./auth-store/alice.json`),
+  credentials: { username: "alice", password: aPass },
+  browser: { userAgent: alicesUA },
 });
+const b = new SnapcapClient({
+  dataStore: new FileDataStore(`./auth-store/bob.json`),
+  credentials: { username: "bob", password: bPass },
+  browser: { userAgent: bobsUA },
+});
+
+await Promise.all([a.authenticate(), b.authenticate()]);
 ```
+
+Two requirements:
+- **Different `DataStore` per client.** Sharing one DataStore across instances would collide on the SDK-owned `cookie_jar` key.
+- **Different `browser.userAgent` per client.** The constructor requires a UA, and varying it per tenant is the biggest fingerprint-diversity win.
+
+See [Multi-tenant](/docs/guide/multi-tenant) for the recommended runner shape, including shared throttle gates so aggregate request rate stays constant in N.
 
 ## Reading the DataStore directly
 
-You can `await dataStore.get("cookie_jar")` from outside the SDK if you need to inspect or back up state. Just don't write to the SDK-owned keys (`cookie_jar`, `session_snapcap_bearer`, `local_snapcap_self`) — `client.logout()` and the auth flow are the supported mutation paths.
+You can `await dataStore.get("cookie_jar")` from outside the SDK if you need to inspect or back up state. Just don't write to the SDK-owned `cookie_jar` key — `client.logout()` and `client.authenticate()` are the supported mutation paths.
