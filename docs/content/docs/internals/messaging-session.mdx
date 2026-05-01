@@ -1,239 +1,101 @@
 ---
-title: 'Bundle-native messaging session'
-description: 'Loading the chat worker chunk in the sandbox and driving Snap''s En.createMessagingSession to get back the same managers the SPA uses.'
+title: 'The bundle layer'
+description: 'How the chat and accounts bundles are loaded inside the per-instance Sandbox, and how SDK code reaches into them through a typed registry.'
 ---
 
-The bundle-native `MessagingSession` is what lets us read decrypted messages, drive Snap's natural conversation/feed/snap managers, and (eventually) send snaps without reimplementing Fidelius. We don't decrypt messages ourselves — Snap's bundle does, the same way it does in the browser. Our job is to bring up the harness it expects.
+The `bundle/` layer is where Snap's actual JavaScript bundles meet the SDK. Two webpacked bundles run inside the per-instance `Sandbox`'s `vm.Context` — the accounts bundle (login + kameleon attestation) and the chat bundle (AtlasGw, friending, search, presence, Fidelius E2E). The SDK calls into them through a typed registry of late-bound getters; consumer-shape work happens one layer up in `api/*.ts`.
 
-This chapter walks through the bring-up. Source: `src/auth/messaging-session.ts`.
+There is no longer a separate "messaging session" bring-up. Earlier versions called Snap's `En.createMessagingSession(...)` with an 18-slot argument array to obtain `getConversationManager()` / `getFriendsManager()` / `getFeedManager()`. That harness was retired in the same change that removed `src/transport/grpc-web.ts` and `src/transport/proto-encode.ts` — the SDK now reaches Snap's webpack methods directly through the registry, so there's nothing to assemble.
 
-## What it is
+## The `bundle/` directory
 
-The chat bundle exports a function called `createMessagingSession(...)` from a chunk identified internally as `f16f14e3b729db223348.chunk.js`. Calling it with the right 18-element argument array returns Snap's natural session object, exposing:
-
-- `getConversationManager()` — read/list/fetch conversations and messages
-- `getFriendsManager()` — friend graph operations from inside the bundle
-- `getFeedManager()` — feed (stories, snaps) ops
-- `getSnapManager()` — snap-specific ops
-
-These are the exact managers the browser SPA uses. Migrating an API method off raw gRPC and onto one of these managers automatically inherits Fidelius decryption, server-side state syncing, etc.
-
-The MessagingSession is brought up during `client.authenticate()` as part of the chat-bundle bring-up. Once the bundle is loaded inside the per-instance Sandbox, the session managers are available to every tier-2 api call without further setup.
-
-## Public shape
-
-```ts
-// src/auth/messaging-session.ts
-export interface MessagingSession {
-  /** The native En.createMessagingSession(...) result. */
-  readonly session: Record<string, Function>;
-  /** Underlying Emscripten module — direct Embind access. */
-  readonly module: EmModule;
-  /** Pre-resolved MessageContent codec (module 79752 export `v`). */
-  readonly codec: MessageContentCodec;
-  /** Sandbox-realm `Uint8Array` constructor, for marshalling bytes into bundle code. */
-  readonly vmU8: Uint8ArrayConstructor;
-  /** `(bytes)` → sandbox-realm `Uint8Array` clone. */
-  readonly toVmU8: (bytes: Uint8Array | ArrayBufferView) => Uint8Array;
-  /** Inbound-pump + analytics events. */
-  readonly events: EventEmitter;
-}
-```
-
-The two values that matter for the SDK's API surface today:
-
-- `session.getConversationManager()` — backs the in-flight migration of `fetchMessages` to a decoded-objects path.
-- `events.on("message", msg => …)` — every received message envelope passes through here, decrypted by the bundle. This is the foundation for `client.onMessage(...)` (not yet exposed publicly).
-
-## How `bringUpMessagingSession` works
-
-The bring-up has six phases. All of them happen inside the existing process-singleton sandbox.
-
-### 1. Boot the Fidelius WASM (idempotent)
-
-```ts
-// src/auth/messaging-session.ts:172-188
-process.env.SNAPCAP_EXPOSE_FIDELIUS_MODULE = "1";
-await mintFideliusIdentity({ bundleDir: opts.bundleDir });
-ensureChatBundle({ bundleDir: opts.bundleDir });
-
-const Module = sandbox.getGlobal<EmModule>("__snapcap_fidelius_module");
-```
-
-`mintFideliusIdentity` boots the 12 MB chat-bundle WASM and exposes the Emscripten `Module` on the sandbox global. We don't actually want a fresh identity here — we just need the Module. The mint is idempotent, so if a previous call already booted the WASM, we pick up the cached Module.
-
-`ensureChatBundle` makes sure `__snapcap_p` (the webpack require) and module 79752 (the MessageContent codec) are addressable.
-
-### 2. Resolve the codec early
-
-```ts
-// src/auth/messaging-session.ts:203-207
-const wreq = sandbox.getGlobal<Wreq>("__snapcap_p");
-const codec = resolveMessageContentCodec(wreq, sandbox, VmU8);
-```
-
-Module 79752 export `v` is the bundle's ts-proto class for `messaging.Message.content`. It handles every contentType the bundle understands — text / sticker / external media / snapdoc / friend system messages. We pre-resolve it so consumers can encode/decode message bodies even if other parts of the harness fail later.
-
-### 3. Wire `importScripts` for the sibling chunk
-
-The chat worker chunk `f16f14e3...` does `importScripts(s.p+s.u(7818))` which resolves to `dw/06c27f3bcaa1e5c47eea.chunk.js` off the CDN. We map that onto our local vendored copy:
-
-```ts
-// src/auth/messaging-session.ts:218-234
-const knownChunks: Record<string, string> = {
-  "dw/06c27f3bcaa1e5c47eea.chunk.js": chunk7818Path,
-};
-sandbox.setGlobal("importScripts", (...urls: string[]) => {
-  for (const url of urls) {
-    let chunkPath: string | undefined;
-    for (const key in knownChunks) {
-      if (url.endsWith(key)) { chunkPath = knownChunks[key]; break; }
-    }
-    if (!chunkPath) continue;
-    const src = readFileSync(chunkPath, "utf8");
-    sandbox.runInContext(src, chunkPath.split("/").pop() ?? "chunk.js");
-  }
-});
-```
-
-### 4. Source-patch + run `f16f14e3`
-
-The chunk does `wasm_worker_initialized"}),z(En)` near the end of its init. `z(En)` is a comlink wrapper that installs `self.addEventListener("message", …)` and expects a real Worker context — no good for us. We patch it to expose `En` (and the helpers `un` and `pn`) on the sandbox global before the comlink call:
-
-```ts
-// src/auth/messaging-session.ts:241-247
-chunkSrc = chunkSrc.replace(
-  'wasm_worker_initialized"}),z(En)',
-  'wasm_worker_initialized"}),globalThis.__SNAPCAP_EN=En,globalThis.__SNAPCAP_UN=un,globalThis.__SNAPCAP_PN=pn,z(En)',
-);
-```
-
-Then IIFE-wrap with leading + trailing newlines (the trailing newline matters — Snap bundles end in a `//# sourceMappingURL=` line comment with no terminator):
-
-```ts
-const wrapped =
-  `(function(module, exports, require) {\n` +
-  chunkSrc +
-  `\n})({ exports: {} }, {}, function() { throw new Error("require not available"); });`;
-sandbox.runInContext(wrapped, "f16f14e3-patched.js");
-await new Promise((r) => setTimeout(r, 200));   // some async init settles
-```
-
-After that, `sandbox.getGlobal("__SNAPCAP_EN")` is the `En` namespace whose `createMessagingSession` is what we'll call.
-
-### 5. Inject WASM module + init Platform / ConfigRegistry / GrpcManager
-
-```ts
-// src/auth/messaging-session.ts:275-345
-callBundleFn(En, "setAuthTokenGetter", [authTokenGetter]);
-callBundleFn(En, "setMcsCofSequenceIdsGetter", [() => Promise.resolve([])]);
-
-if (un && pn) {
-  pn("wasmModule")(Module);                          // skip the bundle's own loadWasm path
-  pn("fatalErrorReporter")({ reportFatalError: () => {} });
-}
-
-callBundleFn(Platform, "init", [{ assertionMode: 2, minLogLevel: 2 }, { logTimedEvent: () => {}, log: () => {} }]);
-callBundleFn(Platform, "registerSerialTaskQueue", [platformQueue]);
-callBundleFn(Platform, "installErrorReporter", [{ reportError: () => {} }]);
-callBundleFn(Platform, "installNonFatalReporter", [{ reportError: () => {} }]);
-
-for (const setter of ["setCircumstanceEngine", "setCompositeConfig", "setExperiments",
-                      "setServerConfig", "setTweaks", "setUserPrefs"]) {
-  ConfigReg[setter]?.(makeConfig());                  // empty configs satisfy the type check
-}
-
-callBundleFn(GrpcManager, "registerWebFactory", [{ createClient: () => ({ unaryCall, … }) }]);
-```
-
-The `GrpcManager.registerWebFactory` call is the architectural twin of the cookie-container shim — same role at the gRPC layer as `CookieContainerShim` plays at the fetch layer. The bundle exposes `registerWebFactory({createClient})` as an extension point; the SPA's module 45225 calls it with a fetch-backed factory; we register the equivalent transport (Node `nativeFetch` + tough-cookie + auth bearer + gRPC-Web framing). See [I/O overrides](/docs/internals/io-overrides) for the full pattern.
-
-### 6. Build the 18-slot args + call createMessagingSession
-
-`createMessagingSession` takes 18 positional arguments. The slot mapping was derived by reading the chunk source at byte offsets 53306 + 62377:
-
-| Slot | Short name | Role |
-|---|---|---|
-| 0 | `e` | clientCfg — `{databaseLocation, userId, userAgentPrefix, debug, tweaks}` |
-| 1 | `t` | sessionDelegate — auth context, connection state, errors |
-| 2 | `r` | e2ee key persistence (per-message) |
-| 3 | `n` | media uploader interface |
-| 4 | `s` | unused (passed to session.create as arg 15) |
-| 5 | `a` | snapchatter info (friend link / fetchSnapchatterInfos) |
-| 6 | `i` | analyticsLogger — **doubles as inbound message pump** (`cn(e, [msgs])`) |
-| 7 | `c` | rwk storage (.get/.set/.purge) |
-| 8 | `u` | e2ee identity key store (`pr`-compatible UDS) |
-| 9 | `m` | e2ee temp key store (`pr`-compatible UDS) |
-| 10 | `l` | unused |
-| 11 | `d` | `loadUserWrappedIdentityKeys` — returns `[]` to force the bundle to mint + register |
-| 12 | `_` | unused (session.create arg 17) |
-| 13 | `f` | unused (session.create arg 19) |
-| 14 | `p` | currentUserId blob `{id: bytes16}` |
-| 15 | `g` | unused |
-| 16 | `y` | unused (session.create arg 21) |
-| 17 | `h` | configReader (flat key→bool object) |
-
-The interesting slots:
-
-- **Slot 6 (analyticsLogger)** plays two roles. Single-arg call with `{event_name: ...}` is an analytics event; two-arg call `(e, [msgs])` is the inbound message pump. Both fan out via the returned `events` EventEmitter.
-- **Slots 8 + 9 (UDS stores)** are the bundle's persistence delegates. We back them with the SDK's DataStore under the `local_uds_` prefix. This is where the wrapped Fidelius identity lands at `local_uds_uds.e2eeIdentityKey.shared` — without it the bundle re-mints + re-registers via `InitializeWebKey` on every boot, and the server returns 401 the second time because the key is already bound.
-- **Slot 11 (`loadUserWrappedIdentityKeys`)** returns `[]`. This signals to the bundle that there's no cached identity and it should run `constructPostLogin` internally. The bundle mints the keys via the WASM, calls `InitializeWebKey` server-side, persists through slot 8.
-
-```ts
-// src/auth/messaging-session.ts:596-615
-const args = [
-  /* e (0)  */ clientCfg,
-  /* t (1)  */ sessionDelegate,
-  /* r (2)  */ e2eeKeyPersistence,
-  /* n (3)  */ mediaUploadDelegate,
-  /* s (4)  */ {},
-  /* a (5)  */ snapchatterInfoDelegate,
-  /* i (6)  */ analyticsLogger,
-  /* c (7)  */ rwkStorage,
-  /* u (8)  */ e2eeIdentityKeyStore,
-  /* m (9)  */ e2eeTempKeyStore,
-  /* l (10) */ {},
-  /* d (11) */ loadUserWrappedIdentityKeys,
-  /* _ (12) */ {},
-  /* f (13) */ {},
-  /* p (14) */ currentUserId,
-  /* g (15) */ {},
-  /* y (16) */ {},
-  /* h (17) */ configReader,
-];
-
-const session = await Promise.race([
-  En.createMessagingSession.apply(En, args),
-  new Promise<never>((_r, rej) =>
-    setTimeout(() => rej(new Error("createMessagingSession timeout (15s)")), 15000)),
-]);
-```
-
-`Sess.create` (the underlying `messaging_Session.create` Embind class method) is also wrapped before the call so slot 9's `messagingDelegate.onMessageReceived` / `onMessagesReceived` fan out through the same `events` emitter — defence-in-depth so inbound messages land regardless of which internal route the bundle takes (`src/auth/messaging-session.ts:622-646`).
-
-## The events emitter
-
-```ts
-events.on("analytics", (event) => { /* {event_name, ...} */ });
-events.on("message", (msg) => { /* one decrypted inbound message envelope */ });
-```
-
-Today this is the public seam for inbound messages. A future `client.onMessage(...)` will subscribe to it; consumers reaching for it directly need to access `session.events` via an internal API (not yet exposed on `SnapcapClient`).
-
-## Lifecycle
-
-`bringUpMessagingSession` is cached per process — the first call drives the full bring-up, subsequent calls (with any opts) return the same session. On failure the cache is cleared so the next call retries from scratch — partial bring-ups (e.g. a transient network blip during the chunk load) shouldn't poison the process.
-
-The session is private on `SnapcapClient`. Public methods that need it (`fetchMessages` once migrated, future `onMessage`, the in-flight snap-send path) call `client.ensureMessagingSession()` internally; consumers never invoke it directly.
-
-## Source map
-
-| Concept | Code reference |
+| File | Role |
 |---|---|
-| Bring-up entrypoint | `src/auth/messaging-session.ts:152` (`bringUpMessagingSession`) |
-| Source patch site | `src/auth/messaging-session.ts:241-247` |
-| GrpcManager.registerWebFactory | `src/auth/messaging-session.ts:354-450` |
-| 18-slot args | `src/auth/messaging-session.ts:596-615` |
-| MessageContent codec | `src/auth/messaging-session.ts:677-715` (module 79752 export `v`) |
-| UDS stores | `src/auth/messaging-session.ts:549-571` (`local_uds_` prefix) |
-| Sess.create wrap | `src/auth/messaging-session.ts:622-646` |
+| `bundle/download.ts` | First-use fetch of `vendor/snap-bundle/` — accounts JS + chat JS + WASMs. Cached on disk afterwards. |
+| `bundle/accounts-loader.ts` | Loads the accounts bundle into the sandbox and boots the kameleon WASM. Per-Sandbox singleton (cached on `sandbox.kameleon`). |
+| `bundle/chat-loader.ts` | Loads the chat bundle main + sibling chunks. Source-patches the webpack runtime to leak `p` to `__snapcap_chat_p`, and source-patches a handful of closure-private symbols (`Fi`, `HY`, `JY`, AtlasGw `A`, friending `jz`) onto `globalThis.__SNAPCAP_*` so the registry can address them by name. |
+| `bundle/chat-wasm-boot.ts` | Boots the chat-bundle Emscripten WASM (`e4fa…wasm`) directly from webpack module 86818. Pre-fetched bytes are fed through Emscripten's `instantiateWasm` hook so we never spawn a Web Worker. Reserved for the upcoming messaging features; not on the auth path. |
+| `bundle/prime.ts` | Resolves cyclic-dependency rewires after chat-bundle eval — primes module 10409 (HY/JY/JZ codecs) and module 94704 (Zustand `M.getState`). Both required before any `register.ts` getter works. |
+| `bundle/register.ts` | Tier-1 typed registry. One getter per bundle entity; each takes `Sandbox` as its first arg and returns the live class instance / module export. No consumer-shape adaptation. |
+| `bundle/types.ts` | Bundle-realm type declarations — protobuf shapes, manager interfaces, the `Wreq` webpack-require type. |
+
+The boundary is sharp: anything that reads source-patched globals or webpack modules lives in `bundle/`; anything that translates between consumer types (UUID strings, plain numbers) and bundle types (16-byte buffers, `{highBits, lowBits}` pairs) lives in `api/*.ts` and uses the helpers in `api/_helpers.ts`.
+
+## Bring-up order
+
+`api/auth.ts:bringUp(ctx)` is the single entry point. Idempotent — a per-context `_bundlesLoaded` marker short-circuits subsequent calls.
+
+```
+1. getKameleon(sandbox, { page: "www_login" })
+   ──────────────────────────────────────────
+   Loads the accounts bundle into the sandbox and boots the kameleon
+   WASM. Side-effect: `__SNAPCAP_LOGIN_CLIENT_IMPL` (WebLoginService
+   ctor) and the unaryFactory in module 98747 become reachable.
+
+2. patchSandboxLocationToWeb(ctx)
+   ──────────────────────────────
+   Replace `self.location` with a Proxy that reports
+   `pathname=/web`. The chat bundle's module 13094 reads
+   `self.location.pathname` at top-level eval and throws if it
+   doesn't start with "/web".
+
+3. ensureChatBundle(sandbox)
+   ─────────────────────────
+   Load the chat bundle source. Source-patches the webpack runtime,
+   patches two empty Node-stub modules (91903 / 36675) to delegate to
+   real `Buffer` and `fs`, exposes closure-private symbols on
+   `__SNAPCAP_*`. Calls `prime.ts` after eval to fix up the cyclic
+   rewires.
+```
+
+After step 3 the registry getters in `bundle/register.ts` resolve. `api/auth.ts` then drives `WebLoginService` (cold path) or short-circuits through the bundle's own SSO `initialize` (warm path) and the bundle's Zustand auth slice ends up populated.
+
+## The registry pattern
+
+`bundle/register.ts` exports two kinds of entities:
+
+- **WIRED** — a constant maps to a confirmed `__SNAPCAP_*` name or webpack module id. The getter resolves the live entity from the sandbox at call time.
+- **TODO** — constant is `undefined`; the getter throws an explicit "not yet mapped" error. The comment above the constant points at the byte offset to investigate.
+
+```ts
+// Simplified shape — see bundle/register.ts for the real one.
+const G_ATLAS_CLIENT = "__SNAPCAP_ATLAS";
+
+export function atlasGw(sandbox: Sandbox): AtlasGwClient {
+  const inst = sandbox.getGlobal<AtlasGwClient>(G_ATLAS_CLIENT);
+  if (!inst) throw new Error("AtlasGw client not patched into globalThis");
+  return inst;
+}
+```
+
+The api-layer call site looks like:
+
+```ts
+// api/friends.ts
+import { friendActionClient } from "../bundle/register.ts";
+
+export async function add(ctx: ClientContext, userId: string, source: number) {
+  const params = makeFriendIdParams([userId], source);
+  await friendActionClient(ctx.sandbox).addFriends({ page: undefined, params });
+}
+```
+
+Source-patching `__SNAPCAP_*` names in `bundle/chat-loader.ts` is the architectural twin of the `globalThis.__snapcap_p=p` runtime leak documented in [the webpack runtime patch](/docs/internals/webpack-trick) — same trick, applied to closure-private class instances instead of the require function.
+
+## Why per-Sandbox
+
+Both loaders cache their state on the `Sandbox` instance (`sandbox.chatBundleLoaded`, `sandbox.kameleon`, `sandbox.chatWasmBoot`), not on a process-wide singleton. Two `SnapcapClient` instances each construct their own `Sandbox`, each load their own copy of the bundle into their own `vm.Context`, and end up with independent webpack runtimes, Zustand stores, and Embind class registrations.
+
+That's the substrate for [multi-tenant in one process](/docs/guide/multi-tenant): no shared mutable bundle state, so two clients targeting two accounts don't collide on `localStorage`, the auth slice, or the cookie jar (each Sandbox builds a jar from its own DataStore).
+
+## Fidelius identity
+
+Once the chat bundle is loaded, Fidelius identity bootstrap is automatic — Snap's bundle code drives `e2ee_E2EEKeyManager.generateKeyInitializationRequest(...)` and `InitializeWebKey` server-side as part of session bring-up, persists the wrapped form via the bundle's UDS storage wrapper (which lands at `local_uds_uds.e2eeIdentityKey.shared` in the DataStore), and unwraps it on warm boots. The SDK provides the storage delegates (DataStore-backed `localStorage` / `sessionStorage` / `indexedDB`) and stays out of the way.
+
+The plaintext private key never crosses back to JS — only the wrapped form is observable. See [Fidelius](/docs/internals/fidelius).
+
+## What's deferred
+
+- **Public messaging surface.** `client.messaging` is a placeholder today. Wiring it to the registry's `chatRpc` / `sendsModule` getters is what the bundle/ refactor unblocks.
+- **`bundle/chat-wasm-boot.ts`.** Boots the messaging WASM (74 Embind classes — `messaging_Session`, `messaging_StatelessSession`, `e2ee_E2EEKeyManager`, …). Reserved for the inbound-message path; not on the auth path.
+- **Bundle-remap script.** When Snap rebuilds, the source-patch sites and module ids drift. A planned `scripts/remap-bundle.ts` will fingerprint module factory bodies so re-mapping the ~30 `__SNAPCAP_*` constants drops from hours to minutes. See the TODO at the bottom of the SDK README.

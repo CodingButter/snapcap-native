@@ -33,12 +33,13 @@ Everything written under that DataStore goes through one of four prefixes. The k
 | Key | Source | What it is |
 |---|---|---|
 | `cookie_jar` | tough-cookie via `CookieJarStore` and the `CookieContainerShim` / `DocumentCookieShim` | full serialized jar — domain-scoped cookies for `accounts.snapchat.com`, `web.snapchat.com`, `*.snapchat.com` |
-| `session_snapcap_bearer` | SDK via sandbox `sessionStorage` shim | current SSO bearer string |
-| `local_snapcap_self` | SDK via sandbox `localStorage` shim | logged-in user's `{ userId, username, displayName }` JSON |
-| `local_uds_uds.e2eeIdentityKey.shared` | Bundle via the `pr()` UDS wrapper (slot 8 of `createMessagingSession`) | wrapped Fidelius identity (RWK-encrypted private key + identityKeyId metadata) — bundle-managed |
+| `local_uds_uds.e2eeIdentityKey.shared` | Bundle (Fidelius wrapped identity) | RWK-encrypted private key + identityKeyId metadata — bundle-managed |
 | `local_uds_uds.*` (other) | Bundle | other UDS-prefixed bundle state (per-message E2EE temp keys, etc.) |
+| Other `local_*` / `session_*` / `indexdb_*` | Bundle | Snap's own browser-storage writes — Zustand auth slice (bearer + self-user live here), feature flags, analytics ids, etc. |
 
-The Snap bundle's other writes to `localStorage` / `sessionStorage` / `indexedDB` land alongside, prefixed with `local_` / `session_` / `indexdb_` respectively. We don't enumerate them — the bundle owns those entries and the SDK leaves them alone (including across `client.logout()`).
+Bearer token and self-user are **not** SDK-owned keys. The bundle's Zustand auth slice holds them in memory and spills into `local_*` / `session_*` like any other bundle storage write. The SDK reads them back through `authSlice(sandbox).authToken.token` (and friends) — there's no separate cache to keep in sync.
+
+The Snap bundle's other writes land alongside under the same four prefixes. We don't enumerate them — the bundle owns those entries and the SDK leaves them alone (including across `client.logout()`).
 
 ## How the prefix routing works
 

@@ -91,10 +91,9 @@ Error: illegal buffer
     at Reader.create (protobufjs/src/reader.js:...)
 ```
 
-Anywhere SDK code passes raw bytes into bundle code — gRPC response decode, Embind argument marshalling, login-response parsing — bytes have to be copied into a vm-realm Uint8Array first:
+Anywhere SDK code passes raw bytes into bundle code — login-response parsing, Embind argument marshalling, WebSocket frame projection — bytes have to be copied into a vm-realm Uint8Array first:
 
 ```ts
-// src/shims/sandbox.ts:225-233
 toVmU8(bytes: Uint8Array | ArrayBufferView): Uint8Array {
   const VmU8 = this.runInContext("Uint8Array") as Uint8ArrayConstructor;
   const src = bytes instanceof Uint8Array
@@ -106,14 +105,12 @@ toVmU8(bytes: Uint8Array | ArrayBufferView): Uint8Array {
 }
 ```
 
-Callers today:
+Two main callers today:
 
-- `src/auth/login.ts:176` — wrapping the WebLogin response payload before handing it to the bundle's protobuf decoder.
-- `src/transport/grpc-web.ts` — wrapping every AtlasGw / MessagingCore response body before `decode` / `deserializeBinary`.
-- `src/auth/messaging-session.ts:702` — projecting host-realm bytes into the bundle's MessageContent codec (module 79752 export `v`).
-- `src/shims/websocket.ts:127` — projecting incoming WebSocket binary frames so `e.data instanceof ArrayBuffer` passes the bundle's check.
+- `src/api/auth.ts` — wrapping the bundle-driven `WebLogin` response bytes before handing them to the bundle's protobuf decoder during the cold-path login.
+- `src/shims/websocket.ts` — projecting incoming WebSocket binary frames so `e.data instanceof ArrayBuffer` passes the bundle's check.
 
-If you write a new path that hands bytes into the bundle, run it through `getSandbox().toVmU8(...)`.
+If you write a new path that hands bytes into the bundle, run it through `sandbox.toVmU8(...)`.
 
 ## Bundle source wrapping
 
@@ -131,22 +128,13 @@ sandbox.runInContext(wrapped, "snap-bundle.js");
 
 The trailing `\n` is the load-bearing one. The leading `\n` is defensive (some chunk files start with `//#` source-map comments too).
 
-## Singleton lifecycle
+## Per-instance lifecycle
 
-`src/shims/runtime.ts` exposes `installShims(opts)` and `getSandbox()`. Both target a process-wide singleton:
+`SnapcapClient`'s constructor news up its own `Sandbox` directly — no process-wide singleton dance. Each Sandbox owns its own `vm.Context`, happy-dom Window, shimmed I/O layer, and per-Sandbox bring-up caches (kameleon Module, chat bundle eval, chat WASM Module, throttle gate). Two clients in the same process never share Zustand state, bearer tokens, webpack runtime caches, or storage namespaces.
 
-```ts
-// src/shims/runtime.ts:19-27
-export function installShims(opts: InstallShimOpts = {}): Sandbox {
-  if (installed) return installed;
-  installed = new Sandbox(opts);
-  return installed;
-}
-```
+That's the substrate for [multi-tenant in one process](/docs/guide/multi-tenant). Each tenant gets its own `DataStore`, its own `BrowserContext.userAgent`, and its own `Sandbox` — `localStorage` writes from tenant A's bundle are isolated from tenant B's bundle at the V8 vm-realm boundary.
 
-First call wins. `SnapcapClient`'s constructor calls `installShims({ url, dataStore })` eagerly so the sandbox is seeded with the consumer's DataStore before the kameleon boot or any chat-bundle access — otherwise those flows would call `installShims({})` first and bundle storage writes would land in happy-dom's in-memory defaults instead of the consumer's persistence layer.
-
-This singleton model is also the reason the SDK is currently single-account-per-VM. Two `SnapcapClient` instances pointed at different DataStores in the same process collide on the bundle's `localStorage` namespace. Run one process per account.
+`src/shims/runtime.ts` still exposes a process-wide `installShims()` / `getSandbox()` pair as an internal helper for scratch scripts that want a single Sandbox without going through `SnapcapClient`. Production code should not rely on it — `SnapcapClient` ignores the singleton and constructs a fresh Sandbox per instance.
 
 ## What the consumer sees
 

@@ -33,10 +33,9 @@ All overrides today, with the boundary each one lives at:
 | `LocalStorageShim` | bundle `localStorage` | `localStorage.getItem` / `setItem` / `removeItem` / etc. | `StorageShim` over DataStore with prefix `local_` |
 | `SessionStorageShim` | bundle `sessionStorage` | `sessionStorage.getItem` / `setItem` / etc. | `StorageShim` over DataStore with prefix `session_` |
 | `IndexedDbShim` | bundle `indexedDB` | `indexedDB.open(name, version)` + transactions/object stores | DataStore with structured key `indexdb_<dbName>__<storeName>__<key>` |
-| `GrpcManager.registerWebFactory` | bundle's own gRPC transport | bundle calls a registered factory's `createClient()` to get `{unaryCall, serverStreamingCall, bidiStreamingCall}` | A factory whose `unaryCall` does gRPC-Web framing around `nativeFetch`, attaches the SDK's bearer + cookies, parses trailers, copies response bytes into the WASM heap |
-| `importScripts` (per-bring-up) | chat worker chunk's sibling-chunk loader | `importScripts("dw/06c27f3bcaa1e5c47eea.chunk.js")` | Maps the URL onto the local vendored chunk file and runs it via `sandbox.runInContext` |
+| Sandbox `fetch` + `XMLHttpRequest` shims | bundle's own outbound HTTP | `globalThis.fetch(...)` and `new XMLHttpRequest()` from inside the bundle | `src/shims/fetch.ts` + `src/shims/xml-http-request.ts` route through the host's `nativeFetch` with the shared cookie jar, optional throttle gate, and structured `LogEvent` emission |
 
-Six of these are part of the Sandbox `SDK_SHIMS` pipeline (the first six). The two below the line are bring-up-time overrides registered by `bringUpMessagingSession` (`src/auth/messaging-session.ts:354-450` for the gRPC factory, `src/auth/messaging-session.ts:218-234` for `importScripts`).
+All six listed shims are part of the Sandbox `SDK_SHIMS` pipeline; `fetch` and `XHR` are installed alongside the rest by the Sandbox constructor. Together they cover every I/O boundary the bundle reaches through.
 
 ## Why each one is necessary
 
@@ -56,32 +55,16 @@ After the shim: all three paths see one unified jar, which is also persisted to 
 
 **`IndexedDbShim`** — Snap's bundle stores additional state in IndexedDB. Same reasoning — without persistence, every boot looks like a fresh device to the bundle.
 
-**`GrpcManager.registerWebFactory`** — the bundle's WASM exposes `registerWebFactory({createClient})` as an extension point. Module 45225 of the SPA boot bundle calls it with a fetch-backed factory. We're a Node host, not the SPA, so we register the equivalent transport directly. Without this, the bundle's bundle-side gRPC calls (the path used by `MessagingSession`'s managers) have no transport at all — `createMessagingSession` hangs on its first server call.
-
-**`importScripts`** — chunk `f16f14e3` does `importScripts(s.p+s.u(7818))` to load a sibling chunk. Without an override, that's a no-op and the chunk's init can't complete. The shim resolves the URL against vendored local files.
+**Sandbox `fetch` + `XHR` shims** — bundle code uses both `fetch(...)` (newer SPA paths) and `new XMLHttpRequest()` (older AtlasGw / friending paths). Both shims route through the host's `nativeFetch`, attach the shared cookie jar at request time, optionally pass through the per-Sandbox throttle gate, and emit structured `LogEvent`s for the network observability channel. Without them, bundle code would either hit happy-dom's default fetch (which doesn't ride our cookie jar) or fail outright on XHR calls.
 
 ## What we don't do
 
 By the same principle, the SDK explicitly does NOT reimplement:
 
-- **Fidelius E2E encryption / decryption.** The bundle does it. We provide the storage delegates (slots 8+9) and let the WASM mint, register, encrypt, and decrypt.
-- **Protobuf encoding for messages already routed through the bundle.** The MessageContent codec lives at module 79752 export `v`; we use it.
-- **Conversation/feed/snap state machines.** The managers from `MessagingSession.session.getConversationManager()` etc. own that state.
+- **Fidelius E2E encryption / decryption.** The bundle does it. We provide DataStore-backed storage and let the WASM mint, register, encrypt, and decrypt — the wrapped identity lands at `local_uds_uds.e2eeIdentityKey.shared` via the bundle's UDS-prefixed `localStorage` writes.
+- **gRPC-Web framing.** The bundle's own gRPC clients do it. The SDK's hand-rolled `transport/grpc-web.ts` and `transport/proto-encode.ts` were retired in this refactor — every public method composes calls to the bundle's webpack-resolved methods through `bundle/register.ts`.
+- **Protobuf encoding for messages routed through the bundle.** Codecs live in webpack modules; we resolve them by module id and call them in place.
 - **Kameleon attestation.** The WASM does it. We boot the Module with the right decorations and call `AttestationSession.instance().finalize(username)`.
 - **The webpack runtime.** We patch one line so `__webpack_require__` leaks to `globalThis`. We don't reimplement webpack.
 
-For each thing we don't do, there's something we do *adjacent* to it that satisfies the bundle's I/O contract — the cookie jar, the DataStore, the gRPC factory, the `instantiateWasm` callback that injects local WASM bytes.
-
-## The legacy direct-gRPC path
-
-There is one set of code in the SDK that does NOT follow this principle: `src/api/*.ts` + `src/transport/grpc-web.ts`. Those modules hand-encode protobufs (with `proto-encode.ts` ProtoWriter) and frame gRPC-Web themselves. Today they back `listFriends`, `searchUsers`, `addFriend`, `getConversations`, `Conversation.sendText`, `sendImage`, `postStory`, `fetchMessages`, presence — i.e. most of the SDK's public surface.
-
-Why do these exist? Historical: the bundle-native session is newer. Each method we write that goes through `api/*.ts` is one we'd ideally migrate to the bundle session; the migration is gradual and per-method. New methods should prefer the bundle-native path.
-
-The direct-gRPC path is an exception to the rule. It's accepted for now because:
-
-1. It works today.
-2. The protobuf shapes are simple enough to hand-encode (single-field messages, no Fidelius envelopes).
-3. The bundle-native equivalent for some methods (e.g. `addFriend`) hasn't been mapped yet.
-
-When the bundle-native path covers everything, the direct-gRPC path goes away.
+For each thing we don't do, there's something we do *adjacent* to it that satisfies the bundle's I/O contract — the cookie jar, the DataStore, the per-Sandbox throttle, the `instantiateWasm` callback that injects local WASM bytes.
