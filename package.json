@@ -42,6 +42,8 @@
     "download:bundle": "bash scripts/download-bundle.sh",
     "docs:api": "typedoc",
     "docs:api:check": "typedoc --emit none",
+    "docs:update": "bash scripts/update-docs.sh",
+    "install-hooks": "bash scripts/install-hooks.sh",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {

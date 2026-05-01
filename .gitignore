@@ -34,3 +34,10 @@ coverage/
 # Dev probe scripts that hardcode test creds — keep local, don't ship
 scripts/test-bundle-auth.ts
 
+# Claude Code per-user state. Keep .claude/ tracked for shared directives
+# (e.g. .claude/doc_guide_description.md), but ignore user-specific state.
+.claude/settings.local.json
+.claude/sessions/
+.claude/.cache/
+.claude/.last-conversation
+

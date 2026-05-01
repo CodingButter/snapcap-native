@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-push hook — runs the doc-update flow before a push lands on the remote.
+#
+# Triggers ONLY for pushes that include refs/heads/main. Feature-branch
+# pushes are untouched.
+#
+# Skip mechanisms:
+#   - `git push --no-verify`         (standard git, bypasses the hook entirely)
+#   - `SNAPCAP_SKIP_DOC_UPDATE=1 git push`  (env var, runs the hook but it exits early)
+#
+# Install via: `bun run install-hooks` (symlinks this file into .git/hooks/)
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Read the refs being pushed from stdin (git's pre-push protocol):
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# Only run the doc flow when one of the pushed refs is main.
+should_run=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    should_run=1
+    break
+  fi
+done
+
+if [ "$should_run" = "0" ]; then
+  exit 0
+fi
+
+echo "[pre-push] push targets main — running doc-update flow..."
+bash "$REPO_ROOT/scripts/update-docs.sh"
