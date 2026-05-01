@@ -84,13 +84,20 @@ of a meaningful update.
 
 7. DO NOT commit. The wrapping shell script handles git operations.
 
-8. **Self-improvement pass (REQUIRED before exit):** edit the "Lessons
+8. **Budget reservation — HARD RULE.** You have ~65 turns total. As soon
+   as you've used 60, STOP doc work mid-task if needed and jump to
+   step 9. The lesson note matters more than one extra doc edit you
+   could have squeezed in. Self-improvement starvation has been the
+   #1 failure mode of past runs.
+
+9. **Self-improvement pass (REQUIRED before exit):** edit the "Lessons
    learned" section at the bottom of THIS file (`.claude/doc_guide_description.md`)
    if you discovered anything during this run that would help future
-   runs work faster or smarter. See the rules in that section.
+   runs work faster or smarter. Should take 2-5 turns max — a few
+   short bullets, not paragraphs. See the rules in that section.
 
-9. When done, exit. If you made no doc changes, that's a valid outcome —
-   but you should still consider whether a lesson is worth recording.
+10. When done, exit. If you made no doc changes, that's a valid outcome —
+    but you should still consider whether a lesson is worth recording.
 
 ## Voice and content rules
 

@@ -34,14 +34,15 @@ echo "[docs] Regenerating API reference..."
 bun run docs:api
 
 # 2. Run Claude headless to review diff + update hand-written guides.
-#    Don't `set -e` bail on a non-zero exit — claude may have hit max-turns
-#    after making partial progress. We still want to capture whatever it
-#    wrote in the commit step below.
-echo "[docs] Running Claude doc-update agent..."
+#    `--max-turns 65` gives a small buffer so the directive's
+#    "wrap up + write self-improvement at turn 60" rule has runway to
+#    actually execute. `set +e` so partial work commits even when claude
+#    exits non-zero.
+echo "[docs] Running Claude doc-update agent (max 65 turns)..."
 set +e
 claude -p "$(cat "$PROMPT_FILE")" \
   --dangerously-skip-permissions \
-  --max-turns 60
+  --max-turns 65
 claude_exit=$?
 set -e
 if [ $claude_exit -ne 0 ]; then
@@ -50,13 +51,9 @@ if [ $claude_exit -ne 0 ]; then
 fi
 
 # 3. Commit if anything changed under docs/, src/, or .claude/.
-#    - docs/   — the hand-written guides claude updates
-#    - src/    — TSDoc comments claude legitimately edits when an
-#                improvement materially helps consumers
-#    - .claude/ — claude's self-improvement updates to its own directive
-#                 (the "Lessons learned" section in doc_guide_description.md).
-#                 If we don't capture these, the wisdom doesn't compound
-#                 across runs.
+#    - docs/   — hand-written guides claude updates
+#    - src/    — TSDoc improvements claude legitimately makes
+#    - .claude/ — claude's self-improvement updates to the directive
 if git diff --quiet docs/ src/ .claude/ && git diff --cached --quiet docs/ src/ .claude/; then
   echo "[docs] No doc changes."
   exit 0
