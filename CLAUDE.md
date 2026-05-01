@@ -97,16 +97,35 @@ These are easy to break and hard to debug — read these before touching the rel
 3. Add a method on `SnapcapClient` that calls into your new file via `this.makeRpc()`.
 4. Document in `docs/api/`.
 
-## TODO — architectural cleanup (post multi-instance refactor)
+## TODO — per-instance proxy / outbound IP rotation
 
-- `src/api/auth.ts` currently imports `primeModule10409` / `primeAuthStoreModule`
-  from `src/bundle/prime.ts`. That's a layer violation — api/* is supposed to
-  gate through `register.ts` only. Either:
-    A. Bake the priming into `ensureChatBundle` so callers never have to know
-       about it (preferred — simplest auth.ts surface)
-    B. Add an `ensureChatReady(sandbox)` to `register.ts` that orchestrates
-       ensureChatBundle + primeModule10409 + primeAuthStoreModule
-  Identified 2026-05-01.
+`BrowserContext` already accepts (but doesn't yet thread) an `httpAgent` slot
+intended for an undici Dispatcher. Wiring this lets each `SnapcapClient`
+route its outbound HTTP through a different proxy — different residential IP
+per tenant, which is the biggest fingerprint-diversity win we can deliver
+in-process (alongside per-client UA, locale, viewport).
+
+Plumbing (when ready):
+  1. `src/types.ts` — add `httpAgent?: Dispatcher` to `BrowserContext`
+     (or surface it as a top-level `SnapcapClientOpts.httpAgent` if we
+     decide it's not strictly a "browser" concern).
+  2. `src/shims/sandbox.ts` — accept it from opts; expose as a Sandbox
+     instance field so the I/O layer can read it.
+  3. `src/transport/native-fetch.ts` — `loggingFetch` accepts an optional
+     dispatcher per-call (or per-Sandbox); pass through to undici via
+     the fetch options' `dispatcher` field.
+  4. Both shims (fetch + xhr) pass `sandbox.httpAgent` into nativeFetch
+     when present.
+  5. Document the pattern: residential proxy per tenant, JSON config
+     pairs username + UA + proxy URL.
+
+This delivers what process-per-tenant gives you for IP isolation, but
+in-process. The remaining gap vs process-per-tenant is TLS fingerprint
+diversity (Node's TLS stack is monolithic per process — would require a
+custom undici Dispatcher with a different SSLContext, or going around
+Node's TLS entirely). That's a bigger lift; punt unless someone needs it.
+
+Identified 2026-05-01. Estimate: ~50 lines + docs.
 
 ## TODO — bundle-remap script for resilience to Snap rebuilds
 
