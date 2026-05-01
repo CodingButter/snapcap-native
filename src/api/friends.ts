@@ -1,27 +1,9 @@
 /**
  * Friends manager — domain surface for the social graph.
  *
- * Tier-2 manager (per the architecture pivot): takes consumer-friendly
- * args (UUID strings, named enums) and bridges to the bundle's
- * closure-private mechanisms via `bundle/register.ts` getters. Does NOT
- * leak bundle shapes (`Uuid64Pair`, `friendId.{highBits,lowBits}`,
- * `mutable_username`, etc.).
- *
- * @remarks
- * Method → mechanism table:
- *
- * | Method | Mechanism |
- * | --- | --- |
- * | `add` / `remove` / `block` / `unblock` / `ignore` | `friendActionClient()` (jz) via private `friendActionMutation` dispatcher |
- * | `list` / `incomingRequests` / `outgoingRequests` / `snapshot` | Zustand state (`userSlice()`), centralized through `#ensureSynced` + `snapshot()` |
- * | `search` | `searchUsers()` (register-composed: codecs + authed POST) |
- * | `onChange` | Single `subscribeUserSlice` with a composite selector covering mutuals + incoming + outgoing |
- * | `acceptRequest` / `rejectRequest` | BLOCKED on `__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch — throws an explicit "not yet wired" error |
- *
- * Why a class instead of flat functions: {@link IFriendsManager} carries
- * a subscription method (`onChange`), so it has identity-bearing state
- * — fits the "persistent-subscriber surface" carve-out in
- * `feedback_registry_pattern.md`.
+ * Takes consumer-friendly args (hyphenated UUID strings, named enums)
+ * and returns consumer-shape types — never leaks Snap's internal
+ * protobuf shapes.
  *
  * @see {@link IFriendsManager}
  * @see {@link Friends}
@@ -224,10 +206,8 @@ export interface FriendsSnapshot {
  * idempotent.
  *
  * Pending-request methods ({@link IFriendsManager.acceptRequest},
- * {@link IFriendsManager.rejectRequest}) are gated on the chat-bundle
- * source-patch surfacing the closure-private `FriendRequests` client
- * (planned global: `__SNAPCAP_FRIEND_REQUESTS_CLIENT`). Until that
- * lands, those methods throw an explicit "not yet wired" error.
+ * {@link IFriendsManager.rejectRequest}) are not yet wired and currently
+ * throw.
  *
  * @see {@link Friends}
  * @see {@link FriendsSnapshot}
@@ -306,9 +286,7 @@ export interface IFriendsManager {
    *
    * @param userId - Hyphenated UUID of the requester whose request to
    * accept.
-   * @throws Currently always throws — gated on the
-   * `__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch landing in
-   * `register.ts`.
+   * @throws Currently always throws — not yet wired.
    */
   acceptRequest(userId: UserId): Promise<void>;
 
@@ -317,9 +295,7 @@ export interface IFriendsManager {
    *
    * @param userId - Hyphenated UUID of the requester whose request to
    * reject.
-   * @throws Currently always throws — gated on the
-   * `__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch landing in
-   * `register.ts`.
+   * @throws Currently always throws — not yet wired.
    */
   rejectRequest(userId: UserId): Promise<void>;
 
@@ -583,15 +559,6 @@ function buildSnapshot(user: UserSlice): FriendsSnapshot {
  * Constructed once per {@link SnapcapClient} and held as
  * {@link SnapcapClient.friends}. See {@link IFriendsManager} for the
  * full method-level documentation.
- *
- * @remarks
- * Why a `() => Promise<ClientContext>` provider instead of a bare
- * `ClientContext`: the SDK's context is built asynchronously (cookie
- * jar load, etc.), but the `client.friends` field needs to exist
- * synchronously off `new SnapcapClient(...)`. The provider defers
- * resolution until the first method call — which is when
- * `authenticate()` has typically already been called and the context
- * is warm.
  *
  * @see {@link IFriendsManager}
  */

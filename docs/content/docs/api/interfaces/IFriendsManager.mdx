@@ -4,7 +4,7 @@ title: IFriendsManager
 
 # Interface: IFriendsManager
 
-Defined in: [api/friends.ts:235](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L235)
+Defined in: [api/friends.ts:215](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L215)
 
 Friends domain manager — all friend-graph operations live here.
 
@@ -24,10 +24,8 @@ slots changes; it returns an `Unsubscribe` thunk that's
 idempotent.
 
 Pending-request methods ([IFriendsManager.acceptRequest](#acceptrequest),
-[IFriendsManager.rejectRequest](#rejectrequest)) are gated on the chat-bundle
-source-patch surfacing the closure-private `FriendRequests` client
-(planned global: `__SNAPCAP_FRIEND_REQUESTS_CLIENT`). Until that
-lands, those methods throw an explicit "not yet wired" error.
+[IFriendsManager.rejectRequest](#rejectrequest)) are not yet wired and currently
+throw.
 
 ## See
 
@@ -42,7 +40,7 @@ lands, those methods throw an explicit "not yet wired" error.
 acceptRequest(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:313](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L313)
+Defined in: [api/friends.ts:291](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L291)
 
 Accept an incoming friend request.
 
@@ -58,9 +56,7 @@ Accept an incoming friend request.
 
 #### Throws
 
-Currently always throws — gated on the
-`__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch landing in
-`register.ts`.
+Currently always throws — not yet wired.
 
 ***
 
@@ -70,7 +66,7 @@ Currently always throws — gated on the
 add(userId: string, source?: FriendSource): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:258](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L258)
+Defined in: [api/friends.ts:238](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L238)
 
 Send a friend request / add a user to the friend list.
 
@@ -107,7 +103,7 @@ await client.friends.add(userId, FriendSource.ADDED_BY_SEARCH);
 block(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:288](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L288)
+Defined in: [api/friends.ts:268](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L268)
 
 Block a user — also removes any existing friend link.
 
@@ -135,7 +131,7 @@ await client.friends.block(userId);
 ignore(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:302](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L302)
+Defined in: [api/friends.ts:282](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L282)
 
 Ignore an incoming friend request without explicitly rejecting.
 
@@ -157,7 +153,7 @@ Ignore an incoming friend request without explicitly rejecting.
 incomingRequests(): Promise<FriendRequest[]>;
 ```
 
-Defined in: [api/friends.ts:347](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L347)
+Defined in: [api/friends.ts:323](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L323)
 
 All pending incoming friend requests.
 
@@ -176,7 +172,7 @@ reject / ignore.
 list(): Promise<Friend[]>;
 ```
 
-Defined in: [api/friends.ts:339](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L339)
+Defined in: [api/friends.ts:315](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L315)
 
 All friends in the logged-in user's social graph (excluding self).
 
@@ -201,7 +197,7 @@ for (const f of friends) console.log(f.username);
 onChange(cb: (snap: FriendsSnapshot) => void): Unsubscribe;
 ```
 
-Defined in: [api/friends.ts:410](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L410)
+Defined in: [api/friends.ts:386](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L386)
 
 Fire `cb` whenever any part of the friend graph changes — mutuals,
 incoming requests, or outgoing requests.
@@ -241,7 +237,7 @@ unsub();
 outgoingRequests(): Promise<OutgoingRequest[]>;
 ```
 
-Defined in: [api/friends.ts:355](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L355)
+Defined in: [api/friends.ts:331](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L331)
 
 All pending outgoing friend requests (the logged-in user's adds
 waiting for the recipient to accept).
@@ -260,7 +256,7 @@ Outbound [OutgoingRequest](OutgoingRequest.mdx) records.
 rejectRequest(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:324](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L324)
+Defined in: [api/friends.ts:300](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L300)
 
 Reject an incoming friend request.
 
@@ -276,9 +272,7 @@ Reject an incoming friend request.
 
 #### Throws
 
-Currently always throws — gated on the
-`__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch landing in
-`register.ts`.
+Currently always throws — not yet wired.
 
 ***
 
@@ -288,7 +282,7 @@ Currently always throws — gated on the
 remove(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:276](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L276)
+Defined in: [api/friends.ts:256](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L256)
 
 Remove a friend from the social graph.
 
@@ -323,7 +317,7 @@ await client.friends.remove(userId);
 search(query: string): Promise<FriendsUser[]>;
 ```
 
-Defined in: [api/friends.ts:384](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L384)
+Defined in: [api/friends.ts:360](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L360)
 
 Search Snap's user index by username / display-name fragment.
 
@@ -354,7 +348,7 @@ const users = await client.friends.search("alice");
 snapshot(): Promise<FriendsSnapshot>;
 ```
 
-Defined in: [api/friends.ts:368](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L368)
+Defined in: [api/friends.ts:344](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L344)
 
 Canonical point-in-time view of the friend graph — mutuals + pending
 requests in both directions.
@@ -379,7 +373,7 @@ The split read accessors ([IFriendsManager.list](#list),
 unblock(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:295](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L295)
+Defined in: [api/friends.ts:275](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/api/friends.ts#L275)
 
 Unblock a previously-blocked user.
 

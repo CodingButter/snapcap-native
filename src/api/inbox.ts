@@ -1,21 +1,17 @@
 /**
- * Inbox manager — placeholder.
- *
- * Empty class until the Inbox migration starts. The per-domain
- * `IInboxManager` interface (fetchMessages / subscribe / …) is designed
- * at migration time, not pre-emptively — see
- * `feedback_registry_pattern.md`.
+ * Placeholder for the upcoming inbox manager. No methods are exposed yet;
+ * calls like `client.inbox.fetchMessages(...)` will fail at compile time.
  *
  * @see {@link SnapcapClient.inbox}
  */
 import type { ClientContext } from "./_context.ts";
 
 /**
- * Placeholder for the future Inbox domain manager.
+ * Placeholder for the upcoming Inbox domain manager.
  *
- * Held as {@link SnapcapClient.inbox}. Exposes no methods today — the
- * formal `IInboxManager` interface (fetchMessages / subscribe / …) is
- * designed when the Inbox migration begins.
+ * Held as {@link SnapcapClient.inbox}. No methods are exposed yet — any
+ * call site like `client.inbox.fetchMessages(...)` is a TypeScript
+ * compile error.
  *
  * @see {@link SnapcapClient}
  */
@@ -23,5 +19,4 @@ export class Inbox {
   /** @internal */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(private readonly _getCtx: () => Promise<ClientContext>) {}
-  // (interface designed when Inbox migration starts)
 }

@@ -8,19 +8,16 @@
  * the bundle-driven flows use to make idempotent bring-ups cheap on
  * repeat calls.
  *
- * @remarks
+ * @privateRemarks
  * This is the substitute for "method on a class" — passing a small
  * context bag keeps each api function a stateless export, which fits the
  * registry pattern: `register.ts` exports flat verbs, `api/<domain>.ts`
- * composes them on top of a context. The classes-vs-functions split was
- * settled per `feedback_registry_pattern.md`: stateless surfaces stay
- * functions; only persistent-subscriber surfaces (none yet) become
- * classes.
+ * composes them on top of a context. Stateless surfaces stay functions;
+ * only persistent-subscriber surfaces (none yet) become classes.
  *
  * Lives in its own file (not co-located with `auth.ts`) because every
- * future api file (`messaging.ts`, `friends.ts` migrations, …) will
- * import the same shape — and circular import risk goes up if it's
- * embedded in the first consumer.
+ * future api file will import the same shape — circular-import risk goes
+ * up if it's embedded in the first consumer.
  *
  * @internal
  */

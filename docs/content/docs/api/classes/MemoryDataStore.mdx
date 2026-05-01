@@ -4,7 +4,7 @@ title: MemoryDataStore
 
 # Class: MemoryDataStore
 
-Defined in: [storage/data-store.ts:202](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L202)
+Defined in: [storage/data-store.ts:202](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L202)
 
 In-memory [DataStore](../interfaces/DataStore.mdx) implementation — useful for tests and ephemeral
 sandboxes.
@@ -49,7 +49,7 @@ new MemoryDataStore(): MemoryDataStore;
 delete(key: string): Promise<void>;
 ```
 
-Defined in: [storage/data-store.ts:226](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L226)
+Defined in: [storage/data-store.ts:226](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L226)
 
 Delete the entry at `key`. No-op if the key is absent.
 
@@ -77,7 +77,7 @@ get(key: string): Promise<
 | undefined>;
 ```
 
-Defined in: [storage/data-store.ts:216](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L216)
+Defined in: [storage/data-store.ts:216](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L216)
 
 Read the value at `key`.
 
@@ -109,7 +109,7 @@ getSync(key: string):
   | undefined;
 ```
 
-Defined in: [storage/data-store.ts:206](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L206)
+Defined in: [storage/data-store.ts:206](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L206)
 
 Synchronous read — for Web Storage shims that can't await.
 
@@ -132,7 +132,7 @@ Synchronous read — for Web Storage shims that can't await.
 keys(prefix?: string): string[];
 ```
 
-Defined in: [storage/data-store.ts:237](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L237)
+Defined in: [storage/data-store.ts:237](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L237)
 
 Iterate stored keys, optionally filtered by prefix.
 
@@ -156,7 +156,7 @@ A snapshot array of matching keys.
 set(key: string, value: Uint8Array): Promise<void>;
 ```
 
-Defined in: [storage/data-store.ts:221](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L221)
+Defined in: [storage/data-store.ts:221](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L221)
 
 Write `value` to `key`, overwriting any prior entry. Implementations
 SHOULD make this durable before resolving.
@@ -184,7 +184,7 @@ SHOULD make this durable before resolving.
 setSync(key: string, value: Uint8Array): void;
 ```
 
-Defined in: [storage/data-store.ts:211](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L211)
+Defined in: [storage/data-store.ts:211](https://github.com/CodingButter/snapcap-native/blob/e5c6ef042baa7d36bf620eee6b725ba6bbed1720/src/storage/data-store.ts#L211)
 
 Synchronous variant of [MemoryDataStore.set](#set).
 

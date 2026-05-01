@@ -1,27 +1,10 @@
 /**
- * `SnapcapClient` — main entry point for the SDK.
+ * Main entry point for the SDK — see {@link SnapcapClient}.
  *
  * Constructed with a `DataStore` (required) plus optional cold-start
- * credentials. The DataStore is the canonical persistence backbone:
- * cookies, bearer, and the Snap-bundle's own sandbox storage
- * (`local_*` / `session_*` / `indexdb_*`) all live there under stable
- * keys. Fidelius identity bootstrap is owned by the bundle, which
- * persists wrapped keys at `local_uds_uds.e2eeIdentityKey.shared`.
- *
- * @remarks
- * `authenticate()` brings up the chat + accounts bundles and runs a
- * warm-or-cold WebLogin via Snap's own bundle code; on success the
- * Zustand auth slice holds the bearer (`getAuthToken()`) and the cookie
- * jar holds the long-lived `__Host-sc-a-auth-session`. Subsequent boots
- * with restored cookies short-circuit through the warm path.
- *
- * Surface is auth verbs + per-domain managers ({@link Friends},
- * {@link Messaging}, {@link Presence}, {@link Stories}, {@link Inbox},
- * {@link Media}). Only {@link Friends} carries a Phase-1A stub; the
- * other five are EMPTY placeholder classes — calling
- * `client.messaging.send(...)` is a TypeScript compile error today, not
- * a runtime one. Per-domain interfaces get designed when each migration
- * starts (per `feedback_registry_pattern.md`).
+ * credentials. The DataStore is the persistence backbone: cookies,
+ * bearer, and Snap's own sandbox storage (`local_*` / `session_*` /
+ * `indexdb_*`) all live there under stable keys.
  *
  * @example
  * ```ts

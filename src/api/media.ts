@@ -1,21 +1,17 @@
 /**
- * Media manager — placeholder.
- *
- * Empty class until the Media migration starts. The per-domain
- * `IMediaManager` interface (sendImage / sendSnap / upload / …) is
- * designed at migration time, not pre-emptively — see
- * `feedback_registry_pattern.md`.
+ * Placeholder for the upcoming media manager. No methods are exposed yet;
+ * calls like `client.media.upload(...)` will fail at compile time.
  *
  * @see {@link SnapcapClient.media}
  */
 import type { ClientContext } from "./_context.ts";
 
 /**
- * Placeholder for the future Media domain manager.
+ * Placeholder for the upcoming Media domain manager.
  *
- * Held as {@link SnapcapClient.media}. Exposes no methods today — the
- * formal `IMediaManager` interface (sendImage / sendSnap / upload / …)
- * is designed when the Media migration begins.
+ * Held as {@link SnapcapClient.media}. No methods are exposed yet — any
+ * call site like `client.media.upload(...)` is a TypeScript compile
+ * error.
  *
  * @see {@link SnapcapClient}
  */
@@ -23,5 +19,4 @@ export class Media {
   /** @internal */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(private readonly _getCtx: () => Promise<ClientContext>) {}
-  // (interface designed when Media migration starts)
 }

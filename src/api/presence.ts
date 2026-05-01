@@ -1,21 +1,18 @@
 /**
- * Presence manager — placeholder.
- *
- * Empty class until the Presence migration starts. The per-domain
- * `IPresenceManager` interface (setTyping / setViewing / …) is designed
- * at migration time, not pre-emptively — see
- * `feedback_registry_pattern.md`.
+ * Placeholder for the upcoming presence manager. No methods are exposed
+ * yet; calls like `client.presence.setTyping(...)` will fail at compile
+ * time.
  *
  * @see {@link SnapcapClient.presence}
  */
 import type { ClientContext } from "./_context.ts";
 
 /**
- * Placeholder for the future Presence domain manager.
+ * Placeholder for the upcoming Presence domain manager.
  *
- * Held as {@link SnapcapClient.presence}. Exposes no methods today — the
- * formal `IPresenceManager` interface (setTyping / setViewing / …) is
- * designed when the Presence migration begins.
+ * Held as {@link SnapcapClient.presence}. No methods are exposed yet —
+ * any call site like `client.presence.setTyping(...)` is a TypeScript
+ * compile error.
  *
  * @see {@link SnapcapClient}
  */
@@ -23,5 +20,4 @@ export class Presence {
   /** @internal */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(private readonly _getCtx: () => Promise<ClientContext>) {}
-  // (interface designed when Presence migration starts)
 }

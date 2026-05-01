@@ -1,18 +1,8 @@
 /**
- * `ISnapcapClient` — the public contract {@link SnapcapClient} implements.
+ * The public contract that {@link SnapcapClient} implements.
  *
- * Pulled into its own file so tests / mocks / consumer code can depend on
- * the interface without dragging in the full bundle bring-up machinery
- * `client.ts` brings with it.
- *
- * @remarks
- * Surface is intentionally minimal: auth verbs + the six per-domain
- * managers. Per-manager interfaces are designed when each migration
- * starts (per `feedback_registry_pattern.md`) — until then the manager
- * fields point at empty placeholder classes ({@link Messaging},
- * {@link Presence}, {@link Inbox}, {@link Media}, {@link Stories}) so
- * that calling, e.g., `client.messaging.send(...)` is a compile-time
- * error rather than a runtime one.
+ * Tests, mocks, and consumer code can depend on this interface without
+ * pulling in the full bundle bring-up machinery in `client.ts`.
  */
 import type { Friends } from "./api/friends.ts";
 import type { Messaging } from "./api/messaging.ts";
@@ -24,9 +14,10 @@ import type { Media } from "./api/media.ts";
 /**
  * The public contract that {@link SnapcapClient} implements.
  *
- * Auth verbs + six per-domain managers. Consumers should code against
- * `ISnapcapClient` rather than the concrete class when writing tests,
- * mocks, or library code that accepts a client.
+ * Surface is intentionally minimal: auth methods plus six per-domain
+ * managers. Consumers should code against `ISnapcapClient` rather than
+ * the concrete class when writing tests, mocks, or library code that
+ * accepts a client.
  *
  * @see {@link SnapcapClient}
  * @see {@link IFriendsManager}
@@ -116,8 +107,6 @@ export interface ISnapcapClient {
   hasEverLoggedIn(): boolean;
 
   // ── Domain managers ──────────────────────────────────────────────────
-  // Placeholder classes for everything except `friends` (Phase 1A stub) —
-  // per-domain interfaces designed when each migration starts.
 
   /**
    * Friend-graph manager — see {@link IFriendsManager} for the full
@@ -126,28 +115,28 @@ export interface ISnapcapClient {
   readonly friends: Friends;
 
   /**
-   * Placeholder for the future Messaging manager. No methods today —
+   * Placeholder for the upcoming Messaging manager. No methods today —
    * `client.messaging.send(...)` is a compile-time error.
    */
   readonly messaging: Messaging;
 
   /**
-   * Placeholder for the future Presence manager. No methods today.
+   * Placeholder for the upcoming Presence manager. No methods today.
    */
   readonly presence: Presence;
 
   /**
-   * Placeholder for the future Stories manager. No methods today.
+   * Placeholder for the upcoming Stories manager. No methods today.
    */
   readonly stories: Stories;
 
   /**
-   * Placeholder for the future Inbox manager. No methods today.
+   * Placeholder for the upcoming Inbox manager. No methods today.
    */
   readonly inbox: Inbox;
 
   /**
-   * Placeholder for the future Media manager. No methods today.
+   * Placeholder for the upcoming Media manager. No methods today.
    */
   readonly media: Media;
 }
