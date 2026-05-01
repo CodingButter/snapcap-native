@@ -49,15 +49,20 @@ if [ $claude_exit -ne 0 ]; then
   echo "[docs]   Will still commit any partial work. Re-run if more updates needed."
 fi
 
-# 3. Commit if anything changed under docs/ OR src/ (claude may have edited
-#    TSDoc comments in src/ that drive auto-generated reference docs — those
-#    are part of the same documentation update).
-if git diff --quiet docs/ src/ && git diff --cached --quiet docs/ src/; then
+# 3. Commit if anything changed under docs/, src/, or .claude/.
+#    - docs/   — the hand-written guides claude updates
+#    - src/    — TSDoc comments claude legitimately edits when an
+#                improvement materially helps consumers
+#    - .claude/ — claude's self-improvement updates to its own directive
+#                 (the "Lessons learned" section in doc_guide_description.md).
+#                 If we don't capture these, the wisdom doesn't compound
+#                 across runs.
+if git diff --quiet docs/ src/ .claude/ && git diff --cached --quiet docs/ src/ .claude/; then
   echo "[docs] No doc changes."
   exit 0
 fi
 
 echo "[docs] Doc changes detected — committing."
-git add docs/ src/
+git add docs/ src/ .claude/
 git commit -m "docs: auto-update via claude $(date +%Y-%m-%d)"
 echo "[docs] ✓ Doc commit added. Will be included in the push."
