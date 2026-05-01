@@ -1,0 +1,58 @@
+---
+title: 'API reference'
+description: 'Every public surface of @snapcap/native. Anything not listed here is internal — relying on it will break.'
+---
+
+Every public surface of `@snapcap/native`. Everything not listed here is an internal — relying on it will break.
+
+| Page | What's there |
+|---|---|
+| [SnapcapClient](/docs/api/snapcap-client) | The main class. `isReady`, friends, conversations, story posting, low-level RPC. |
+| [Conversation](/docs/api/conversation) | Domain object for a single chat. `sendText`, `sendImage`, presence. |
+| [User](/docs/api/user) | The `User` data class + factory methods. |
+| [Storage](/docs/api/storage) | `DataStore` interface, built-in stores, `StorageShim`, `CookieJarStore`, IDB helpers. |
+| [Sandbox](/docs/api/sandbox) | `installShims`, `getSandbox`, the `Sandbox` class, the `SDK_SHIMS` aggregator. Advanced bundle-interop. |
+
+## Imports at a glance
+
+```ts
+import {
+  // Client + types
+  SnapcapClient,
+  type SnapcapClientOpts,
+  type FideliusIdentityBlob,    // legacy serialized form; kept for backwards-compat — no longer read/written by the SDK
+
+  // Domain objects
+  Conversation,
+  TypingActivity,
+  ConversationViewState,
+  type ConversationKind,
+  User,
+  FriendAction,
+
+  // Storage
+  type DataStore,
+  FileDataStore,
+  MemoryDataStore,
+  StorageShim,
+  CookieJarStore,
+  idbGet,
+  idbPut,
+  idbDelete,
+
+  // Sandbox / bundle interop
+  installShims,
+  getSandbox,
+  isShimInstalled,
+  Sandbox,
+  type SandboxOpts,
+  type InstallShimOpts,
+
+  // Low-level helpers
+  uuidToBytes,
+  bytesToUuid,
+  uuidToHighLow,
+} from "@snapcap/native";
+```
+
+If you're building a typical app you'll only touch `SnapcapClient`, `FileDataStore`, `Conversation`, and `User`. The rest is escape hatches for advanced use.

@@ -1,0 +1,87 @@
+---
+title: 'I/O overrides — the architectural principle'
+description: 'We override at I/O boundaries. We never reimplement Snap''s protocols. This is the central design rule.'
+---
+
+The single architectural principle that determines what code we write and what code we don't:
+
+> **Override at I/O boundaries. Never reimplement Snap's protocols.**
+
+Snap's bundle is the driver. The SDK's job is to provide the I/O the bundle expects (cookies, storage, gRPC transport, WebSocket) — and then to get out of the way. Anything Snap's bundle already does well, we don't redo. Anything Snap's bundle does *through* a browser primitive, we substitute the browser primitive.
+
+This page enumerates every override the SDK does today and explains why each one is necessary.
+
+## The pattern
+
+For each I/O boundary the bundle reaches through, the SDK provides an implementation that:
+
+1. **Has the shape the bundle expects** (e.g. a `WebSocket` constructor with `onopen`/`onmessage`/`send`/`close`, an `IDBFactory` with `open(name, version)` returning an `IDBOpenDBRequest`).
+2. **Routes through SDK-controlled state** instead of the browser shell. Cookies go through tough-cookie. Storage goes through DataStore. WebSocket goes through Node `ws`. gRPC goes through Node `fetch`.
+3. **Persists where it belongs.** Bundle writes to `localStorage` land in the consumer's DataStore. Bundle cookie writes land in the same jar the SDK uses for its own gRPC. Bundle storage and SDK storage are not separate worlds.
+
+The bundle never knows the difference.
+
+## The enumerated list
+
+All overrides today, with the boundary each one lives at:
+
+| Override | Boundary | What the bundle reaches for | What we substitute |
+|---|---|---|---|
+| `CookieContainerShim` | happy-dom outgoing fetch | happy-dom's per-Window `CookieContainer.getCookies(url, includeHttpOnly)` (called by `FetchRequestHeaderUtility.getRequestHeaders`) | Patched prototype that delegates to a shared tough-cookie `CookieJar` rooted at DataStore key `cookie_jar` |
+| `DocumentCookieShim` | bundle JS `document.cookie` reads/writes | `document.cookie` getter/setter | Same shared tough-cookie jar; HttpOnly cookies filtered out per W3C spec |
+| `WebSocketShim` | bundle WebSocket connections | `new WebSocket(url, protocols)` | Wraps Node `ws`; reads cookies synchronously from the shared jar for the upgrade GET; projects incoming binary into a sandbox-realm `Uint8Array.buffer` |
+| `LocalStorageShim` | bundle `localStorage` | `localStorage.getItem` / `setItem` / `removeItem` / etc. | `StorageShim` over DataStore with prefix `local_` |
+| `SessionStorageShim` | bundle `sessionStorage` | `sessionStorage.getItem` / `setItem` / etc. | `StorageShim` over DataStore with prefix `session_` |
+| `IndexedDbShim` | bundle `indexedDB` | `indexedDB.open(name, version)` + transactions/object stores | DataStore with structured key `indexdb_<dbName>__<storeName>__<key>` |
+| `GrpcManager.registerWebFactory` | bundle's own gRPC transport | bundle calls a registered factory's `createClient()` to get `{unaryCall, serverStreamingCall, bidiStreamingCall}` | A factory whose `unaryCall` does gRPC-Web framing around `nativeFetch`, attaches the SDK's bearer + cookies, parses trailers, copies response bytes into the WASM heap |
+| `importScripts` (per-bring-up) | chat worker chunk's sibling-chunk loader | `importScripts("dw/06c27f3bcaa1e5c47eea.chunk.js")` | Maps the URL onto the local vendored chunk file and runs it via `sandbox.runInContext` |
+
+Six of these are part of the Sandbox `SDK_SHIMS` pipeline (the first six). The two below the line are bring-up-time overrides registered by `bringUpMessagingSession` (`src/auth/messaging-session.ts:354-450` for the gRPC factory, `src/auth/messaging-session.ts:218-234` for `importScripts`).
+
+## Why each one is necessary
+
+**`CookieContainerShim`** — happy-dom keeps its cookies in an in-memory `#cookies` array on its own private `BrowserContext`. Anything the bundle writes from JS (or that arrives via `Set-Cookie` on a happy-dom-driven fetch) lives only inside that Window. Without this shim:
+
+- Bundle `fetch()` calls don't carry our SSO bearer or cookie state.
+- Bundle `document.cookie = "..."` writes are invisible to the host-realm gRPC client.
+- The host-realm gRPC client's cookies are invisible to bundle code.
+
+After the shim: all three paths see one unified jar, which is also persisted to `cookie_jar` in the DataStore.
+
+**`DocumentCookieShim`** — same pipe, different access path. Without it, bundle JS that reads or writes `document.cookie` from inside the sandbox doesn't see the SDK's cookies.
+
+**`WebSocketShim`** — happy-dom ships a `WebSocket` shim, but it doesn't ride our cookie/UA fingerprint and it doesn't synchronously project incoming bytes into the sandbox realm. The handshake to `aws.duplex.snapchat.com` requires parent-domain cookies on the upgrade GET — those live in our shared tough-cookie jar, and we must read them **synchronously** at construction time because the bundle creates the WS synchronously. Without this shim presence/typing don't connect; with it, the bundle just sees `WebSocket` as a global the moment it's needed.
+
+**`LocalStorageShim` / `SessionStorageShim`** — Snap's bundle stores feature flags, analytics ids, the UDS-prefixed Fidelius wrapped identity (`local_uds_uds.e2eeIdentityKey.shared`), and a long tail of other state in `localStorage` / `sessionStorage`. Without DataStore-backed shims those writes go to happy-dom's in-memory defaults and vanish on process exit — every cold start the bundle re-mints, re-registers, re-fetches.
+
+**`IndexedDbShim`** — Snap's bundle stores additional state in IndexedDB. Same reasoning — without persistence, every boot looks like a fresh device to the bundle.
+
+**`GrpcManager.registerWebFactory`** — the bundle's WASM exposes `registerWebFactory({createClient})` as an extension point. Module 45225 of the SPA boot bundle calls it with a fetch-backed factory. We're a Node host, not the SPA, so we register the equivalent transport directly. Without this, the bundle's bundle-side gRPC calls (the path used by `MessagingSession`'s managers) have no transport at all — `createMessagingSession` hangs on its first server call.
+
+**`importScripts`** — chunk `f16f14e3` does `importScripts(s.p+s.u(7818))` to load a sibling chunk. Without an override, that's a no-op and the chunk's init can't complete. The shim resolves the URL against vendored local files.
+
+## What we don't do
+
+By the same principle, the SDK explicitly does NOT reimplement:
+
+- **Fidelius E2E encryption / decryption.** The bundle does it. We provide the storage delegates (slots 8+9) and let the WASM mint, register, encrypt, and decrypt.
+- **Protobuf encoding for messages already routed through the bundle.** The MessageContent codec lives at module 79752 export `v`; we use it.
+- **Conversation/feed/snap state machines.** The managers from `MessagingSession.session.getConversationManager()` etc. own that state.
+- **Kameleon attestation.** The WASM does it. We boot the Module with the right decorations and call `AttestationSession.instance().finalize(username)`.
+- **The webpack runtime.** We patch one line so `__webpack_require__` leaks to `globalThis`. We don't reimplement webpack.
+
+For each thing we don't do, there's something we do *adjacent* to it that satisfies the bundle's I/O contract — the cookie jar, the DataStore, the gRPC factory, the `instantiateWasm` callback that injects local WASM bytes.
+
+## The legacy direct-gRPC path
+
+There is one set of code in the SDK that does NOT follow this principle: `src/api/*.ts` + `src/transport/grpc-web.ts`. Those modules hand-encode protobufs (with `proto-encode.ts` ProtoWriter) and frame gRPC-Web themselves. Today they back `listFriends`, `searchUsers`, `addFriend`, `getConversations`, `Conversation.sendText`, `sendImage`, `postStory`, `fetchMessages`, presence — i.e. most of the SDK's public surface.
+
+Why do these exist? Historical: the bundle-native session is newer. Each method we write that goes through `api/*.ts` is one we'd ideally migrate to the bundle session; the migration is gradual and per-method. New methods should prefer the bundle-native path.
+
+The direct-gRPC path is an exception to the rule. It's accepted for now because:
+
+1. It works today.
+2. The protobuf shapes are simple enough to hand-encode (single-field messages, no Fidelius envelopes).
+3. The bundle-native equivalent for some methods (e.g. `addFriend`) hasn't been mapped yet.
+
+When the bundle-native path covers everything, the direct-gRPC path goes away.

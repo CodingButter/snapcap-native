@@ -1,0 +1,127 @@
+---
+title: 'Getting started'
+description: 'Install @snapcap/native, construct a SnapcapClient with a DataStore, gate on isReady(), and call your first method.'
+---
+
+`@snapcap/native` is one TypeScript class. You hand it a `DataStore` (and, on first run, credentials); it gives you methods. Everything else — the kameleon WASM boot, the WebLogin two-step, the SSO bearer mint, the cookie seeding, the bundle-native messaging session — is owned by the SDK.
+
+## Install
+
+```bash
+pnpm add @snapcap/native
+# or
+npm install @snapcap/native
+```
+
+Requires **Node 22+** or **Bun 1.3+** — the bundle uses top-level `await`, the WASM imports rely on modern `fetch`, and the SDK depends on Node's `vm.Context` global-builtins behaviour (V8 fills the new realm with `Object`/`Array`/`Promise`/`WebAssembly`/...) that landed in those versions.
+
+## First call
+
+```ts
+import { SnapcapClient, FileDataStore } from "@snapcap/native";
+
+const client = new SnapcapClient({
+  dataStore: new FileDataStore("./auth.json"),
+  username: process.env.SNAP_USER,
+  password: process.env.SNAP_PASS,
+});
+
+if (await client.isReady()) {
+  const friends = await client.listFriends();
+  console.log(friends.map((f) => f.username));
+} else {
+  console.error("login rejected — bad credentials, captcha gate, or session locked");
+}
+```
+
+That is the entire pattern. The constructor does no I/O — it just wires the consumer's `DataStore` into the singleton sandbox via `installShims({ dataStore })`. The first network call is gated on `isReady()`:
+
+- **Cold start** (`auth.json` missing or empty): kameleon WASM boots (~5MB JS + 814KB WASM, one-time per process), WebLoginService two-step runs, SSO redirect mints a bearer, parent-domain cookies seed the jar, `SyncFriendData` walks the friend list and resolves `client.self`. Persisted to the DataStore. Wall-clock around **5 seconds**.
+- **Warm start** (`auth.json` already has valid cookies + bearer): `isReady()` rehydrates from disk and returns `true` without network. **~1 ms**.
+
+`username` / `password` are **not** persisted to the DataStore. Pass them on every boot if you want automatic recovery from server-side session expiry.
+
+## A complete script
+
+```ts
+import { SnapcapClient, FileDataStore } from "@snapcap/native";
+import { readFileSync } from "node:fs";
+
+// `.snapcap-smoke.json` is just `{"username":"…","password":"…"}` — local file,
+// gitignored. Pattern used by `scripts/smoke.ts` in the SDK repo.
+const { username, password } = JSON.parse(readFileSync(".snapcap-smoke.json", "utf8"));
+
+const client = new SnapcapClient({
+  dataStore: new FileDataStore("./.tmp/auth/auth.json"),
+  username,
+  password,
+});
+
+if (!(await client.isReady())) {
+  throw new Error("login failed");
+}
+
+// Friends.
+const friends = await client.listFriends();
+console.log(`${friends.length} friends`);
+
+// Conversations + send a text into the first one.
+const chats = await client.getConversations();
+if (chats.length > 0) {
+  const chat = chats[0];
+  await chat.typeAndSendText(2000, "hello from snapcap");
+}
+
+// Post an image to MY_STORY.
+const png = readFileSync("./story.png");
+await client.postStory(png);
+```
+
+## Cold start vs warm start
+
+Reuse the DataStore across processes (or workers, or PM restarts) to skip the kameleon boot + login flow:
+
+```ts
+// Process 1 — fresh disk:
+const a = new SnapcapClient({ dataStore: new FileDataStore("./auth.json"), username, password });
+await a.isReady();   // ~5 s — full login flow
+
+// Process 2 — same auth.json, no creds:
+const b = new SnapcapClient({ dataStore: new FileDataStore("./auth.json") });
+await b.isReady();   // ~1 ms — restored from disk
+```
+
+If the bearer in the DataStore has expired, the next gRPC call gets a 401 and the SDK transparently mints a fresh bearer from the long-lived `__Host-sc-a-auth-session` cookie — no caller-side handling required.
+
+## Force a fresh login
+
+```ts
+await client.isReady({ force: true });
+```
+
+Bypasses the warm-start cache and re-runs the login flow even when the DataStore looks valid. Useful for password rotations or to recover from server-side session invalidation that didn't surface as a clean error.
+
+## Logout
+
+```ts
+await client.logout();
+```
+
+Clears the SDK's auth-state keys (`cookie_jar`, `session_snapcap_bearer`, `local_snapcap_self`) from the DataStore. The bundle's other sandbox storage entries (other `local_*` / `session_*` / `indexdb_*` keys, including any bundle-minted Fidelius wrapped identity at `local_uds_uds.e2eeIdentityKey.shared`) are intentionally **left intact** — wiping them would force the next `isReady()` to re-bootstrap Fidelius WASM state from scratch, which costs an extra round-trip and ~250 ms WASM init.
+
+## Multi-account
+
+The sandbox is a process-wide singleton. Each `SnapcapClient` you construct in this process shares the same `vm.Context`, the same kameleon Module, and the same chat bundle. **It does NOT share the same `localStorage` namespace per account** — the DataStore-backed Web Storage shim is bound to the first DataStore that wins the `installShims()` race.
+
+In practice this means:
+
+- **One process can only drive one account safely.** Different `SnapcapClient` instances pointed at different DataStores in the same process will collide on `local_*` / `session_*` / `indexdb_*` writes (the bundle treats those as the active session's storage).
+- **For multi-tenant deployments, run one process per account.** This is the recommendation today — `SnapAutomate` does exactly this.
+- A medium-sized refactor would be to make the sandbox per-client rather than process-global, but that is not the current shape.
+
+## What's next
+
+- [Auth model](/docs/guide/auth) — what `isReady()` actually does, when to use `force`.
+- [Persistence](/docs/guide/persistence) — the DataStore key layout and how to plug in a custom backend.
+- [API reference](/docs/api) — every public method.
+- [Internals](/docs/internals/architecture) — sandbox, shim layer, kameleon, SSO, bundle session.

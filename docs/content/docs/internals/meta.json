@@ -1,0 +1,17 @@
+{
+  "title": "Internals",
+  "defaultOpen": false,
+  "pages": [
+    "architecture",
+    "sandbox",
+    "shims",
+    "io-overrides",
+    "messaging-session",
+    "persistence",
+    "kameleon",
+    "webpack-trick",
+    "sso-flow",
+    "fidelius",
+    "why-it-works"
+  ]
+}

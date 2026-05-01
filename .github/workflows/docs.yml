@@ -1,11 +1,19 @@
-name: Deploy docs
+# Build and deploy the Fumadocs site (docs/) to GitHub Pages.
+#
+# This is the canonical docs workflow after the VitePress -> Fumadocs cutover.
+# It builds the static export and deploys it to GitHub Pages.
+
+name: Deploy docs (Fumadocs / Next.js)
 
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
-      - "package.json"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -21,21 +29,28 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm docs:build
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - run: pnpm build
+        env:
+          NODE_ENV: production
+      - uses: actions/upload-artifact@v4
         with:
-          path: docs/.vitepress/dist
+          name: docs-out
+          path: docs/out
+          if-no-files-found: error
 
   deploy:
     needs: build
@@ -44,5 +59,24 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: docs
+      - run: pnpm build
+        working-directory: docs
+        env:
+          NODE_ENV: production
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/out
       - id: deployment
         uses: actions/deploy-pages@v4

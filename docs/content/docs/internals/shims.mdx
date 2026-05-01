@@ -1,0 +1,154 @@
+---
+title: 'The shim layer'
+description: 'Each browser-primitive override is a class extending abstract Shim, registered in SDK_SHIMS, iterated by the Sandbox constructor.'
+---
+
+The shim layer is how `@snapcap/native` substitutes I/O at the boundary between Snap's bundle and the world. Each browser primitive the bundle reaches for — `document.cookie`, `WebSocket`, `localStorage`, `indexedDB`, the happy-dom `CookieContainer` that backs outgoing fetches — has exactly one override class. Adding a new I/O substitution is a 3-line change.
+
+This chapter is the deep dive. For the architectural why, see [I/O overrides](/docs/internals/io-overrides).
+
+## The abstract base
+
+`src/shims/types.ts`:
+
+```ts
+import type { CookieJar } from "tough-cookie";
+import type { DataStore } from "../storage/data-store.ts";
+import type { Sandbox } from "./sandbox.ts";
+
+/** Per-sandbox state passed to every shim's `install`. */
+export interface ShimContext {
+  /** Persistent backing for storage shims. */
+  dataStore: DataStore;
+  /** UA string the WebSocket / fetch shims attach to outgoing requests. */
+  userAgent: string;
+  /**
+   * Shared tough-cookie jar — populated by `cookie-jar.ts:getOrCreateJar`
+   * and consumed by DocumentCookieShim, CookieContainerShim, WebSocketShim.
+   * Cached per-DataStore so all three shims observe each other's writes.
+   */
+  jar: CookieJar;
+}
+
+/**
+ * Single sandbox shim. Each subclass owns one I/O-boundary override
+ * (cookies, WebSocket, Web Storage, IndexedDB, …) and is responsible
+ * for its own idempotency.
+ */
+export abstract class Shim {
+  abstract readonly name: string;
+  abstract install(sandbox: Sandbox, ctx: ShimContext): void;
+}
+```
+
+Two-method contract: a name (for trace logging) and a synchronous `install(sandbox, ctx)`. The `install` method is synchronous because the Sandbox constructor cannot await — pre-bind any async-resolved state into closures inside the install, not as await points.
+
+## The canonical list
+
+`src/shims/index.ts`:
+
+```ts
+import { CookieContainerShim } from "./cookie-container.ts";
+import { DocumentCookieShim } from "./document-cookie.ts";
+import { WebSocketShim } from "./websocket.ts";
+import { LocalStorageShim, SessionStorageShim } from "./storage-shim.ts";
+import { IndexedDbShim } from "./indexed-db.ts";
+
+export const SDK_SHIMS: readonly Shim[] = [
+  new CookieContainerShim(),
+  new DocumentCookieShim(),
+  new WebSocketShim(),
+  new LocalStorageShim(),
+  new SessionStorageShim(),
+  new IndexedDbShim(),
+];
+```
+
+The Sandbox constructor builds a `ShimContext` (DataStore, userAgent, shared `tough-cookie.CookieJar`) and iterates `SDK_SHIMS` in declaration order, calling `.install(this, ctx)` on each.
+
+**Order matters:**
+
+- `CookieContainerShim` MUST run first. It patches happy-dom's `CookieContainer` prototype and seeds the shared tough-cookie jar into `ShimContext.jar`. It is also the only shim that runs **before** the happy-dom `Window` is constructed (the per-Window `CookieContainer` is news'd up inside `new Window(...)`, so the prototype patch must already be in place — see `src/shims/sandbox.ts:82-104`).
+- `DocumentCookieShim` and `WebSocketShim` both consume the jar and therefore depend on `CookieContainerShim` having run.
+- `LocalStorageShim` / `SessionStorageShim` / `IndexedDbShim` are storage-side and independent of the cookie pipeline; their order relative to each other is incidental.
+
+## The full table
+
+| Class | File | Browser primitive | Backed by |
+|---|---|---|---|
+| `CookieContainerShim` | `src/shims/cookie-container.ts` | happy-dom's per-Window `CookieContainer` (the thing happy-dom's outgoing `fetch()` reads via `FetchRequestHeaderUtility.getRequestHeaders`) | shared tough-cookie `CookieJar`, hex-encoded JSON in DataStore key `cookie_jar` |
+| `DocumentCookieShim` | `src/shims/document-cookie.ts` | `document.cookie` getter/setter on the sandbox's happy-dom Document | same shared tough-cookie jar (HttpOnly cookies filtered out per W3C `document.cookie` spec) |
+| `WebSocketShim` | `src/shims/websocket.ts` | `globalThis.WebSocket` constructor in the sandbox | Node `ws` package; pulls cookies synchronously from the shared jar for the upgrade GET; projects incoming binary messages into the sandbox-realm `Uint8Array.buffer` so cross-realm `instanceof ArrayBuffer` passes |
+| `LocalStorageShim` | `src/shims/storage-shim.ts` | `globalThis.localStorage` (W3C Web Storage) | `StorageShim` over DataStore with prefix `local_` |
+| `SessionStorageShim` | `src/shims/storage-shim.ts` | `globalThis.sessionStorage` | `StorageShim` over DataStore with prefix `session_` |
+| `IndexedDbShim` | `src/shims/indexed-db.ts` | `globalThis.indexedDB` (open / object stores / transactions / put/get/delete/getAll) | DataStore with structured key `indexdb_<dbName>__<storeName>__<key>` |
+
+All six share the same `DataStore` instance via `ShimContext.dataStore`. All three cookie-related shims share the same `tough-cookie.CookieJar` instance via `ShimContext.jar` — bundle JS that does `document.cookie = "..."` is immediately visible to the next bundle-driven `fetch()` and to the host-realm gRPC-Web client (which reads `cookie_jar` directly).
+
+## Cross-realm projection
+
+The sandbox is a Node `vm.Context`. The vm context has its own typed-array constructors — a `Uint8Array` constructed in the host realm fails `instanceof Uint8Array` against the bundle's `Uint8Array`, and bundle protobuf decoders throw `Error("illegal buffer")`.
+
+`WebSocketShim` handles this: when the underlying `ws` package emits a binary message, the bytes arrive as a host-realm Buffer / ArrayBuffer. The shim copies them into a sandbox-realm `Uint8Array` (resolved once via `sandbox.runInContext("Uint8Array")`) and hands back its `.buffer` so the bundle's `e.data instanceof ArrayBuffer` check passes.
+
+The general utility for this is `Sandbox.toVmU8(bytes)`. See [Sandbox internals](/docs/internals/sandbox#cross-realm-uint8array).
+
+## Adding a new shim
+
+Three steps. Example: an override for `globalThis.crypto.subtle` that tees every encryption call to a debug log.
+
+**1. Create the file** `src/shims/subtle-trace.ts`:
+
+```ts
+import { Shim, type ShimContext } from "./types.ts";
+import type { Sandbox } from "./sandbox.ts";
+
+export class SubtleTraceShim extends Shim {
+  readonly name = "subtle-trace";
+  install(sandbox: Sandbox, _ctx: ShimContext): void {
+    const orig = (sandbox.window.crypto as { subtle: SubtleCrypto }).subtle;
+    sandbox.window.crypto = {
+      ...(sandbox.window.crypto as object),
+      subtle: new Proxy(orig, {
+        get(target, prop) {
+          const v = target[prop as keyof SubtleCrypto];
+          if (typeof v !== "function") return v;
+          return (...args: unknown[]) => {
+            console.log(`[subtle.${String(prop)}]`, args);
+            return (v as Function).apply(target, args);
+          };
+        },
+      }),
+    };
+  }
+}
+```
+
+**2. Import + register in `src/shims/index.ts`:**
+
+```ts
+import { SubtleTraceShim } from "./subtle-trace.ts";
+
+export const SDK_SHIMS: readonly Shim[] = [
+  // … existing entries …
+  new SubtleTraceShim(),
+];
+```
+
+**3. Done.** The Sandbox constructor will call `install` on the next process boot.
+
+## Idempotency
+
+Each shim is responsible for its own idempotency. Pattern: a `Symbol.for(...)` marker on the patched object. See `installCookieContainer` (`src/shims/cookie-container.ts:174`) and `installDocumentCookieShim` (`src/shims/document-cookie.ts:39`) — both mark the patched object with a symbol so repeated calls are safe but only mutate the active jar binding.
+
+This matters because `installShims()` is first-call-wins, but supporting code (the kameleon boot, the chat bundle loader, `mintFideliusIdentity`, `bringUpMessagingSession`) all call `installShims({})` defensively — and depending on test isolation, multiple Sandbox constructors can run in the same process across tests.
+
+## Why a class hierarchy at all
+
+An earlier shape had each override as a free function (`installCookieContainerShim(sandbox, store)`, `installDocumentCookieShim(sandbox, store)`, …). The class refactor exists for three reasons:
+
+1. **Single source of truth.** `SDK_SHIMS` is the one list. Forgetting to wire a new override into the Sandbox constructor was a recurring mistake; now it's one append.
+2. **Ordering invariant in code, not comments.** Cookie-related shims must run before storage-area shims; the array's declaration order encodes that.
+3. **Symmetric API.** Every shim has the same `(sandbox, ctx) => void` shape, which makes adding a new one a copy-paste from any other.
+
+The free-function variants (`installCookieContainer`, `installDocumentCookieShim`, etc.) still exist as the implementation behind each class — that lets advanced consumers call them directly without going through the `SDK_SHIMS` iteration if they really want.

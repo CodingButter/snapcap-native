@@ -1,0 +1,164 @@
+---
+title: 'Persistence'
+description: 'The DataStore interface, built-in implementations, and how SDK + bundle keys land on the same backing store.'
+---
+
+`@snapcap/native` is structured around a single `DataStore` interface. The cookie jar, the SSO bearer, the logged-in self user, and the Snap-bundle's own `localStorage` / `sessionStorage` / `indexedDB` / `document.cookie` writes all live there. The shape mirrors a browser's persistence layout — think of the DataStore as "the disk a Chrome profile would write to."
+
+## The DataStore interface
+
+```ts
+interface DataStore {
+  get(key: string): Promise<Uint8Array | undefined>;
+  set(key: string, value: Uint8Array): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+```
+
+Three async methods. The SDK never assumes anything about the backend — file, memory, Redis, KMS, IndexedDB-on-disk, S3, your custom envelope-encrypted thing. Implement these three and you're done.
+
+For Web Storage shims (`localStorage` / `sessionStorage`) and `document.cookie` to behave synchronously, the SDK also consults optional helpers if present:
+
+```ts
+// Optional — without these, StorageShim falls back to a startup-loaded cache.
+getSync(key: string): Uint8Array | undefined;
+setSync(key: string, value: Uint8Array): void;
+keys(prefix?: string): string[];
+```
+
+`FileDataStore` and `MemoryDataStore` both implement them.
+
+## Built-in implementations
+
+### FileDataStore
+
+Single JSON file, in-memory cache loaded at construction, eager flush on every write. The default for development and single-process operators.
+
+```ts
+import { FileDataStore } from "@snapcap/native";
+
+const store = new FileDataStore("./auth/perdyjamie.json");
+```
+
+The on-disk shape is `Record<string, number[]>` (each value is `Array.from(Uint8Array)`). Corrupt file → starts fresh on next boot. The directory is created automatically on first write.
+
+### MemoryDataStore
+
+In-memory only. Useful for tests and ephemeral one-shot jobs. Loses everything on process exit — every boot is a cold start.
+
+```ts
+import { MemoryDataStore } from "@snapcap/native";
+
+const store = new MemoryDataStore();
+```
+
+## Key layout
+
+A populated DataStore looks like this after one successful login + first `MessagingSession` bring-up:
+
+| Key | Owner | Format | Role |
+|---|---|---|---|
+| `cookie_jar` | SDK / `CookieJarStore` | tough-cookie JSON | Durable session cookies — `__Host-sc-a-auth-session` is the refresh credential |
+| `session_snapcap_bearer` | SDK (via `sessionStorage` shim) | UTF-8 JWT | Most recent SSO bearer; ~1 h lifetime, auto-refreshed on 401 |
+| `local_snapcap_self` | SDK (via `localStorage` shim) | UTF-8 JSON `{userId, username, displayName}` | Restored self-user metadata so warm starts skip the SyncFriendData round-trip |
+| `local_uds_uds.e2eeIdentityKey.shared` | Bundle | UTF-8 JSON | Wrapped Fidelius identity — RWK-encrypted private key + public key + identityKeyId, persisted by the bundle's UDS-namespaced `pr()` wrapper (slot 8 of `createMessagingSession`) |
+| `local_uds_uds.*` (other) | Bundle | UTF-8 strings | Other UDS-prefixed bundle state (per-message E2EE temp keys, etc.) |
+| `local_*` (other) | Bundle | UTF-8 strings | Snap-bundle's own `localStorage` writes (analytics ids, feature flags, etc.) |
+| `session_*` (other) | Bundle | UTF-8 strings | Snap-bundle's own `sessionStorage` writes |
+| `indexdb_*` (other) | Bundle | JSON | Snap-bundle's own `indexedDB` writes |
+
+The `local_` / `session_` / `indexdb_` prefixes come from the `StorageShim` and `IndexedDbShim`, which namespace each Web Storage area onto a shared DataStore. The exact same DataStore can back all four areas — the prefixes keep them collision-free. See [internals/io-overrides](/docs/internals/io-overrides) for why these specific override points are chosen.
+
+You should treat `cookie_jar` and `session_snapcap_bearer` as **credential-grade**. Anyone with read access to those keys can call APIs as the user. The bundle-owned `local_uds_uds.e2eeIdentityKey.shared` blob is the long-lived root of E2E encryption — losing it forces the bundle to re-run `constructPostLogin` against a fresh server-issued identity, which Snap's server may rate-limit.
+
+## Plugging in your own backend
+
+Implement the interface and pass the instance:
+
+```ts
+import type { DataStore } from "@snapcap/native";
+import { Redis } from "ioredis";
+
+class RedisDataStore implements DataStore {
+  constructor(private redis: Redis, private prefix: string) {}
+  async get(key: string) {
+    const buf = await this.redis.getBuffer(`${this.prefix}:${key}`);
+    return buf ? new Uint8Array(buf) : undefined;
+  }
+  async set(key: string, value: Uint8Array) {
+    await this.redis.set(`${this.prefix}:${key}`, Buffer.from(value));
+  }
+  async delete(key: string) {
+    await this.redis.del(`${this.prefix}:${key}`);
+  }
+}
+
+const client = new SnapcapClient({
+  dataStore: new RedisDataStore(redis, `snap:${userId}`),
+  username,
+  password,
+});
+```
+
+> If your backend is async-only (no `getSync` / `setSync` / `keys`), `StorageShim` falls back to a startup-loaded cache. Keys present at process start are visible synchronously; keys written from inside the sandbox after that point are visible to the next sync read because they go through the cache. Keys written by *another process* between your start and a sync read won't be seen until the next async load. For most single-process deployments this is fine.
+
+Common backends people reach for:
+
+- **Redis / KeyDB** — multi-process, low-latency, cheap.
+- **Postgres `BYTEA`** — durable + transactional. One row per (account, key).
+- **AWS KMS + S3** — for fleets where the auth blobs are credentials and need envelope encryption.
+
+## Encryption at rest
+
+For `FileDataStore` on a multi-tenant host, wrap it. Trivial AES-256-GCM with a passphrase-derived key:
+
+```ts
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import type { DataStore } from "@snapcap/native";
+
+class EncryptedFileStore implements DataStore {
+  private cache = new Map<string, Uint8Array>();
+  constructor(private path: string, private key: Buffer) {
+    if (existsSync(path)) this.cache = decrypt(readFileSync(path), key);
+  }
+  async get(k: string) { return this.cache.get(k); }
+  async set(k: string, v: Uint8Array) {
+    this.cache.set(k, new Uint8Array(v));
+    writeFileSync(this.path, encrypt(this.cache, this.key));
+  }
+  async delete(k: string) {
+    if (this.cache.delete(k)) writeFileSync(this.path, encrypt(this.cache, this.key));
+  }
+}
+```
+
+(Implement `encrypt` / `decrypt` against `aes-256-gcm` with a fresh IV per write.)
+
+## Multi-account
+
+Each account is its own DataStore. Easiest pattern is a directory of files:
+
+```
+auth-store/
+  perdyjamie.json
+  testaccount2.json
+  testaccount3.json
+```
+
+Or one Redis/Postgres key prefix per account.
+
+> **Single-account-per-VM constraint.** The sandbox (and therefore the bundle's `localStorage` namespace) is a process-wide singleton — `installShims()` is first-call-wins. Two `SnapcapClient` instances pointed at different DataStores in the same process will collide on `local_*` / `session_*` / `indexdb_*` writes. **For multi-tenant deployments, run one process per account.** A medium-sized refactor would make the sandbox per-client; that work is not done.
+
+```ts
+// One process per account is the supported pattern:
+const client = new SnapcapClient({
+  dataStore: new FileDataStore(`./auth-store/${process.env.ACCOUNT_ID}.json`),
+  username: process.env.SNAP_USER,
+  password: process.env.SNAP_PASS,
+});
+```
+
+## Reading the DataStore directly
+
+You can `await dataStore.get("cookie_jar")` from outside the SDK if you need to inspect or back up state. Just don't write to the SDK-owned keys (`cookie_jar`, `session_snapcap_bearer`, `local_snapcap_self`) — `client.logout()` and the auth flow are the supported mutation paths.

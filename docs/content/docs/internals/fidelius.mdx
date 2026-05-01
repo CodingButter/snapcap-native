@@ -1,0 +1,65 @@
+---
+title: 'Fidelius — bundle-owned E2E identity'
+description: 'The chat bundle owns Fidelius identity bootstrap end-to-end. The SDK provides storage delegates and gets out of the way.'
+---
+
+Fidelius is Snap's end-to-end encryption protocol. Message bodies and snaps are encrypted on the sender side with keys derived from a P-256 ECDH-based key-agreement protocol that runs in the chat-bundle WASM (`e4fa90570c4c2d9e59c1.wasm`, ~12 MB). Receiving plaintext requires running that WASM with the recipient's keys.
+
+The current architecture: **the bundle owns identity bootstrap, mint, registration, and persistence end-to-end.** The SDK provides storage delegates for the bundle's `pr()` UDS wrapper and a gRPC transport for `InitializeWebKey`. The SDK has no first-class concept of "the user's Fidelius identity" — it's an internal detail of the `MessagingSession` and lands in DataStore as opaque wrapped bytes.
+
+## What changed
+
+An earlier version of the SDK pre-minted a Fidelius identity during login (`auth/fidelius-mint.ts` was called from `nativeLogin`), serialized it to the DataStore at `indexdb_snapcap__fidelius__identity`, and re-read it on warm boots. That code path is **removed**. The legacy `client.fidelius` field is permanently `null`. The legacy `FideliusIdentityBlob` type is still exported for backwards-compat with consumers that imported it; nothing in the SDK reads or writes it.
+
+## What the bundle does on first login
+
+The bring-up flow is in `src/auth/messaging-session.ts:bringUpOnce`. The phases that touch identity:
+
+1. **`mintFideliusIdentity`** is called purely to boot the chat-bundle WASM and expose its Module on the sandbox global. The minted-identity return value is discarded; we only need the Module — the bundle does its own minting later.
+2. **`En.createMessagingSession` is called with slot 11 (`loadUserWrappedIdentityKeys`) returning `[]`** (`src/auth/messaging-session.ts:585`). An empty array signals to the bundle: "no cached identity, please mint and register one yourself."
+3. **The bundle runs `constructPostLogin` internally.** The C++ side calls `e2ee_E2EEKeyManager.generateKeyInitializationRequest(1)` to mint a fresh P-256 keypair + RWK + identityKeyId locally (the WASM uses its own CSPRNG).
+4. **The bundle calls `InitializeWebKey` server-side** via the gRPC factory we registered (`src/auth/messaging-session.ts:354`). This is the `/snapchat.fidelius.FideliusIdentityService/InitializeWebKey` call in real traffic. The server returns a **wrapped** form of the identity — RWK-encrypted private key + identity metadata.
+5. **The bundle persists the wrapped result through slot 8** (`e2eeIdentityKeyStore`) — the SDK's DataStore-backed UDS store under prefix `local_uds_`. The key it writes to is `local_uds_uds.e2eeIdentityKey.shared`.
+
+After step 5, the wrapped identity lives in the consumer's DataStore. The plaintext private key has never crossed back from the WASM — only the wrapped form is observable from JS.
+
+## What the bundle does on warm boot
+
+When `bringUpMessagingSession` is called on a process that already has a populated DataStore:
+
+1. The Sandbox boots, the `LocalStorageShim` rehydrates from DataStore.
+2. `bringUpOnce` runs, `createMessagingSession` is called.
+3. Slot 8's `getItem("uds.e2eeIdentityKey.shared")` (resolved against `local_uds_` prefix) returns the wrapped bytes the bundle persisted previously.
+4. The bundle's C++ side unwraps and rehydrates the in-memory key state.
+5. No `InitializeWebKey` round-trip; no fresh mint.
+
+## Source map
+
+| Concept | Code reference |
+|---|---|
+| Slot 8 (`e2eeIdentityKeyStore`) UDS-backed store | `src/auth/messaging-session.ts:549-572` |
+| Slot 11 (`loadUserWrappedIdentityKeys`) returning `[]` | `src/auth/messaging-session.ts:585` |
+| The `pr()`-compatible UDS adapter | inline in `makeUds()` (`src/auth/messaging-session.ts:552-571`) |
+| WASM Module exposure | `src/auth/fidelius-mint.ts:155-157` (only when `SNAPCAP_EXPOSE_FIDELIUS_MODULE=1`) |
+| GrpcManager factory backing `InitializeWebKey` | `src/auth/messaging-session.ts:354-450` |
+
+## Why this is better than what the SDK used to do
+
+The earlier flow (pre-mint in JS, register, persist as JSON) had three problems:
+
+1. **Re-registration on every boot.** Anything that lost the cached blob (logout, machine swap, encrypted-rest key rotation that broke decryption) forced a fresh `InitializeWebKey`. The server rate-limits this; do it too often and the account silently stops authorizing.
+2. **Plaintext private key in the DataStore.** The SDK's serialized form held the cleartext private key + RWK as hex. Bundle-owned form is RWK-wrapped, with the wrapping key derived from server-side state we don't see.
+3. **Drift from Snap's actual flow.** The bundle's `constructPostLogin` does more than just mint — it sets up internal state machines, registers callbacks, and calls follow-up RPCs we'd otherwise have to enumerate ourselves. Letting the bundle drive means we never have to re-derive that.
+
+The cost of the new flow is that the bundle must be brought up before any Fidelius-gated operation works. That's already true for the non-Fidelius-gated path in flight (sending/receiving messages via the bundle session), so the cost is amortized.
+
+## What's still in flight
+
+- **Snap-send via bundle session.** The bundle's `getSnapManager()` does outbound snaps — that includes Fidelius envelope encryption for kind 122. Migration off the legacy direct-gRPC path is in progress.
+- **Inbound message bodies surfaced as a public API.** `MessagingSession.events.on("message", ...)` already fires for every received message envelope (decrypted by the bundle); a stable `client.onMessage(...)` is the next API surfacing.
+
+## What this chapter used to say
+
+Earlier drafts described an SDK-side mint + register flow with low-level details about the `e2ee_E2EEKeyManager.generateKeyInitializationRequest` proto shape, the `FideliusEncryption` / `FideliusRecipientInfo` / `PHI` / `MediaKey` / `CEK` proto definitions, Djinni proxy semantics, and an open-questions list around the KDF salt/info bytes.
+
+That content is **historical context only**. The whole point of letting the bundle drive is that none of those details matter to the SDK — Snap can rotate the protocol and we don't have to chase. Don't treat the previous documentation as an action list.

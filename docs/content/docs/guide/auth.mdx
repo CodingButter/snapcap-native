@@ -1,0 +1,95 @@
+---
+title: 'The auth model'
+description: 'The cookie + bearer dance, what isReady() actually does, when to force-login, and what gets persisted.'
+---
+
+`SnapcapClient` follows the same pattern a browser would: a long-lived cookie jar plus a short-lived bearer. Both auto-restore from the DataStore on every process boot, and the bearer auto-refreshes from the cookie jar on 401. You almost never have to think about it.
+
+## What gets persisted
+
+After a successful login, the DataStore contains:
+
+| Key | Owner | Purpose | Lifetime |
+|---|---|---|---|
+| `cookie_jar` | SDK | tough-cookie serialised — `__Host-sc-a-auth-session` (refresh-style) plus parent-domain `sc-a-nonce` / `_scid` / `sc_at` etc. | Days–weeks until Snap revokes |
+| `session_snapcap_bearer` | SDK (via sandbox `sessionStorage`) | last-minted SSO bearer | ~1 hour, refreshed transparently on 401 |
+| `local_snapcap_self` | SDK (via sandbox `localStorage`) | `{userId, username, displayName}` JSON of the logged-in user | Stable until logout |
+| `local_uds_uds.e2eeIdentityKey.shared` | Bundle | Wrapped Fidelius identity (RWK-encrypted private key + public key + identityKeyId) | Per-account; minted by the bundle on first `MessagingSession` bring-up |
+| Other `local_*` / `session_*` / `indexdb_*` | Bundle | Snap's own browser-storage writes | Bundle-managed |
+
+The truly durable bit is `__Host-sc-a-auth-session`. As long as it's still server-side valid, the SDK can re-mint a fresh bearer from it without credentials.
+
+> **Fidelius identity is bundle-owned.** The SDK no longer pre-mints or registers a Fidelius identity. The chat bundle's `createMessagingSession` flow runs `constructPostLogin` on first use, calls `InitializeWebKey` server-side via its own gRPC factory, and persists the wrapped result through the SDK's `localStorage` shim under `local_uds_uds.e2eeIdentityKey.shared`. The legacy `client.fidelius` field is permanently `null` and will be removed in a follow-up.
+
+## isReady()
+
+The single gate every API call passes through. Decision flow:
+
+1. **In-memory cache hit?** — If `isReady()` already returned `true` this process, return `true` immediately. Skipped if `{force:true}`.
+2. **Try restoring from the DataStore.** Read the cookie jar; check that `__Host-sc-a-auth-session` is present; read the cached bearer. If both exist, mark warm and return `true`. Also restore `client.self` from `local_snapcap_self` if present.
+3. **No restored state, but credentials supplied?** Run the full native login (kameleon → WebLoginService 2-step → SSO bearer → cookie seed → SyncFriendData self-resolve). Persist everything to the DataStore. Return `true`.
+4. **Server rejected credentials, or no credentials configured?** Return `false`. **Does not throw.**
+
+```ts
+if (await client.isReady()) {
+  // safe to call any API method
+} else {
+  // creds were missing or rejected — show login UI, prompt for new password, etc.
+}
+```
+
+`isReady()` deliberately does NOT bring up the bundle-native messaging session. That happens lazily on the first call that needs it (sending text, fetching messages by the new path, etc.) — the auth probe stays cheap.
+
+## When to use force: true
+
+```ts
+await client.isReady({ force: true });
+```
+
+Use this when:
+
+- **Password rotation.** The old bearer + cookie still look valid client-side but won't be honoured server-side. Force a re-login to mint fresh ones.
+- **Suspected server-side invalidation.** Snap's anti-fraud may revoke a session without surfacing a clear error code; a forced re-login is the cleanest reset.
+- **Periodic health check.** Some operators force-login once a week as hygiene. Doesn't hurt as long as you don't do it on every request.
+
+## Bearer refresh (transparent)
+
+Bearers expire roughly hourly. You don't have to handle this:
+
+- gRPC call goes out with the cached bearer.
+- Server returns `HTTP 401`.
+- The transport layer re-mints a bearer from the cookie jar (the `__Host-sc-a-auth-session` cookie is the credential), persists it back to `session_snapcap_bearer`, and retries the call **once**.
+- If refresh succeeds, the original call returns success — caller never sees the 401.
+- If refresh fails (cookie also dead), the original 401 surfaces and the caller can call `client.isReady({ force: true })` to re-run the full login.
+
+See [`internals/sso-flow`](/docs/internals/sso-flow) for the redirect-fragment mechanics.
+
+## When the cookie dies
+
+Cookies don't live forever. Symptoms: every gRPC call returns 401, refresh keeps failing. Remediation:
+
+```ts
+if (!(await client.isReady({ force: true }))) {
+  throw new Error("snap login rejected — password rotated, account locked, or captcha required");
+}
+```
+
+If you instantiated the client without credentials, the only recovery path is to construct a new client with credentials.
+
+## logout()
+
+```ts
+await client.logout();
+```
+
+Deletes only the SDK-owned auth-state keys from the DataStore:
+
+- `cookie_jar`
+- `session_snapcap_bearer` (via sandbox `sessionStorage.removeItem("snapcap_bearer")`)
+- `local_snapcap_self` (via sandbox `localStorage.removeItem("snapcap_self")`)
+
+Bundle-owned entries (other `local_*` / `session_*` / `indexdb_*` keys, **including** the bundle-minted Fidelius wrapped identity at `local_uds_uds.e2eeIdentityKey.shared`) are deliberately left intact. Wiping them would force the next login to re-bootstrap a bunch of WASM state from scratch with no benefit. If you want a true wipe, drop the underlying DataStore (delete the file, drop the Redis namespace) — there's no SDK-supported way to selectively delete bundle keys without breaking the next session.
+
+## Multi-account
+
+Each account gets its own DataStore. Because the sandbox is currently a process-wide singleton, **you should run one process per account** for multi-tenant deployments. See [Persistence → multi-account](/docs/guide/persistence#multi-account) for the layout.

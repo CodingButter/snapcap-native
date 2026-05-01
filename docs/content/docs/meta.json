@@ -1,0 +1,4 @@
+{
+  "title": "Documentation",
+  "pages": ["index", "---Guide---", "guide", "---API Reference---", "api", "---Internals---", "internals", "---Reference---", "web-api-recon"]
+}
