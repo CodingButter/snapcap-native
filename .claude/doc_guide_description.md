@@ -40,8 +40,11 @@ docs/content/docs/
     fidelius.mdx
     ...
   index.mdx              ← top-level landing — your scope
-docs/app/(home)/page.tsx ← marketing landing page — also your scope when
-                            consumer-facing claims need refreshing
+docs/app/(home)/page.tsx ← marketing landing page (Next.js JSX, not MDX).
+                            In-scope when the headline/tagline or the
+                            inline code snippet on the landing references
+                            a class/method/option that's been renamed,
+                            removed, or whose shape changed.
 
 src/*.ts                 ← TSDoc comments here drive the auto-generated
                             api/ reference. You MAY edit these if a
@@ -119,16 +122,44 @@ Body content here...
 ```
 
 When creating a new page in a directory, also update the directory's
-`meta.json` to register the page in the sidebar:
+`meta.json` to register the page in the sidebar. Inspect the existing
+file for the real shape — it lists the actual page basenames in display
+order. Example (verify the current contents before editing):
 
 ```json
 {
-  "title": "Guides",
-  "pages": ["quickstart", "multi-tenant", "your-new-page"]
+  "title": "Guide",
+  "pages": ["auth", "persistence", "logging", "throttle", "multi-tenant"]
 }
 ```
 
-Order pages logically — quickstart first, advanced topics later.
+Order pages by reader journey: introductory pages first, advanced topics
+later. Group related pages near each other.
+
+### Fumadocs MDX components available inline
+
+Fumadocs ships several React components that work directly in MDX. Use
+them when they materially help readability — don't sprinkle them for
+decoration. Cheap quick reference (full list at https://fumadocs.dev):
+
+```mdx
+import { Callout } from "fumadocs-ui/components/callout";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+import { Card, Cards } from "fumadocs-ui/components/card";
+
+<Callout type="warn">
+  Required: `userAgent` is no longer optional in `BrowserContext`.
+</Callout>
+
+<Tabs items={["per-instance", "shared"]}>
+  <Tab value="per-instance">...</Tab>
+  <Tab value="shared">...</Tab>
+</Tabs>
+```
+
+Imports go INSIDE the MDX body (under the frontmatter, before the first
+heading) — Fumadocs hoists them. Don't import a component you don't
+actually use; lint will warn.
 
 ## What "meaningful" change means
 
