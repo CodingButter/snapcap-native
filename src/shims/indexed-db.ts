@@ -21,6 +21,8 @@
  * `target.result` and `target.error` to match what real IDB code expects.
  */
 import type { DataStore } from "../storage/data-store.ts";
+import { Shim, type ShimContext } from "./types.ts";
+import type { Sandbox } from "./sandbox.ts";
 
 type Listable = DataStore & {
   keys?: (prefix?: string) => string[];
@@ -388,5 +390,17 @@ export class IDBFactoryShim {
     if (a < b) return -1;
     if (a > b) return 1;
     return 0;
+  }
+}
+
+/**
+ * `Shim`-shaped wrapper that installs `IDBFactoryShim` as the sandbox's
+ * `indexedDB` global. Independent of the cookie pipeline — order against
+ * cookie shims is irrelevant.
+ */
+export class IndexedDbShim extends Shim {
+  readonly name = "indexed-db";
+  install(sandbox: Sandbox, ctx: ShimContext): void {
+    sandbox.window.indexedDB = new IDBFactoryShim(ctx.dataStore);
   }
 }

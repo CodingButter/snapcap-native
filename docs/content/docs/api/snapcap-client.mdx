@@ -1,9 +1,9 @@
 ---
 title: 'SnapcapClient'
-description: 'The main entry point. Constructed once per account, holds the cookie jar, bearer, and self user.'
+description: 'The main entry point. Construct once per account; holds cookies, bearer, the lazy bundle-native messaging session, and the resolved self-user.'
 ---
 
-The main entry point. Constructed once per account; holds the cookie jar, bearer, lazy bundle-native `MessagingSession`, and the resolved `self` user.
+The main entry point. Constructed once per account. Holds the cookie jar, bearer, lazy bundle-native `MessagingSession`, and the resolved `self` user. Every call you make on the SDK starts here.
 
 ```ts
 import { SnapcapClient, FileDataStore } from "@snapcap/native";
@@ -13,218 +13,480 @@ const client = new SnapcapClient({
   username: process.env.SNAP_USER,
   password: process.env.SNAP_PASS,
 });
+
+if (await client.isReady()) {
+  const friends = await client.listFriends();
+}
 ```
 
 ## Constructor
+
+### `new SnapcapClient(opts)`
+
+**Signature**
 
 ```ts
 new SnapcapClient(opts: SnapcapClientOpts)
 
 type SnapcapClientOpts = {
-  /** Persistent backing for cookies, bearer, and bundle storage. Required. */
   dataStore: DataStore;
-  /** Cold-start username. Only used if the DataStore is empty/expired. NOT persisted. */
   username?: string;
-  /** Cold-start password. Only used if the DataStore is empty/expired. NOT persisted. */
   password?: string;
-  /** UA fingerprint used at login. Defaults to a Linux Chrome 147 string. */
   userAgent?: string;
 };
 ```
 
-The constructor is synchronous: it just calls `installShims({ url, dataStore })` so the singleton sandbox is seeded with the consumer's DataStore eagerly. No network and no disk I/O beyond loading the DataStore file. All real work happens in `isReady()`.
+**Parameters**
 
-`username` / `password` are only consulted when `isReady()` decides a fresh login is needed. They are **not** written to the DataStore; pass them on every boot if you want automatic recovery from session expiry.
+| Name | Type | Description |
+|---|---|---|
+| `opts.dataStore` | `DataStore` | Persistent backing for cookies, bearer, and the bundle's own sandbox storage. Required. |
+| `opts.username` | `string?` | Cold-start username. Only consulted when no restored cookies are present. **Not** persisted to the DataStore. |
+| `opts.password` | `string?` | Cold-start password. Same lifecycle as `username` — pass on every boot if you want auto-recovery from session expiry. |
+| `opts.userAgent` | `string?` | UA fingerprint used at login and on subsequent gRPC calls. Defaults to a Linux Chrome 147 string. |
+
+**Behavior**
+
+The constructor is synchronous. It calls `installShims({ url, dataStore })` so the singleton sandbox is seeded with the consumer's DataStore eagerly (otherwise the kameleon boot would race and write to happy-dom's in-memory defaults). No network and no disk I/O beyond the DataStore's own load.
+
+All real work happens inside `isReady()`.
 
 ## Public fields
+
+### `client.self`
 
 ```ts
 public self?: User;
 ```
 
-The logged-in user. Auto-populated by `isReady()` when it runs a fresh login (via `resolveSelf` walking SyncFriendData) or restored from `local_snapcap_self` on a warm start. Set manually with `setSelf(user)` if needed.
+The logged-in user. Auto-populated by `isReady()` when it runs a fresh login (via `resolveSelf` walking SyncFriendData) or restored from `local_snapcap_self` on a warm start. Set manually with `setSelf(user)` if you already know who you're logged in as.
 
-```ts
-public fidelius: FideliusIdentity | null = null;
-```
+## Auth
 
-> **Deprecated and permanently `null`.** The chat bundle's `createMessagingSession` flow now owns Fidelius identity bootstrap end-to-end (`local_uds_uds.e2eeIdentityKey.shared` is where the wrapped keys land). The SDK no longer mints, registers, or reads identity material. This field will be removed in a follow-up phase. Don't read it.
+### `client.isReady(opts?)`
 
-## Auth methods
+Resolve whether the client has a usable session. Idempotent and cached — the first positive result is held in-memory so subsequent calls are free.
 
-### isReady
+**Signature**
 
 ```ts
 isReady(opts?: { force?: boolean }): Promise<boolean>
 ```
 
-Resolve whether the client has a usable session. Idempotent and cached — the first positive result is held in-memory so subsequent calls are free.
+**Parameters**
 
-- **Restored cookies + bearer present** → `true` (no network).
-- **Cookies missing + creds set** → run full login, persist, return `true`.
-- **Cookies missing + no creds** → `false`.
-- **Server rejects creds** → `false` (does not throw).
+| Name | Type | Description |
+|---|---|---|
+| `opts.force` | `boolean?` | Bypass the in-memory cache and re-run the login flow even when warm. |
 
-Pass `{ force: true }` to bypass the cache and re-login even when warm. See [auth model](/docs/guide/auth) for the full decision flow.
+**Returns** — `Promise<boolean>`. Decision flow:
 
-> Renamed from `isAuthorized()`. Existing call sites must update.
+- **Restored cookies + bearer present in the DataStore** → `true` (no network).
+- **No cookies but credentials supplied** → run full login, persist, return `true`.
+- **No cookies, no creds** → `false`.
+- **Server rejects creds** → `false` (does **not** throw).
 
-### logout
+**Example**
+
+```ts
+if (await client.isReady()) {
+  // safe to call any API method
+} else {
+  // creds were missing or rejected — re-prompt or surface to user
+}
+
+// Force a fresh login (e.g. after password rotation):
+await client.isReady({ force: true });
+```
+
+See [auth model](/docs/guide/auth) for the full decision tree.
+
+### `client.logout()`
+
+Clear the SDK's auth-state keys from the DataStore.
+
+**Signature**
 
 ```ts
 logout(): Promise<void>
 ```
 
-Clear the SDK's auth-state keys from the DataStore: `cookie_jar`, `session_snapcap_bearer` (via `sessionStorage.removeItem("snapcap_bearer")`), and `local_snapcap_self` (via `localStorage.removeItem("snapcap_self")`). Bundle-owned `local_*` / `session_*` / `indexdb_*` keys are left intact — including the bundle-minted Fidelius wrapped identity.
+**Behavior** — Deletes `cookie_jar`, `session_snapcap_bearer` (via `sessionStorage.removeItem("snapcap_bearer")`), and `local_snapcap_self` (via `localStorage.removeItem("snapcap_self")`). Bundle-owned `local_*` / `session_*` / `indexdb_*` keys are deliberately left intact — including the bundle-minted Fidelius wrapped identity at `local_uds_uds.e2eeIdentityKey.shared`. Wiping them would force the next `isReady()` to re-bootstrap WASM state from scratch, which costs an extra round-trip and ~250 ms WASM init.
 
-### setSelf
+### `client.setSelf(user)`
+
+Override `client.self` directly.
+
+**Signature**
 
 ```ts
 setSelf(user: User): void
 ```
 
-Override `client.self`. Mostly an escape hatch for callers that already know who they're logged in as.
+**Use when** — Auto-discovery covers the typical case (a fresh login walks SyncFriendData and finds the logged-in user's record). Reach for this only if you have an out-of-band record of who you're logged in as, or in tests.
 
-### resolveSelf
+### `client.resolveSelf(username)`
+
+Resolve the self-user from server-side data and set `client.self`.
+
+**Signature**
 
 ```ts
 resolveSelf(username: string): Promise<User>
 ```
 
-Resolve the self-user from `SyncFriendData` (which embeds the caller's own record alongside the friend list). Sets `client.self` and returns it. Throws if `username` isn't found in the response.
+**Parameters**
 
-## Conversation methods
+| Name | Type | Description |
+|---|---|---|
+| `username` | `string` | The mutable username of the logged-in account. The SyncFriendData response embeds the caller's own record alongside the friend list; this matches on `mutableUsername`. |
 
-### getConversations
+**Returns** — `Promise<User>`. Sets `client.self` and returns the same value. **Throws** if the username isn't found in the response.
+
+## Conversations
+
+### `client.getConversations()`
+
+Fetch the list of conversations the logged-in user is in.
+
+**Signature**
 
 ```ts
 getConversations(): Promise<Conversation[]>
 ```
 
-Fetch the list of conversations the logged-in user is in. Returns `Conversation` instances bound to this client. Requires `client.self` (call `isReady()` first).
+**Returns** — `Promise<Conversation[]>`. Each `Conversation` is bound to this client; call methods on it directly without re-passing the client.
 
-### conversation
+**Throws** — if `client.self` isn't set. Call `client.isReady()` first (which auto-resolves self) or `client.setSelf(...)` manually.
+
+**Behavior** — Routes through the bundle's `getFeedManager()` (lazy-brings up the messaging session if needed). Returns the bundle's authoritative feed snapshot, mapped to `Conversation` instances.
+
+**Example**
+
+```ts
+await client.isReady();
+const chats = await client.getConversations();
+for (const chat of chats) {
+  console.log(chat.kind, chat.conversationId, chat.participants.length);
+}
+```
+
+### `client.conversation(conversationId, participantUserIds?)`
+
+Build a `Conversation` handle for a known conversation ID without round-tripping the feed.
+
+**Signature**
 
 ```ts
 conversation(conversationId: string, participantUserIds?: string[]): Conversation
 ```
 
-Build a `Conversation` handle for a known conversation ID without round-tripping `SyncConversations`. Useful when you've persisted IDs in your own DB. Pass `participantUserIds` if you need `setTyping` / `markViewed` (they require knowing the peer).
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `conversationId` | `string` | Hyphenated UUID of the conversation. |
+| `participantUserIds` | `string[]?` | Hyphenated UUIDs of all participants (including self). Required if you want `Conversation.setTyping` / `markViewed` on the legacy duplex path; the bundle path resolves participants itself. Defaults to `[]`. |
+
+**Returns** — `Conversation`. `kind` is set to `"dm"` if `participantUserIds.length === 2`, otherwise `"unknown"`.
+
+**Use when** — You've persisted a conversation ID in your own DB and want to skip the SyncConversations round-trip.
 
 ```ts
-const chat = client.conversation(persistedId, [client.self.userId, peerUserId]);
+const chat = client.conversation(persistedId, [client.self!.userId, peerUserId]);
 await chat.sendText("hi");
 ```
 
-## Friend methods
+## Friends
 
-### listFriends
+### `client.listFriends()`
+
+Fetch the logged-in user's friend list.
+
+**Signature**
 
 ```ts
 listFriends(): Promise<User[]>
 ```
 
-Fetch the logged-in user's friend list via AtlasGw `SyncFriendData`. Each `User` includes username, display name, friend-link state, bitmoji, and the raw record.
+**Returns** — `Promise<User[]>`. Each `User` includes username, display name, friend-link state, bitmoji metadata, and the raw record under `.raw`. Routes through the bundle's AtlasGw client so the wire bytes match the SPA.
 
-Working today; exercised by the smoke test.
+### `client.searchUsers(query, _pageSize?)`
 
-### addFriend
+Search Snap's user index by query string.
+
+**Signature**
 
 ```ts
-addFriend(userId: string | string[], source?: string): Promise<void>
+searchUsers(query: string, _pageSize?: number): Promise<User[]>
 ```
 
-Send a friend request to one or more users. `source` defaults to `"dweb_add_friend"` (what the web client sends from a search result). Pass an array to add multiple in one RPC.
+**Parameters**
 
-### searchUsers
+| Name | Type | Description |
+|---|---|---|
+| `query` | `string` | Search query — username, display name, or partial match. |
+| `_pageSize` | `number?` | Ignored. Retained for source-compat. The bundle pins `pageSize` at 20 (the value the SPA sends for every search); the SDK no longer surfaces a knob. |
+
+**Returns** — `Promise<User[]>`. Routes through the bundle's `default-authed-fetch` so requests share Snap's own auth interceptors.
+
+### `client.addFriend(userId, source?)`
+
+Send a friend request.
+
+**Signature**
 
 ```ts
-searchUsers(query: string, pageSize?: number): Promise<User[]>
+addFriend(userId: string | string[], source?: number | string): Promise<void>
 ```
 
-Search Snap's user index by query string. `pageSize` defaults to the value web sends. The SDK doesn't paginate — re-issue with the next batch yourself if needed.
+**Parameters**
 
-## Story
+| Name | Type | Description |
+|---|---|---|
+| `userId` | `string \| string[]` | One UUID, or an array — the SDK fans out sequentially. |
+| `source` | `number \| string?` | `FriendSource` enum value. Defaults to `FriendSource.ADDED_BY_USERNAME` (2), what the SPA sends from a search-result "Add" button. A string is silently coerced to the default for back-compat. |
 
-### postStory
+**Returns** — `Promise<void>`. Routes through the bundle's `jz.AddFriends` thunk — same wire bytes the SPA emits when a user clicks "Add" on a search result.
+
+**Example**
 
 ```ts
-postStory(bytes: Uint8Array, opts?: { skipNormalize?: boolean }): Promise<void>
+import { FriendSource } from "@snapcap/native";
+
+const [target] = await client.searchUsers("teamsnapchat");
+await client.addFriend(target.userId, FriendSource.ADDED_BY_USERNAME);
 ```
 
-Post an image to the user's `MY_STORY`. By default the bytes are auto-normalised to 1080×1920 RGBA PNG (Snap rejects other layouts on this endpoint). Pass `skipNormalize: true` if your image is already in the exact required shape. Requires `client.self.username`.
+## Messages
 
-## Messaging primitives
+### `client.sendText(conversationId, text)`
 
-These take raw IDs — useful when you've stored IDs in a DB and want to skip the `Conversation` wrapper. For most flows, prefer the `Conversation` methods.
+Send a text DM into a conversation.
 
-### fetchMessages
+**Signature**
 
 ```ts
-fetchMessages(
+sendText(conversationId: string, text: string): Promise<void>
+```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `conversationId` | `string` | Hyphenated UUID of the conversation. |
+| `text` | `string` | Message body. UTF-8. The SDK enforces no length cap; Snap's server has its own. |
+
+**Returns** — `Promise<void>`. Resolves when the bundle's send pipeline acknowledges the message.
+
+**Behavior** — Routes through the bundle's natural `sendText` entry (module 56639 export `pn`) so the wire message is byte-identical to one sent by the official web client.
+
+```ts
+await client.isReady();
+const [chat] = await client.getConversations();
+await client.sendText(chat.conversationId, "hello world");
+```
+
+### `client.sendImage(conversationId, bytes)`
+
+Send a DM image.
+
+**Signature**
+
+```ts
+sendImage(conversationId: string, bytes: Uint8Array): Promise<void>
+```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `conversationId` | `string` | Hyphenated UUID of the conversation. |
+| `bytes` | `Uint8Array` | Raw image bytes. PNG / JPEG / WebP all accepted. |
+
+**Returns** — `Promise<void>`. Routes through the bundle's `sendImage` entry (module 56639 export `E$`) — encryption, upload, dimension extraction, and `CreateContentMessage` are all owned by the bundle.
+
+### `client.postStory(bytes, _opts?)`
+
+Post an image to MY_STORY (the user's own story feed).
+
+**Signature**
+
+```ts
+postStory(bytes: Uint8Array, _opts?: { skipNormalize?: boolean }): Promise<void>
+```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `bytes` | `Uint8Array` | Raw image bytes. |
+| `_opts.skipNormalize` | `boolean?` | Ignored. Preserved for source-compat — the bundle's media pipeline handles dimension normalisation now. Custom-sized bytes still work. |
+
+**Returns** — `Promise<void>`. Routes through the bundle's `sendSnap` entry with a MY_STORY destination.
+
+### `client.fetchMessages(conversationId)`
+
+Fetch recent messages for a conversation.
+
+**Signature**
+
+```ts
+fetchMessages(conversationId: string): Promise<FetchMessagesViaSessionResponse>
+
+type FetchMessagesViaSessionResponse = {
+  messages: unknown;            // bundle-realm Map<MessageId, MessageRecord>
+  conversation: unknown;        // bundle-realm Conversation record
+  hasMoreMessages: boolean;     // true when older pages exist
+};
+```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `conversationId` | `string` | Hyphenated UUID of the conversation. |
+
+**Returns** — The bundle's natural `{messages, conversation, hasMoreMessages}` shape. `messages` is the bundle's Map-style collection of message records — iterate it and run each `.content` through `session.codec.decode` (or use [`onMessage`](#client-onmessage-handler) for the live stream). `hasMoreMessages` is true when older pages can be fetched (paginated sibling not surfaced yet).
+
+**Behavior** — Routes through `fetchConversationWithMessages` (module 56639 export `uk`) so the WASM session's local cache is consulted first and the server fetch shares Snap's delegate dispatch + MessageContent codec.
+
+> The legacy `limit` / `secondary` opts are no longer surfaced — the bundle wrapper has no equivalent knobs.
+
+### `client.onMessage(handler)`
+
+Subscribe to inbound messages.
+
+**Signature**
+
+```ts
+onMessage(handler: (msg: DecodedMessage) => void): Promise<Unsubscribe>
+
+type Unsubscribe = () => void;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `handler` | `(msg: DecodedMessage) => void` | Called once per envelope the bundle's delegate harness pumps out — text, image, sticker, system events, etc. See [DecodedMessage](/docs/api/messages#decodedmessage). |
+
+**Returns** — `Promise<Unsubscribe>`. Call the returned function to detach the listener. Safe to register multiple handlers; each fires independently.
+
+**Behavior** — The pump is the same EventEmitter the bundle's slot-6 (`analyticsLogger`) and slot-9 (`messagingDelegate`) feed. There's no polling, no extra RPC. Handler exceptions are swallowed (one bad consumer shouldn't kill the pump for the rest of the session). `decoded` is `null` if the codec couldn't decode the envelope's `.content` (receipts and other metadata-only envelopes pass through with `decoded: null`).
+
+```ts
+const unsubscribe = await client.onMessage((msg) => {
+  if (msg.isSender) return;                        // outbound echo — skip
+  const text = msg.decoded?.content?.text?.text;
+  if (text) console.log(`<${msg.conversationId}> ${text}`);
+});
+
+// later:
+unsubscribe();
+```
+
+## Presence
+
+### `client.markMessageViewed(messageId, conversationId, _userId?, action?)`
+
+Mark a single received message as viewed.
+
+**Signature**
+
+```ts
+markMessageViewed(
+  messageId: string | { id: Uint8Array },
   conversationId: string,
-  opts?: { limit?: number; secondary?: number },
-): Promise<QueryMessagesResponse>
+  _userId?: string,
+  action?: number,
+): Promise<void>
 ```
 
-Fetch recent messages for a conversation. Returns the raw bytes payload — caller is responsible for decoding the proto. The bundle-native `MessagingSession` exposes a higher-level `getConversationManager().fetchMessages(...)` which returns decoded objects; this primitive is the legacy direct-gRPC path.
+**Parameters**
 
-### sendTypingNotification
+| Name | Type | Description |
+|---|---|---|
+| `messageId` | `string \| { id: Uint8Array }` | Hyphenated UUID string (the bundle's `attemptId.id` shape — what `onMessage` surfaces as `msg.messageId`) or a `{ id: bytes16 }` envelope. |
+| `conversationId` | `string` | Hyphenated UUID of the conversation. |
+| `_userId` | `string?` | Ignored — the bundle pulls it from the session itself. Retained for source-compat. |
+| `action` | `number?` | Display state. Defaults to `1` (`MESSAGE_DISPLAY_STATE_DISPLAYED` — the value the SPA sends for "user saw it"). |
+
+**Returns** — `Promise<void>`. **Throws** if `messageId` is a `bigint` (the legacy raw-gRPC shape is no longer accepted on the bundle path).
+
+**Behavior** — Routes through `mediaMessagesDisplayed` (module 56639 export `Sd`) — same callback the SPA fires when the user opens a chat with unread media.
+
+### `client.sendTypingNotification(conversationId, _userId?, _typingType?)`
+
+Show the "typing…" indicator to the recipient.
+
+**Signature**
 
 ```ts
 sendTypingNotification(
   conversationId: string,
-  userId: string,
-  typingType?: number,    // defaults to TypingActivity.TEXT (6)
+  _userId?: string,
+  _typingType?: number,
 ): Promise<void>
 ```
 
-Send the gRPC typing notification. Note: the gRPC variant is accepted by the server but does **not** fan out to recipients. For real "typing…" indicators, use `Conversation.setTyping()` which routes over the duplex WS.
+**Parameters** — Both `_userId` and `_typingType` are ignored (bundle resolves them). Pass any value for source-compat.
 
-### updateConversationView
+**Returns** — `Promise<void>`. Single pulse; Snap's UI auto-clears in ~3 s. For a continuous indicator, prefer [`Conversation.setTyping(durationMs)`](/docs/api/conversation#setTyping).
+
+**Behavior** — Routes through the bundle's `sendTypingNotification` (module 56639 export `zM`); the bundle owns the duplex WS + Comlink dispatch.
+
+### `client.updateConversationView(conversationId, _userId?, state?)`
+
+Enter / exit a conversation — recipient sees the "in chat" indicator update.
+
+**Signature**
 
 ```ts
 updateConversationView(
   conversationId: string,
-  userId: string,
-  state?: number,         // defaults to ConversationViewState.ACTIVE (10)
+  _userId?: string,
+  state?: number,
 ): Promise<void>
 ```
 
-Update conversation view-state. Same caveat as above — for real "in chat" indicators, use `Conversation.markViewed()`.
+**Parameters**
 
-### markMessageViewed
+| Name | Type | Description |
+|---|---|---|
+| `conversationId` | `string` | Hyphenated UUID. |
+| `_userId` | `string?` | Ignored. |
+| `state` | `number?` | Defaults to `ConversationViewState.ACTIVE` (10). Pass `0` to fire `exitConversation` instead. |
 
-```ts
-markMessageViewed(
-  messageId: bigint,
-  conversationId: string,
-  userId: string,
-  action?: number,        // defaults to 15
-): Promise<void>
-```
-
-Mark a single received message as viewed.
+**Returns** — `Promise<void>`. Routes through `enterConversation` / `exitConversation` on the bundle's ConversationManager.
 
 ## Low-level RPC
 
-### rpc (getter)
+For advanced consumers calling Snap services not yet wrapped in a high-level method.
+
+### `client.rpc` (getter)
 
 ```ts
 get rpc: { unary(method: GrpcMethodDesc, request: unknown): Promise<unknown> }
 ```
 
-A lazily-built `rpc.unary` impl bound to this client's jar / bearer / refresh. Shorthand for `client.makeRpc()`.
+A lazily-built `rpc.unary` impl bound to this client's jar / bearer / refresh. Shorthand for `client.makeRpc()` with no header transform.
 
-### makeRpc
+### `client.makeRpc(transformHeaders?)`
+
+Build a fresh `rpc.unary` impl.
+
+**Signature**
 
 ```ts
 makeRpc(transformHeaders?: HeaderTransform): {
   unary: (method: GrpcMethodDesc<unknown, unknown>, request: unknown) => Promise<unknown>;
 };
+
+type HeaderTransform = (headers: Record<string, string>) => Record<string, string>;
 ```
 
-Build a fresh `rpc.unary` impl, optionally applying a header-mutation hook to every call. Used internally for surfaces with header peculiarities (e.g. some Snap services 401 if `Origin`/`Referer` are present; the helper strips them).
+**Use when** — Some Snap services 401 if `Origin` / `Referer` are present; the helper strips them.
 
 ```ts
 const stripped = client.makeRpc((h) => {
@@ -235,28 +497,22 @@ const stripped = client.makeRpc((h) => {
 await someApiCall(stripped, ...);
 ```
 
-`HeaderTransform` is `(headers: Record<string, string>) => Record<string, string>`.
-
-## Status today
-
-Working end-to-end (smoke-tested):
-
-- `isReady()` cold + warm
-- `listFriends`, `searchUsers`, `addFriend`
-- `getConversations`, `Conversation.sendText`, `sendImage`, `sendImageWithCaption`
-- `postStory`
-- Duplex WS presence (typing / viewing / kick detection)
-- Reading messages via the bundle-native `MessagingSession` (used internally by new API paths; `fetchMessages` still returns raw bytes from the legacy direct-gRPC path)
-
-In flight (don't rely on yet):
-
-- Sending **snaps** (disappearing image messages, destination kind 122) via the bundle session
-- Inbound message body decryption surfaced as a public stream (the `MessagingSession.events` emitter exists internally; not yet on `SnapcapClient`)
-- Migration of `sendImage` / `postStory` to bundle-native paths
-
 ## Types
 
-### FideliusIdentityBlob
+### `SnapcapClientOpts`
+
+```ts
+type SnapcapClientOpts = {
+  dataStore: DataStore;
+  username?: string;
+  password?: string;
+  userAgent?: string;
+};
+```
+
+See [Constructor](#new-snapcapclient-opts) for field semantics.
+
+### `FideliusIdentityBlob` (deprecated)
 
 ```ts
 type FideliusIdentityBlob = {
@@ -268,4 +524,4 @@ type FideliusIdentityBlob = {
 };
 ```
 
-> Legacy serialized form from the pre-bundle SDK. Kept exported for backwards-compat with consumers that imported it; the SDK no longer reads or writes this blob — the chat bundle owns identity bootstrap. Will be removed in a follow-up phase.
+Legacy serialized form from the pre-bundle SDK. Kept exported for backwards-compat with consumers that imported it. The SDK no longer reads or writes this blob — the chat bundle owns identity bootstrap. **Do not use in new code; will be removed in a follow-up phase.**

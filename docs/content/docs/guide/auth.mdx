@@ -19,7 +19,7 @@ After a successful login, the DataStore contains:
 
 The truly durable bit is `__Host-sc-a-auth-session`. As long as it's still server-side valid, the SDK can re-mint a fresh bearer from it without credentials.
 
-> **Fidelius identity is bundle-owned.** The SDK no longer pre-mints or registers a Fidelius identity. The chat bundle's `createMessagingSession` flow runs `constructPostLogin` on first use, calls `InitializeWebKey` server-side via its own gRPC factory, and persists the wrapped result through the SDK's `localStorage` shim under `local_uds_uds.e2eeIdentityKey.shared`. The legacy `client.fidelius` field is permanently `null` and will be removed in a follow-up.
+The Fidelius E2E identity (used by the chat bundle for message-body encryption) lands under `local_uds_uds.e2eeIdentityKey.shared` and is owned entirely by the bundle — the SDK doesn't mint, read, or rotate it. You don't need to think about it.
 
 ## isReady()
 

@@ -1,17 +1,20 @@
 ---
 title: 'API reference'
-description: 'Every public surface of @snapcap/native. Anything not listed here is internal — relying on it will break.'
+description: 'Every public surface of @snapcap/native — the methods, types, and helpers you use to build against the SDK.'
 ---
 
-Every public surface of `@snapcap/native`. Everything not listed here is an internal — relying on it will break.
+Every public surface of `@snapcap/native`. Anything not listed here is internal and can change without notice.
+
+For most apps you'll only need [`SnapcapClient`](/docs/api/snapcap-client), [`Conversation`](/docs/api/conversation), [`User`](/docs/api/user), and [`FileDataStore`](/docs/api/storage#filedatastore). The rest is escape hatches.
 
 | Page | What's there |
 |---|---|
-| [SnapcapClient](/docs/api/snapcap-client) | The main class. `isReady`, friends, conversations, story posting, low-level RPC. |
-| [Conversation](/docs/api/conversation) | Domain object for a single chat. `sendText`, `sendImage`, presence. |
+| [SnapcapClient](/docs/api/snapcap-client) | The main class. Constructor, auth, friends, conversations, messaging, presence, low-level RPC. |
+| [Conversation](/docs/api/conversation) | Domain object for a single chat. `sendText`, `sendImage`, `setTyping`, `markViewed`. |
 | [User](/docs/api/user) | The `User` data class + factory methods. |
+| [Messages & inbound stream](/docs/api/messages) | `DecodedMessage`, `Unsubscribe` — the types you touch from `client.onMessage`. |
 | [Storage](/docs/api/storage) | `DataStore` interface, built-in stores, `StorageShim`, `CookieJarStore`, IDB helpers. |
-| [Sandbox](/docs/api/sandbox) | `installShims`, `getSandbox`, the `Sandbox` class, the `SDK_SHIMS` aggregator. Advanced bundle-interop. |
+| [Sandbox](/docs/api/sandbox) | `installShims`, `getSandbox`, the `Sandbox` class. Advanced bundle-interop only. |
 
 ## Imports at a glance
 
@@ -20,15 +23,20 @@ import {
   // Client + types
   SnapcapClient,
   type SnapcapClientOpts,
-  type FideliusIdentityBlob,    // legacy serialized form; kept for backwards-compat — no longer read/written by the SDK
 
   // Domain objects
   Conversation,
   TypingActivity,
   ConversationViewState,
   type ConversationKind,
+  type ConversationSummary,
   User,
-  FriendAction,
+  FriendSource,
+  FriendAction,            // legacy enum; prefer FriendSource
+
+  // Inbound message stream
+  type DecodedMessage,
+  type Unsubscribe,
 
   // Storage
   type DataStore,
@@ -40,7 +48,7 @@ import {
   idbPut,
   idbDelete,
 
-  // Sandbox / bundle interop
+  // Sandbox / bundle interop (advanced)
   installShims,
   getSandbox,
   isShimInstalled,
@@ -55,4 +63,4 @@ import {
 } from "@snapcap/native";
 ```
 
-If you're building a typical app you'll only touch `SnapcapClient`, `FileDataStore`, `Conversation`, and `User`. The rest is escape hatches for advanced use.
+> The `FideliusIdentityBlob` type is also exported but **deprecated** — the SDK no longer mints or persists Fidelius identities (the chat bundle owns that end-to-end). Don't use it in new code. See [SnapcapClient → Types](/docs/api/snapcap-client#fideliusidentityblob-deprecated).

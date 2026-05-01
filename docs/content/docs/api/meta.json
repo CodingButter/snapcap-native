@@ -1,5 +1,5 @@
 {
   "title": "API Reference",
   "defaultOpen": true,
-  "pages": ["index", "snapcap-client", "conversation", "user", "storage", "sandbox"]
+  "pages": ["index", "snapcap-client", "conversation", "user", "messages", "storage", "sandbox"]
 }

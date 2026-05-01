@@ -9,65 +9,23 @@
  * so values written by one path are visible to the other and both persist.
  *
  * Sync model — `Document.cookie` is a synchronous Web API but `DataStore`
- * is async. Mirroring `StorageShim`, the shim caches the live jar in
- * memory and:
- *   - hydrates the cache at construction via `getSync` if the DataStore
- *     supports it, otherwise starts empty (and warns if there *was* data
- *     to load),
- *   - on writes, updates the in-memory jar synchronously, then either
- *     `setSync`s (preferred) or fire-and-forget `set`s the new bytes back.
+ * is async. The shared `cookie-jar` helper caches the live jar in memory
+ * and hydrates synchronously via `getSync` when available; writes go
+ * through `setSync` (preferred) or fire-and-forget `set`.
  *
  * HttpOnly cookies are filtered out of the getter via tough-cookie's
  * `getCookiesSync(url, { http: false })` — JS-level access never sees them
  * per W3C spec.
+ *
+ * State sharing — the same jar instance backs `cookie-container.ts` (the
+ * happy-dom outgoing-fetch container), so a `document.cookie = "..."`
+ * write is immediately visible to the next `fetch()` and vice versa.
  */
-import { Cookie, CookieJar } from "tough-cookie";
+import { Cookie } from "tough-cookie";
 import type { DataStore } from "../storage/data-store.ts";
+import { getOrCreateJar, persistJar } from "./cookie-jar.ts";
 import type { Sandbox } from "./sandbox.ts";
-
-type SyncCapable = DataStore & {
-  getSync(key: string): Uint8Array | undefined;
-  setSync(key: string, value: Uint8Array): void;
-};
-
-const COOKIE_JAR_KEY = "cookie_jar";
-
-function isSyncStore(s: DataStore): s is SyncCapable {
-  return (
-    typeof (s as Partial<SyncCapable>).getSync === "function" &&
-    typeof (s as Partial<SyncCapable>).setSync === "function"
-  );
-}
-
-function loadJar(store: DataStore): CookieJar {
-  if (!isSyncStore(store)) return new CookieJar();
-  const bytes = store.getSync(COOKIE_JAR_KEY);
-  if (!bytes || bytes.byteLength === 0) return new CookieJar();
-  try {
-    const json = new TextDecoder().decode(bytes);
-    return CookieJar.deserializeSync(JSON.parse(json));
-  } catch {
-    // corrupt blob → start fresh; the outgoing-fetch path uses the same
-    // key so it'll overwrite once a real Set-Cookie lands.
-    return new CookieJar();
-  }
-}
-
-function persistJar(jar: CookieJar, store: DataStore): void {
-  let bytes: Uint8Array;
-  try {
-    const serialized = jar.serializeSync();
-    if (!serialized) return;
-    bytes = new TextEncoder().encode(JSON.stringify(serialized));
-  } catch {
-    return;
-  }
-  if (isSyncStore(store)) {
-    store.setSync(COOKIE_JAR_KEY, bytes);
-  } else {
-    void store.set(COOKIE_JAR_KEY, bytes);
-  }
-}
+import { Shim, type ShimContext } from "./types.ts";
 
 /**
  * Override `document.cookie` on the sandbox's happy-dom Document with a
@@ -82,7 +40,7 @@ export function installDocumentCookieShim(sandbox: Sandbox, store: DataStore): v
   const tagged = doc as Record<symbol, unknown>;
   if (tagged[marker]) return;
 
-  const jar = loadJar(store);
+  const jar = getOrCreateJar(store);
 
   // Pull the current page URL lazily on each access so URL mutations
   // (history.pushState etc.) reflect into cookie path/domain matching.
@@ -127,4 +85,15 @@ export function installDocumentCookieShim(sandbox: Sandbox, store: DataStore): v
     configurable: false,
     writable: false,
   });
+}
+
+/**
+ * `Shim`-shaped wrapper around `installDocumentCookieShim`. Reads from
+ * the shared jar populated by `CookieContainerShim` — must run after it.
+ */
+export class DocumentCookieShim extends Shim {
+  readonly name = "document-cookie";
+  install(sandbox: Sandbox, ctx: ShimContext): void {
+    installDocumentCookieShim(sandbox, ctx.dataStore);
+  }
 }

@@ -19,6 +19,14 @@ if (await client.isReady()) {
 }
 ```
 
+## Where to go next
+
+<Cards>
+  <Card title="Get started" href="/docs/guide/getting-started" description="Install, authenticate, and make your first call in under five minutes." />
+  <Card title="API reference" href="/docs/api" description="Every public method on SnapcapClient and Conversation, with signatures and examples." />
+  <Card title="How it works" href="/docs/internals/architecture" description="For the curious: vm sandbox, shim layer, kameleon, SSO, bundle session." />
+</Cards>
+
 ## What this is not
 
 - It's **not** a wrapper around an emulator, Frida, or a rooted phone — those approaches were tried and failed against Snap's mobile risk engine.
@@ -33,19 +41,10 @@ Working today, exercised by the smoke test on a real account:
 |---|---|
 | Native login (username + password → cookie + bearer) | Working |
 | `listFriends()` / `searchUsers()` / `addFriend()` | Working |
-| `getConversations()` + `Conversation.sendText` / `sendImage` | Working |
+| `getConversations()` / `Conversation.sendText` / `sendImage` | Working |
 | `postStory()` (auto-normalises to 1080×1920 RGBA PNG) | Working |
-| Persistent duplex WS (presence / typing) | Working |
-| Inbound message bodies via bundle-native messaging session | Working (read path; in-flight migration off legacy gRPC) |
+| Inbound message stream via `client.onMessage(...)` | Working |
+| Mark-as-viewed, typing/viewing presence | Working |
 | Sending snaps (kind 122) | Migrating to bundle session — not yet routed end-to-end |
 
-The bundle-native `MessagingSession` (lazy-brought-up by the SDK) owns Fidelius E2E identity now — there is no SDK-side identity to manage. See [Messaging session](/docs/internals/messaging-session).
-
-## Where to go next
-
-<Cards>
-  <Card title="Get started" href="/docs/guide/getting-started" description="Install, authenticate, and make your first call in under five minutes." />
-  <Card title="API reference" href="/docs/api" description="Every public surface of @snapcap/native, indexed." />
-  <Card title="How it works" href="/docs/internals/architecture" description="The mental model — vm sandbox, shim layer, kameleon, SSO, bundle session." />
-  <Card title="Web API recon" href="/docs/web-api-recon" description="Notes from the original recon. Useful background on the wire format." />
-</Cards>
+The bundle-native messaging session (lazy-brought-up by the SDK) owns Fidelius E2E identity now — there is no SDK-side identity to manage. See [Messaging session](/docs/internals/messaging-session) for the implementation story.

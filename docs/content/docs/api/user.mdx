@@ -1,17 +1,27 @@
 ---
 title: 'User'
-description: 'A Snap account. Lightweight data class — methods stay pure data, any RPCs (sending messages, friending) live on SnapcapClient or Conversation.'
+description: 'A Snap account. Lightweight data class — pure data, with RPCs living on SnapcapClient or Conversation.'
 ---
 
-A Snap account. Lightweight data class — methods stay pure data, any RPCs (sending messages, friending) live on `SnapcapClient` or `Conversation`.
+A Snap account. Lightweight data class — methods stay pure data; any RPCs (sending messages, friending) live on [`SnapcapClient`](/docs/api/snapcap-client) or [`Conversation`](/docs/api/conversation).
 
 ## Constructor
+
+### `new User(userId, username?, displayName?)`
+
+Direct construction when you only have the UUID. Used internally by `client.conversation(id, [participantUserIds])` and similar paths.
+
+**Signature**
 
 ```ts
 new User(userId: string, username?: string, displayName?: string)
 ```
 
-Direct construction when you only have the UUID (e.g. `client.conversation(id, [participantUserIds])`).
+| Name | Type | Description |
+|---|---|---|
+| `userId` | `string` | Hyphenated 16-byte UUID. |
+| `username` | `string?` | Optional username. |
+| `displayName` | `string?` | Optional display name. |
 
 ## Fields
 
@@ -29,11 +39,61 @@ public friendmojis?: unknown[];        // per-friend emoji set
 public raw?: Record<string, unknown>;  // original protobuf-decoded record
 ```
 
+## Static methods
+
+### `User.fromFriendRecord(rec)`
+
+Parse a record from a `SyncFriendData` response (friends list) into a `User`. The same shape covers the logged-in user's own self-record.
+
+**Signature**
+
+```ts
+static fromFriendRecord(rec: Record<string, unknown>): User | null
+```
+
+**Returns** — `User` or `null` if `userId.highBits` / `userId.lowBits` is missing from the record.
+
+### `User.fromSearchRecord(rec)`
+
+Parse a record from a `/search/search` response (search results) into a `User`. Search uses string UUIDs directly (unlike friend records).
+
+**Signature**
+
+```ts
+static fromSearchRecord(rec: { userId: string; username?: string; displayName?: string }): User
+```
+
+## Instance methods
+
+### `user.toString()`
+
+```ts
+toString(): string
+```
+
+`"username <userId>"` if username is known, otherwise just the UUID.
+
+### `user.toJSON()`
+
+```ts
+toJSON(): { userId: string; username?: string; displayName?: string }
+```
+
+Stable subset — what gets serialised to `local_snapcap_self` in the DataStore.
+
 ## Types
+
+### `FriendType`
 
 ```ts
 type FriendType = "mutual" | "added" | "added-by-them" | "blocked" | "self" | "unknown";
+```
 
+Mapped from Snap's protobuf `friendLinkType` enum: `2 → mutual`, `9 → added-by-them`, `1 → self`, `3 → blocked`, `4 → added`, anything else → `"unknown"`.
+
+### `BitmojiInfo`
+
+```ts
 type BitmojiInfo = {
   avatarId?: string;
   selfieId?: string;
@@ -44,52 +104,36 @@ type BitmojiInfo = {
 };
 ```
 
-`friendType` is mapped from Snap's protobuf enum: `2 → mutual`, `9 → added-by-them`, `1 → self`, `3 → blocked`, `4 → added`, anything else → `"unknown"`. If you're seeing `"unknown"` consistently for a state you care about, check the raw record and open an issue.
+## `FriendSource`
 
-## Static methods
-
-### fromFriendRecord
+The `source` enum used by [`client.addFriend(userId, source?)`](/docs/api/snapcap-client#client-addfriend-userid-source). Mirrors the bundle's `FriendActionParams.source` field.
 
 ```ts
-static fromFriendRecord(rec: Record<string, unknown>): User | null
+export const FriendSource = {
+  ADDED_BY_UNKNOWN: 0,
+  ADDED_BY_PHONE: 1,
+  ADDED_BY_USERNAME: 2,           // SPA's "Add" button on a search result
+  ADDED_BY_QR_CODE: 3,
+  ADDED_BY_ADDED_ME_BACK: 4,
+  ADDED_BY_DEEP_LINK: 8,
+  ADDED_BY_MENTION: 21,
+  ADDED_BY_SUBSCRIPTION: 22,
+  ADDED_FROM_SPOTLIGHT: 25,
+  ADDED_FROM_PUBLIC_PROFILE: 26,
+  ADDED_BY_CHAT: 28,
+  ADDED_BY_SEARCH: 32,
+  ADDED_BY_WEB: 33,
+} as const;
 ```
 
-Parse a record from a `SyncFriendData` response (friends list) into a `User`. The same shape covers the logged-in user's own self-record. Returns `null` if `userId.highBits` / `userId.lowBits` is missing.
+The exhaustive list (ADDED_BY_NEARBY, ADDED_BY_SHAZAM, …) lives in the bundle and isn't relevant to a Node SDK consumer.
 
-### fromSearchRecord
+## `FriendAction` (legacy)
 
-```ts
-static fromSearchRecord(rec: { userId: string; username?: string; displayName?: string }): User
-```
-
-Parse a record from a `/search/search` response (search results). Search uses string UUIDs directly, unlike friend records.
-
-## Instance methods
-
-### toString
-
-```ts
-toString(): string
-```
-
-`"username <userId>"` if username is known, otherwise just the UUID.
-
-### toJSON
-
-```ts
-toJSON(): { userId: string; username?: string; displayName?: string }
-```
-
-Stable subset — what gets serialised to `local_snapcap_self` in the DataStore.
-
-## FriendAction
-
-The action enum used by `client.addFriend()` under the hood. Surfaced for callers who want to call into the lower-level `addFriends()` helper directly.
+Misleading name — kept exported for back-compat. The wire-level "action" field is actually the FriendSource enum above; `FriendAction.ADD = 2` happens to equal `FriendSource.ADDED_BY_USERNAME = 2`. **Prefer `FriendSource` in new code.**
 
 ```ts
 export const FriendAction = {
   ADD: 2,
 } as const;
 ```
-
-Other values (REMOVE, BLOCK) likely exist on the server but aren't reverse-engineered yet.

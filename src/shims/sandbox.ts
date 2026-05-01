@@ -23,9 +23,9 @@
 import vm from "node:vm";
 import { Window } from "happy-dom";
 import type { DataStore } from "../storage/data-store.ts";
-import { StorageShim } from "../storage/storage-shim.ts";
-import { installDocumentCookieShim } from "./document-cookie.ts";
-import { IDBFactoryShim } from "./indexed-db.ts";
+import type { ThrottleConfig } from "../transport/throttle.ts";
+import { getOrCreateJar } from "./cookie-jar.ts";
+import { SDK_SHIMS, type ShimContext } from "./index.ts";
 
 export type SandboxOpts = {
   /** Page URL the Window pretends to be on. Default www.snapchat.com/web. */
@@ -38,6 +38,8 @@ export type SandboxOpts = {
   viewportHeight?: number;
   /** Persistent backing for localStorage / sessionStorage shims. */
   dataStore?: DataStore;
+  /** Optional opt-in HTTP throttling. Default: no throttle (browser-cadence). */
+  throttle?: ThrottleConfig;
 };
 
 /** happy-dom Window properties we copy onto the sandbox global. */
@@ -79,6 +81,30 @@ export class Sandbox {
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
     const width = opts.viewportWidth ?? 1440;
     const height = opts.viewportHeight ?? 900;
+
+    // CookieContainer prototype patch must happen BEFORE constructing the
+    // Window — happy-dom news up the per-Window CookieContainer inside
+    // `new Window(...)` (it lives on a private `#browserFrame.page.context`
+    // chain), and our patch needs to be visible on that instance so its
+    // outgoing-fetch path (FetchRequestHeaderUtility.getRequestHeaders)
+    // pulls cookies from the DataStore-backed jar instead of an in-memory
+    // array. We satisfy that ordering by running ONLY the CookieContainer
+    // shim before the Window is constructed; the rest of `SDK_SHIMS` runs
+    // after the Window + vm context exist (see end of constructor).
+    //
+    // The shared cookie jar is hydrated synchronously here so all shims
+    // installed below see the same instance via `ShimContext.jar`.
+    let shimCtx: ShimContext | undefined;
+    if (opts.dataStore) {
+      shimCtx = {
+        dataStore: opts.dataStore,
+        userAgent,
+        jar: getOrCreateJar(opts.dataStore),
+      };
+      // CookieContainerShim patches the prototype; safe to run before
+      // `this.hdWindow` exists — its install ignores the sandbox arg.
+      SDK_SHIMS[0]!.install(this, shimCtx);
+    }
 
     this.hdWindow = new Window({
       url,
@@ -125,19 +151,15 @@ export class Sandbox {
     ctxGlobal.parent = ctxGlobal;
     ctxGlobal.frames = ctxGlobal;
 
-    // Replace happy-dom's defaults with our DataStore-backed shims.
-    if (opts.dataStore) {
-      ctxGlobal.localStorage = new StorageShim(opts.dataStore, "local_");
-      ctxGlobal.sessionStorage = new StorageShim(opts.dataStore, "session_");
-      // Route indexedDB through the same DataStore. Sandbox code that
-      // calls `indexedDB.open(...)` lands writes under `indexdb_*` keys
-      // alongside the `local_*` / `session_*` entries. Without a
-      // DataStore, fall through to happy-dom's in-memory default.
-      ctxGlobal.indexedDB = new IDBFactoryShim(opts.dataStore);
-      // Route document.cookie through the same DataStore-backed cookie jar
-      // the SDK's outgoing fetch uses (key: `cookie_jar`). Without a
-      // DataStore, fall through to happy-dom's in-memory default.
-      installDocumentCookieShim(this, opts.dataStore);
+    // Run the rest of `SDK_SHIMS` (skip [0] CookieContainerShim — already
+    // ran above pre-Window). Each shim is responsible for its own I/O
+    // boundary; the canonical list + ordering is in `./index.ts`. Without
+    // a DataStore we fall through to happy-dom's in-memory defaults for
+    // localStorage / sessionStorage / indexedDB / document.cookie / WS.
+    if (shimCtx) {
+      for (let i = 1; i < SDK_SHIMS.length; i++) {
+        SDK_SHIMS[i]!.install(this, shimCtx);
+      }
     }
 
     // Snap-bundle environment: chrome runtime stub, idle-callback,
@@ -154,6 +176,37 @@ export class Sandbox {
     if (typeof ctxGlobal.importScripts !== "function") {
       ctxGlobal.importScripts = () => {};
     }
+    // EXPERIMENT: minimal Worker stub. Records construction args, emits
+    // no events, terminate is a no-op. Goal: see if the bundle's
+    // wasm.initialize() limps to a usable state with a fake worker, or
+    // if it requires a real one. If the bundle writes workerProxy into
+    // state.wasm regardless, the syncFriends gate may pass even with a
+    // dud worker; if loadWasm gates on a real bridge, we'll see it throw.
+    // V8's vm.Context exposes WebAssembly without the streaming helper —
+    // browsers and Node's main realm both ship it, but the sandbox realm
+    // doesn't. The chat WASM session bring-up calls `instantiateStreaming`,
+    // so polyfill it using sandbox-realm `WebAssembly.instantiate` to keep
+    // returned Instance/Module objects in the right realm.
+    {
+      const sbWA = ctxGlobal.WebAssembly as undefined | {
+        instantiateStreaming?: unknown;
+        instantiate: (bytes: BufferSource, imports?: WebAssembly.Imports) => Promise<WebAssembly.WebAssemblyInstantiatedSource>;
+      };
+      if (sbWA && typeof sbWA.instantiateStreaming !== "function") {
+        (sbWA as { instantiateStreaming: typeof WebAssembly.instantiateStreaming }).instantiateStreaming =
+          async (source, imports) => {
+            const resp = await source;
+            const buf = await resp.arrayBuffer();
+            return sbWA.instantiate(buf, imports);
+          };
+      }
+    }
+    // CacheStorage fallback. The real DataStore-backed implementation is
+    // installed by `CacheStorageShim` (see `./index.ts`) when a DataStore
+    // is configured — it overwrites this stub. With no DataStore the
+    // SDK_SHIMS loop above is skipped, so this no-op stub is what bundle
+    // code sees, matching the legacy "writes vanish" behaviour we had
+    // before the shim landed.
     if (typeof ctxGlobal.caches === "undefined") {
       const emptyCache = {
         match: async () => undefined, add: async () => undefined,

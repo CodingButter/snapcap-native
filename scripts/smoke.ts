@@ -1,10 +1,10 @@
 /**
  * Smoke test for SnapcapClient.
  *
- * Phase A: cold-start (no DataStore yet) → isAuthorized() runs full
- *          login → listFriends → DataStore is now warm.
- * Phase B: same DataStore, no creds → isAuthorized() short-circuits on
- *          restored cookies → listFriends works without re-login.
+ * Phase A: cold-start (no DataStore yet) → authenticate() drives the
+ *          bundle's 2-step WebLogin → friends.list() → DataStore is now warm.
+ * Phase B: same DataStore, no creds → authenticate() short-circuits on
+ *          restored cookies → friends.list() works without re-login.
  *
  * Phase A asserts the full native login + bearer mint + API call works.
  * Phase B asserts the auth state is reusable across processes (for the
@@ -32,28 +32,39 @@ const clientA = new SnapcapClient({
   password: state.password,
   userAgent: state.fingerprint?.userAgent,
 });
-const okA = await clientA.isAuthorized();
-console.log(`[smoke] isAuthorized (cold): ${okA} (${Date.now() - t0}ms)`);
-if (!okA) throw new Error("Phase A: isAuthorized() returned false");
+await clientA.authenticate();
+const okA = clientA.isAuthenticated();
+console.log(`[smoke] authenticate (cold): ${okA} (${Date.now() - t0}ms)`);
+if (!okA) throw new Error("Phase A: isAuthenticated() returned false after authenticate()");
 
-console.log(`[smoke] listFriends()…`);
+console.log(`[smoke] friends.list()…`);
 const t1 = Date.now();
-const friends = await clientA.listFriends();
-console.log(`[smoke] listFriends: ${Date.now() - t1}ms`);
+const friends = await clientA.friends.list();
+console.log(`[smoke] friends.list: ${Date.now() - t1}ms`);
 console.log(`[smoke] Phase A response summary: ${summarizeFriends(friends)}`);
 
 console.log(`\n[smoke] === Phase B: warm-start (reuse DataStore, no creds) ===`);
 const dataStoreB = new FileDataStore(STORE_PATH);
 const t2 = Date.now();
-const clientB = new SnapcapClient({ dataStore: dataStoreB });
-const okB = await clientB.isAuthorized();
-console.log(`[smoke] isAuthorized (warm): ${okB} (${Date.now() - t2}ms)`);
-if (!okB) throw new Error("Phase B: isAuthorized() returned false on warm start");
+// Warm-start needs creds too — the bundle's `authenticate()` will
+// short-circuit through the warm path (existing cookies → fresh ticket)
+// but still requires `state.auth.fullLogin` to be a viable fallback if
+// the cookie path rejects. Pass through the same creds.
+const clientB = new SnapcapClient({
+  dataStore: dataStoreB,
+  username: state.username,
+  password: state.password,
+  userAgent: state.fingerprint?.userAgent,
+});
+await clientB.authenticate();
+const okB = clientB.isAuthenticated();
+console.log(`[smoke] authenticate (warm): ${okB} (${Date.now() - t2}ms)`);
+if (!okB) throw new Error("Phase B: isAuthenticated() returned false on warm start");
 
-console.log(`[smoke] listFriends() (reused session)…`);
+console.log(`[smoke] friends.list() (reused session)…`);
 const t3 = Date.now();
-const friends2 = await clientB.listFriends();
-console.log(`[smoke] listFriends: ${Date.now() - t3}ms`);
+const friends2 = await clientB.friends.list();
+console.log(`[smoke] friends.list: ${Date.now() - t3}ms`);
 console.log(`[smoke] Phase B response summary: ${summarizeFriends(friends2)}`);
 
 console.log(`\n[smoke] SDK working end-to-end`);

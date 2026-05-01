@@ -1,12 +1,13 @@
 {
   "title": "Internals",
+  "description": "Implementation notes for the curious — sandbox, shims, kameleon, SSO, bundle session. Not required to use the SDK.",
   "defaultOpen": false,
   "pages": [
     "architecture",
+    "messaging-session",
     "sandbox",
     "shims",
     "io-overrides",
-    "messaging-session",
     "persistence",
     "kameleon",
     "webpack-trick",

@@ -6,7 +6,7 @@
  * Use the resulting token as `webLoginHeaderBrowser.attestationPayload`
  * (UTF-8 encoded) when calling WebLoginService.
  */
-import { bootKameleon } from "../src/auth/kameleon.ts";
+import { bootKameleon } from "../src/bundle/accounts-loader.ts";
 
 const identifier = process.argv[2] ?? process.env.SNAP_USER;
 if (!identifier) {

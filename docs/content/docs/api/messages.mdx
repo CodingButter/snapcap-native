@@ -1,0 +1,98 @@
+---
+title: 'Messages & inbound stream'
+description: 'Types for the inbound message stream — DecodedMessage, Unsubscribe, and how to consume client.onMessage.'
+---
+
+The types you'll touch when consuming inbound messages via [`client.onMessage(handler)`](/docs/api/snapcap-client#client-onmessage-handler).
+
+## `DecodedMessage`
+
+The shape your handler receives. One per envelope the bundle's delegate harness pumps out — text, image, sticker, system events, etc.
+
+```ts
+type DecodedMessage = {
+  conversationId: string;
+  messageId: string;
+  isSender: boolean;
+  contentType: number;
+  decoded: {
+    content?: {
+      $case: string;
+      text?: { text: string };
+      [k: string]: unknown;
+    };
+    [k: string]: unknown;
+  } | null;
+  timestamp: number;
+  raw: unknown;
+};
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `conversationId` | `string` | Hyphenated UUID of the conversation this message belongs to. |
+| `messageId` | `string` | Hyphenated UUID of the message attempt (the bundle's primary key). Pass straight to [`Conversation.markMessageViewed`](/docs/api/conversation#chat-markmessageviewed-messageid-action). |
+| `isSender` | `boolean` | `true` for messages we sent (outbound echo); `false` for inbound. |
+| `contentType` | `number` | Bundle's contentType discriminator. `0`=chat, `1`=snap, etc. |
+| `decoded` | `object \| null` | MessageContent codec output, discriminated by `decoded.content.$case`. `null` if the envelope had no content (receipts, metadata-only events) or the codec threw. |
+| `timestamp` | `number` | Message creation time in ms since epoch. Falls back to `Date.now()` when the bundle didn't surface one. |
+| `raw` | `unknown` | Unmodified bundle-realm envelope object. Escape hatch for advanced consumers reading fields the SDK doesn't surface. |
+
+### Reading text messages
+
+```ts
+client.onMessage((msg) => {
+  if (msg.isSender) return;
+  const text = msg.decoded?.content?.text?.text;
+  if (text) {
+    console.log(`<${msg.conversationId}> ${text}`);
+  }
+});
+```
+
+### Discriminating other content kinds
+
+```ts
+client.onMessage((msg) => {
+  if (msg.isSender || !msg.decoded?.content) return;
+  switch (msg.decoded.content.$case) {
+    case "text":
+      console.log("text:", msg.decoded.content.text?.text);
+      break;
+    case "sticker":
+      console.log("sticker received");
+      break;
+    case "externalMedia":
+      console.log("media received");
+      break;
+    default:
+      console.log("unhandled $case:", msg.decoded.content.$case);
+  }
+});
+```
+
+The `$case` discriminator covers every contentType the bundle understands: `text`, `sticker`, `externalMedia`, `snapdoc`, `friendSystem`, etc. The exhaustive list lives in the bundle's MessageContent proto and isn't worth restating here — pattern-match on `$case` for the cases you handle and pass the rest through.
+
+## `Unsubscribe`
+
+```ts
+type Unsubscribe = () => void;
+```
+
+Returned by [`client.onMessage`](/docs/api/snapcap-client#client-onmessage-handler). Calling it detaches the listener from the inbound pump.
+
+```ts
+const off = await client.onMessage(handler);
+// ...later
+off();
+```
+
+Safe to call multiple times; second-and-subsequent calls are no-ops.
+
+## How the pump works
+
+There's no polling. The bundle's natural slot-6 (`analyticsLogger`) and slot-9 (`messagingDelegate`) callbacks already fire for every received message envelope; the SDK wires those into a single `EventEmitter` that `onMessage` subscribes to. Every emit becomes one handler call.
+
+Handler exceptions are caught — one bad consumer can't kill the pump for the rest of the session.
+
+For the bring-up details (when the pump starts, what the slots actually do), see [Messaging session internals](/docs/internals/messaging-session).

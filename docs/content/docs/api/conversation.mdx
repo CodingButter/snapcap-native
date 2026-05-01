@@ -1,16 +1,14 @@
 ---
 title: 'Conversation'
-description: 'A live chat handle. Wraps a conversation ID + participant set so call sites can use ergonomic methods (chat.sendText("hi"), chat.setTyping(2000)) without re-passing IDs.'
+description: 'A live chat handle. Wraps a conversation ID + participant set so call sites can use ergonomic methods (chat.sendText, chat.setTyping) without re-passing IDs.'
 ---
 
 A live chat handle. Wraps a conversation ID + participant set so call sites can use ergonomic methods (`chat.sendText("hi")`, `chat.setTyping(2000)`) without re-passing IDs.
 
-Constructed by `client.getConversations()` (preferred) or `client.conversation(id, [participantIds])` (when you've persisted an ID and want to skip the `SyncConversations` round-trip).
+Constructed by [`client.getConversations()`](/docs/api/snapcap-client#client-getconversations) (preferred) or [`client.conversation(id, participantIds)`](/docs/api/snapcap-client#client-conversation-conversationid-participantuserids) (when you've persisted an ID and want to skip the feed round-trip).
 
 ```ts
-const conversations = await client.getConversations();
-const chat = conversations[0];
-
+const [chat] = await client.getConversations();
 await chat.setTyping(2000);
 await chat.sendText("hello");
 ```
@@ -24,13 +22,14 @@ public readonly kind: ConversationKind;
 public readonly lastActivityAt: Date | undefined;
 ```
 
-```ts
-type ConversationKind = "dm" | "group" | "myStory" | "unknown";
-```
+| Field | Type | Description |
+|---|---|---|
+| `conversationId` | `string` | Hyphenated UUID. |
+| `participants` | `User[]` | Includes the logged-in user when sourced from the feed. |
+| `kind` | `ConversationKind` | One of `"dm" \| "group" \| "myStory" \| "unknown"`. |
+| `lastActivityAt` | `Date \| undefined` | Parsed from Snap's millisecond timestamp; `undefined` when constructed via `client.conversation(...)` with only an ID. |
 
-`participants` includes the logged-in user when the data came from `SyncConversations`. `lastActivityAt` is a `Date` parsed from Snap's millisecond timestamp; `undefined` when constructed via `client.conversation(...)` with only an ID.
-
-## friend (getter)
+### `chat.friend` (getter)
 
 ```ts
 get friend: User | undefined
@@ -40,30 +39,49 @@ The other participant in a DM. `undefined` for groups, my-story, or before the o
 
 ## Sending
 
-### sendText
+### `chat.sendText(message)`
+
+Send a text message into this conversation.
+
+**Signature**
 
 ```ts
 sendText(message: string): Promise<void>
 ```
 
-Send a text message. Requires the owning client's `self` to be set.
+**Throws** — if the owning client's `self` isn't set.
 
-### sendImage
+**Behavior** — Routes through the bundle's natural `sendText` entry so the wire bytes are byte-identical to the official web client.
+
+```ts
+await chat.sendText("hello");
+```
+
+### `chat.sendImage(bytes, opts?)`
+
+Send an image.
+
+**Signature**
 
 ```ts
 sendImage(bytes: Uint8Array, opts?: { width?: number; height?: number }): Promise<void>
 ```
 
-Send an image. The pipeline:
+**Parameters**
 
-1. `getUploadLocations` → signed S3 PUT URL + media id
-2. AES-256-CBC encrypt with a fresh per-message key
-3. PUT ciphertext to S3
-4. `CreateContentMessage` with the media id + key + IV embedded
+| Name | Type | Description |
+|---|---|---|
+| `bytes` | `Uint8Array` | Raw image bytes. PNG / JPEG / WebP. |
+| `opts.width` | `number?` | Ignored on the bundle path (the bundle extracts dimensions itself). Preserved for source-compat. |
+| `opts.height` | `number?` | Same as `width`. |
 
-PNG / JPEG / WebP dimensions are auto-detected. Pass `width`/`height` for other formats.
+**Returns** — `Promise<void>`. Routes through the bundle's `sendImage` entry — encryption, upload, and `CreateContentMessage` are all owned by the bundle.
 
-### sendImageWithCaption
+### `chat.sendImageWithCaption(bytes, caption, opts?)`
+
+Send an image followed by a text caption.
+
+**Signature**
 
 ```ts
 sendImageWithCaption(
@@ -73,58 +91,109 @@ sendImageWithCaption(
 ): Promise<void>
 ```
 
-Send an image followed by a text caption. On the wire this is two separate `CreateContentMessage` calls; Snap's UI renders them as one logical "image with caption."
+**Behavior** — On the wire this is two separate `CreateContentMessage` calls (image first, text immediately after); Snap's UI renders them as one logical "image with caption".
 
-### typeAndSendText
+### `chat.typeAndSendText(durationMs, message)`
+
+Show the typing indicator for `durationMs`, then send the message.
+
+**Signature**
 
 ```ts
 typeAndSendText(durationMs: number, message: string): Promise<void>
 ```
 
-Show the typing indicator for `durationMs`, then send the message. Mimics a human composing in the UI.
+Mimics a human composing a message in the UI: the recipient sees the typing indicator, then sees the message land.
+
+```ts
+await chat.typeAndSendText(2000, "hi from snapcap");
+```
 
 ## Presence
 
-### setTyping
+### `chat.setTyping(durationMs?)`
+
+Show the "typing…" indicator to the recipient.
+
+**Signature**
 
 ```ts
 setTyping(durationMs?: number): Promise<void>
 ```
 
-Show the "typing…" indicator to the recipient.
+**Parameters**
 
-- **No argument** — single pulse. Snap's UI auto-clears in ~5 s.
-- **`durationMs`** — refreshes every 2.5 s for the duration so the indicator stays on continuously.
+| Name | Type | Description |
+|---|---|---|
+| `durationMs` | `number?` | Without it: a single pulse (Snap's UI auto-clears in ~3 s). With it: refreshes every 2.5 s for the duration so the indicator stays on continuously. |
 
-Routes over the duplex WebSocket. The gRPC equivalent is accepted server-side but doesn't fan out — `setTyping` is the only thing that actually shows up to recipients.
+**Behavior** — Routes through the bundle's `sendTypingNotification` ConversationManager method. The bundle owns the duplex WS + Comlink dispatch internally.
 
-### markViewed
+### `chat.markViewed(state?)`
+
+Mark the conversation as actively viewed — recipient sees the "in chat" bitmoji indicator.
+
+**Signature**
 
 ```ts
 markViewed(state?: number): Promise<void>
 ```
 
-Mark the conversation as actively viewed — recipient sees the "in chat" bitmoji indicator. Routes over the duplex WebSocket.
+**Parameters**
 
-### markMessageViewed
+| Name | Type | Description |
+|---|---|---|
+| `state` | `number?` | Defaults to `ConversationViewState.ACTIVE` (10). The bundle path collapses any non-zero state to `enterConversation`. |
+
+**Behavior** — Routes through `enterConversation` on the bundle's ConversationManager.
+
+### `chat.markMessageViewed(messageId, action?)`
+
+Mark a single received message as viewed.
+
+**Signature**
 
 ```ts
-markMessageViewed(messageId: bigint, action?: number): Promise<void>
+markMessageViewed(
+  messageId: string | { id: Uint8Array } | bigint,
+  action?: number,
+): Promise<void>
 ```
 
-Mark a single received message as viewed. `action` defaults to 15 (mark-viewed in captured traffic).
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `messageId` | `string \| { id: Uint8Array } \| bigint` | Hyphenated UUID string (the bundle's `attemptId.id` shape — what `client.onMessage` surfaces as `msg.messageId`) or a `{ id: bytes16 }` envelope. **`bigint` is rejected on the bundle path** — pass the UUID form. |
+| `action` | `number?` | Display state. Defaults to `15` for legacy compat; the bundle path uses `1` (`MESSAGE_DISPLAY_STATE_DISPLAYED`) by convention. |
+
+**Throws** — if the owning client's `self` isn't set, or if you pass a `bigint` on the bundle path.
+
+```ts
+client.onMessage(async (msg) => {
+  if (msg.isSender) return;
+  const chat = client.conversation(msg.conversationId);
+  await chat.markMessageViewed(msg.messageId);
+});
+```
 
 ## Constants
 
+### `TypingActivity`
+
 ```ts
 export const TypingActivity = {
-  TEXT: 6,
+  TEXT: 6,    // active TEXT typing in real traffic
 } as const;
+```
 
+Other values exist on the wire (voice recording, etc.) but aren't surfaced — added when recon validates them.
+
+### `ConversationViewState`
+
+```ts
 export const ConversationViewState = {
   ENTERED: 9,    // entering / focusing the conversation
   ACTIVE:  10,   // actively viewing
 } as const;
 ```
-
-Other values exist on the wire (voice recording, etc.) but aren't surfaced yet — we add them as recon validates them.

@@ -11,6 +11,7 @@
  * `sandbox.runInContext(src)`.
  */
 import { Sandbox, type SandboxOpts } from "./sandbox.ts";
+import { setThrottle } from "../transport/native-fetch.ts";
 
 let installed: Sandbox | null = null;
 
@@ -21,8 +22,10 @@ export function installShims(opts: InstallShimOpts = {}): Sandbox {
     const e = new Error();
     process.stderr.write(`[shims] installShims(${opts.url ?? "default"}) installed=${!!installed}\n  ${e.stack?.split("\n").slice(2, 5).join("\n  ")}\n`);
   }
-  if (installed) return installed;
-  installed = new Sandbox(opts);
+  if (!installed) installed = new Sandbox(opts);
+  // Last-call-wins for throttle so a re-installShims() with different
+  // throttle config rebinds the gate. Safe with `undefined` (disables).
+  setThrottle(opts.throttle);
   return installed;
 }
 

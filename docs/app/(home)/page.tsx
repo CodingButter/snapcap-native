@@ -14,7 +14,7 @@ const features = [
   {
     title: 'Browser-shaped persistence',
     body:
-      'Hand the client a DataStore — file, memory, Redis, KMS, whatever — and the bundle’s cookies, bearer, Fidelius identity, and sandboxed local/session/IndexedDB writes all land under stable keys. Cold start ~5 s; warm start ~1 ms.',
+      'Hand the client a DataStore — file, memory, Redis, KMS, whatever — and cookies, bearer, the bundle\'s sandboxed local/session/IndexedDB writes (including its own wrapped E2E identity) all land under stable keys. Cold start ~5 s; warm start ~1 ms.',
   },
   {
     title: 'gRPC-Web for free',
@@ -24,7 +24,7 @@ const features = [
   {
     title: 'One-line API',
     body:
-      'if (await client.isAuthorized()) await client.listFriends(). Login, bearer rotation, cookie jar, and gRPC framing all live under the surface.',
+      'if (await client.isReady()) await client.listFriends(). Login, bearer rotation, cookie jar, and gRPC framing all live under the surface.',
   },
   {
     title: 'Multi-account ready',

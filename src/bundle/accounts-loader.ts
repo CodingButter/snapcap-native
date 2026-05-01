@@ -16,7 +16,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { installShims, type InstallShimOpts } from "../shims/runtime.ts";
 import { installWebpackCapture } from "../shims/webpack-capture.ts";
-import { ensureBundle } from "./ensure-bundle.ts";
+import { ensureBundle } from "./download.ts";
 
 export type KameleonOpts = {
   /** Root of vendor/snap-bundle (defaults to packages/native/vendor/snap-bundle). */
@@ -111,6 +111,32 @@ async function bootKameleonOnce(opts: KameleonOpts): Promise<BootedKameleon> {
         "p.m=s,p.amdO={}",
         "globalThis.__snapcap_p=p,p.m=s,p.amdO={}",
       );
+    }
+    // Expose `WebLoginServiceClientImpl` (`L`) from accounts module 13150 to
+    // globalThis. Same pattern as the chat-bundle Fi/Ni/jz patches: we keep
+    // the original `class L` binding intact (so the rest of the module body
+    // resolves it normally) and inject a sibling assignment that hangs the
+    // class onto a sandbox-global symbol after its body lands. Reaching this
+    // class lets us instantiate a login client outside React context — the
+    // React tree never has to mount.
+    //
+    // The anchor is the boundary between class L's last method binding and
+    // the `let D={serviceName:"snapchat.janus.api.WebLoginService"}` that
+    // immediately follows. Inserting an assignment here runs once at module
+    // eval time, so __SNAPCAP_LOGIN_CLIENT_IMPL is set BEFORE we ever look
+    // for it. Also exposes `M` (the WebLogin descriptor / "Desc") on the
+    // same anchor so a host-realm caller can decode/encode requests without
+    // re-deriving the service shape.
+    if (rel === "pages/_app-7ccf4584432ba8ad.js") {
+      const anchor = "}let D={serviceName:\"snapchat.janus.api.WebLoginService\"}";
+      if (src.includes(anchor)) {
+        src = src.replace(
+          anchor,
+          "}globalThis.__SNAPCAP_LOGIN_CLIENT_IMPL=L;let D={serviceName:\"snapchat.janus.api.WebLoginService\"}",
+        );
+      } else {
+        throw new Error("accounts-bundle: WebLoginServiceClientImpl source-patch site missing — bundle version may have shifted");
+      }
     }
     // Wrap in an IIFE so module/exports/require are scoped locals matching
     // the shape `new Function(...)(...)` previously gave us. Top-level

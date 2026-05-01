@@ -31,3 +31,6 @@ coverage/
 # Local scratch (auth state, recon HARs, etc) — never commit
 .tmp/
 
+# Dev probe scripts that hardcode test creds — keep local, don't ship
+scripts/test-bundle-auth.ts
+
