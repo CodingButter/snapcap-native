@@ -1,25 +1,33 @@
 /**
  * Promise-friendly IndexedDB helpers.
  *
- * The SDK persists Fidelius identity (and any future stateful blobs we
- * want sandbox-visible) by going through the IDB shim rather than
- * touching the DataStore directly. That way:
+ * @remarks
+ * The SDK persists Fidelius identity (and any future stateful blobs we want
+ * sandbox-visible) by going through the IDB shim rather than touching the
+ * {@link DataStore} directly. That way:
  *
- *   - keys land under the same `indexdb_<db>__<store>__<key>` namespace
- *     the bundle uses, so consumers see one coherent persistence layout;
- *   - if a DataStore was passed to the sandbox, our IDB shim takes the
- *     write; otherwise we fall through to happy-dom's in-memory IDB and
- *     things still work in tests.
+ * - keys land under the same `indexdb_<db>__<store>__<key>` namespace the
+ *   bundle uses, so consumers see one coherent persistence layout;
+ * - if a {@link DataStore} was passed to the sandbox, our IDB shim takes the
+ *   write; otherwise we fall through to happy-dom's in-memory IDB and things
+ *   still work in tests.
  *
- * Usage:
+ * Each call opens the database with the named object store, runs one op,
+ * and waits for the transaction to settle. The shim is cheap so we don't
+ * bother caching the `IDBDatabase` across calls.
  *
- *   await idbPut("snapcap", "fidelius", "identity", blob);
- *   const blob = await idbGet<MyBlob>("snapcap", "fidelius", "identity");
- *   await idbDelete("snapcap", "fidelius", "identity");
+ * @example
+ * ```ts
+ * import { idbGet, idbPut, idbDelete } from "@snapcap/native";
  *
- * Each call opens the database with the named object store, runs one
- * op, and waits for the transaction to settle. The shim is cheap so we
- * don't bother caching the IDBDatabase across calls.
+ * await idbPut("snapcap", "fidelius", "identity", blob);
+ * const blob = await idbGet<MyBlob>("snapcap", "fidelius", "identity");
+ * await idbDelete("snapcap", "fidelius", "identity");
+ * ```
+ *
+ * @see {@link idbGet}
+ * @see {@link idbPut}
+ * @see {@link idbDelete}
  */
 import { getSandbox } from "../shims/runtime.ts";
 
@@ -55,9 +63,11 @@ type MiniFactory = {
 };
 
 /**
- * Resolve the sandbox's `indexedDB` global. With a DataStore configured
- * this is our shim; without one it's happy-dom's default. We tolerate
- * either shape — the property surface we use is identical.
+ * Resolve the sandbox's `indexedDB` global. With a {@link DataStore}
+ * configured this is our shim; without one it's happy-dom's default. We
+ * tolerate either shape — the property surface we use is identical.
+ *
+ * @internal
  */
 function getIDB(): MiniFactory {
   const sb = getSandbox();
@@ -68,9 +78,11 @@ function getIDB(): MiniFactory {
 
 /**
  * Open `dbName`, ensure `storeName` exists (creates it via the upgrade
- * callback on first use), and resolve the database handle. Each call
- * uses a fresh `version=1` open — for an existing store the upgrade
- * branch never fires.
+ * callback on first use), and resolve the database handle. Each call uses a
+ * fresh `version=1` open — for an existing store the upgrade branch never
+ * fires.
+ *
+ * @internal
  */
 function openDb(dbName: string, storeName: string): Promise<MiniDatabase> {
   const idb = getIDB();
@@ -91,7 +103,11 @@ function openDb(dbName: string, storeName: string): Promise<MiniDatabase> {
   });
 }
 
-/** Run a single object-store op inside a transaction and wait for completion. */
+/**
+ * Run a single object-store op inside a transaction and wait for completion.
+ *
+ * @internal
+ */
 function runOp<T>(
   db: MiniDatabase,
   storeName: string,
@@ -126,7 +142,24 @@ function runOp<T>(
   });
 }
 
-/** Read a JSON-decoded value at the given (db, store, key). Undefined if absent. */
+/**
+ * Read a value from the sandbox's IndexedDB at `(dbName, storeName, key)`.
+ *
+ * @typeParam T - The value type stored at this key.
+ * @param dbName - IndexedDB database name.
+ * @param storeName - Object store name within the database. Created on
+ *   first use if absent.
+ * @param key - Record key within the object store.
+ * @returns The stored value, or `undefined` if absent.
+ *
+ * @example
+ * ```ts
+ * const identity = await idbGet<{ pub: Uint8Array }>("snapcap", "fidelius", "identity");
+ * ```
+ *
+ * @see {@link idbPut}
+ * @see {@link idbDelete}
+ */
 export async function idbGet<T = unknown>(
   dbName: string,
   storeName: string,
@@ -136,7 +169,23 @@ export async function idbGet<T = unknown>(
   return runOp<T | undefined>(db, storeName, "readonly", (s) => s.get(key));
 }
 
-/** Write `value` (JSON-encoded) at the given (db, store, key). */
+/**
+ * Write `value` into the sandbox's IndexedDB at `(dbName, storeName, key)`.
+ *
+ * @param dbName - IndexedDB database name.
+ * @param storeName - Object store name within the database. Created on
+ *   first use if absent.
+ * @param key - Record key within the object store.
+ * @param value - Any structured-cloneable value.
+ *
+ * @example
+ * ```ts
+ * await idbPut("snapcap", "fidelius", "identity", { pub, priv });
+ * ```
+ *
+ * @see {@link idbGet}
+ * @see {@link idbDelete}
+ */
 export async function idbPut(
   dbName: string,
   storeName: string,
@@ -147,7 +196,16 @@ export async function idbPut(
   await runOp<unknown>(db, storeName, "readwrite", (s) => s.put(value, key));
 }
 
-/** Delete the entry at the given (db, store, key). No-op if absent. */
+/**
+ * Delete the entry at `(dbName, storeName, key)`. No-op if absent.
+ *
+ * @param dbName - IndexedDB database name.
+ * @param storeName - Object store name within the database.
+ * @param key - Record key within the object store.
+ *
+ * @see {@link idbGet}
+ * @see {@link idbPut}
+ */
 export async function idbDelete(
   dbName: string,
   storeName: string,

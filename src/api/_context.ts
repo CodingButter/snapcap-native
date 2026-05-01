@@ -8,6 +8,7 @@
  * the bundle-driven flows use to make idempotent bring-ups cheap on
  * repeat calls.
  *
+ * @remarks
  * This is the substitute for "method on a class" — passing a small
  * context bag keeps each api function a stateless export, which fits the
  * registry pattern: `register.ts` exports flat verbs, `api/<domain>.ts`
@@ -20,11 +21,23 @@
  * future api file (`messaging.ts`, `friends.ts` migrations, …) will
  * import the same shape — and circular import risk goes up if it's
  * embedded in the first consumer.
+ *
+ * @internal
  */
 import type { Sandbox } from "../shims/sandbox.ts";
 import type { CookieJarStore } from "../storage/cookie-store.ts";
 import type { DataStore } from "../storage/data-store.ts";
 
+/**
+ * Per-instance state bag threaded through every api-layer function.
+ *
+ * Constructed once by {@link SnapcapClient} via `makeContext` (see
+ * `api/auth.ts`) and re-used across every call. Not part of the public
+ * consumer surface — exposed as an exported type only because the
+ * api-layer functions accept it as their first parameter.
+ *
+ * @internal
+ */
 export interface ClientContext {
   /** Sandbox (vm.Context + happy-dom Window) — same instance shimmed at construction. */
   sandbox: Sandbox;

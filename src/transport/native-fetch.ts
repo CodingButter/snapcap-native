@@ -5,16 +5,19 @@
  * never lands on the host globalThis — `installShims()` keeps happy-dom
  * scoped to the sandbox vm.Context (see `shims/sandbox.ts`).
  *
+ * @remarks
  * Eager-binding is preserved as defence-in-depth: if a future change ever
  * regresses sandbox isolation (e.g. someone reaches for GlobalRegistrator),
  * snapshotting at module load means we still get the un-shimmed fetch.
  *
  * Observability: this is the single chokepoint for HOST-realm traffic, so
  * we wrap the snapshotted fetch in a logging adapter that emits
- * net.fetch.{open,done,error} via `logging.ts`. The sandbox `fetch` shim
+ * `net.fetch.{open,done,error}` via {@link Logger}. The sandbox `fetch` shim
  * (`shims/fetch.ts`) emits its OWN events from inside the sandbox before
  * delegating here; both layers log so consumers see every hop. When no
  * logger is installed `log()` is a no-op — zero perf cost.
+ *
+ * @internal
  */
 import { log } from "../logging.ts";
 
@@ -22,15 +25,22 @@ import { log } from "../logging.ts";
  * Eager snapshot of the un-shimmed fetch. Kept around so the wrapper has a
  * stable reference even if a future shim hooks `globalThis.fetch`.
  *
+ * @remarks
  * Throttling is NOT applied here — it lives per-Sandbox at
  * `Sandbox.throttleGate`, which the sandbox shims (`shims/fetch.ts`,
  * `shims/xml-http-request.ts`) await before calling into this layer.
  * Direct callers (e.g. login's SSO redirect dance) bypass throttling
  * by design — login is per-account and not the multi-instance concern.
+ *
+ * @internal
  */
 const snapshotFetch = globalThis.fetch.bind(globalThis);
 
-/** Best-effort byte size of an outgoing fetch body. Sizes only, never content. */
+/**
+ * Best-effort byte size of an outgoing fetch body. Sizes only, never content.
+ *
+ * @internal
+ */
 function bodyByteLength(body: BodyInit | null | undefined): number {
   if (body === null || body === undefined) return 0;
   if (typeof body === "string") return new TextEncoder().encode(body).byteLength;
@@ -44,7 +54,11 @@ function bodyByteLength(body: BodyInit | null | undefined): number {
   return 0;
 }
 
-/** Resolve a fetch input arg to a string URL for logging. */
+/**
+ * Resolve a fetch input arg to a string URL for logging.
+ *
+ * @internal
+ */
 function inputToUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.href;
@@ -54,7 +68,11 @@ function inputToUrl(input: RequestInfo | URL): string {
   return String(input);
 }
 
-/** Resolve method from init (preferred) or input (Request fallback). */
+/**
+ * Resolve method from init (preferred) or input (Request fallback).
+ *
+ * @internal
+ */
 function resolveMethod(input: RequestInfo | URL, init?: RequestInit): string {
   const fromInit = init?.method;
   if (typeof fromInit === "string") return fromInit.toUpperCase();
@@ -65,12 +83,16 @@ function resolveMethod(input: RequestInfo | URL, init?: RequestInit): string {
 
 /**
  * Logging wrapper around the snapshotted fetch. Same signature as the
- * native fetch, plus net.fetch.* events emitted on every call. The body
- * stream of the returned Response is NOT read here — consumers continue to
- * call `.json()` / `.text()` / `.arrayBuffer()` themselves — so we report
- * `respBytes: 0` from the wrapper. Per-shim wrappers (the sandbox fetch
- * shim and the XHR shim) both drain bodies themselves and log accurate
+ * native fetch, plus `net.fetch.*` events emitted on every call.
+ *
+ * @remarks
+ * The body stream of the returned Response is NOT read here — consumers
+ * continue to call `.json()` / `.text()` / `.arrayBuffer()` themselves — so
+ * we report `respBytes: 0` from the wrapper. Per-shim wrappers (the sandbox
+ * fetch shim and the XHR shim) both drain bodies themselves and log accurate
  * sizes from there; this layer reports the request shape + status only.
+ *
+ * @internal
  */
 async function loggingFetch(
   input: RequestInfo | URL,
@@ -114,4 +136,10 @@ async function loggingFetch(
   return res;
 }
 
+/**
+ * Logging-wrapped, sandbox-bypass `fetch` used for HOST-realm traffic
+ * (login, gRPC, media uploads). Same signature as the platform `fetch`.
+ *
+ * @internal
+ */
 export const nativeFetch: typeof fetch = loggingFetch as typeof fetch;

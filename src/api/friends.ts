@@ -1,33 +1,31 @@
 /**
  * Friends manager — domain surface for the social graph.
  *
- * Tier-2 manager (per the architecture pivot): takes consumer-friendly args
- * (UUID strings, named enums) and bridges to the bundle's closure-private
- * mechanisms via `bundle/register.ts` getters. Does NOT leak bundle shapes
- * (`Uuid64Pair`, `friendId.{highBits,lowBits}`, `mutable_username`, etc.).
+ * Tier-2 manager (per the architecture pivot): takes consumer-friendly
+ * args (UUID strings, named enums) and bridges to the bundle's
+ * closure-private mechanisms via `bundle/register.ts` getters. Does NOT
+ * leak bundle shapes (`Uuid64Pair`, `friendId.{highBits,lowBits}`,
+ * `mutable_username`, etc.).
  *
+ * @remarks
  * Method → mechanism table:
- *   - add/remove/block/unblock/ignore  → `friendActionClient()` (jz) via
- *                                          private `friendActionMutation`
- *                                          dispatcher.
- *   - list / incomingRequests / outgoingRequests / snapshot
- *                                       → Zustand state (`userSlice()`),
- *                                          centralized through `#ensureSynced`
- *                                          + `snapshot()` — split readers are
- *                                          one-line slices of the snapshot.
- *   - search                            → `searchUsers()` (register-
- *                                          composed: codecs + authed POST).
- *   - onChange                          → single `subscribeUserSlice` with a
- *                                          composite selector covering
- *                                          mutuals + incoming + outgoing.
- *   - acceptRequest / rejectRequest     → BLOCKED on `__SNAPCAP_FRIEND_REQUESTS_CLIENT`
- *                                          source-patch (TODO in register.ts) —
- *                                          throws an explicit "not yet wired" error.
  *
- * Why a class instead of flat functions: `IFriendsManager` carries a
- * subscription method (`onChange`), so it has identity-bearing state — fits
- * the "persistent-subscriber surface" carve-out in
+ * | Method | Mechanism |
+ * | --- | --- |
+ * | `add` / `remove` / `block` / `unblock` / `ignore` | `friendActionClient()` (jz) via private `friendActionMutation` dispatcher |
+ * | `list` / `incomingRequests` / `outgoingRequests` / `snapshot` | Zustand state (`userSlice()`), centralized through `#ensureSynced` + `snapshot()` |
+ * | `search` | `searchUsers()` (register-composed: codecs + authed POST) |
+ * | `onChange` | Single `subscribeUserSlice` with a composite selector covering mutuals + incoming + outgoing |
+ * | `acceptRequest` / `rejectRequest` | BLOCKED on `__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch — throws an explicit "not yet wired" error |
+ *
+ * Why a class instead of flat functions: {@link IFriendsManager} carries
+ * a subscription method (`onChange`), so it has identity-bearing state
+ * — fits the "persistent-subscriber surface" carve-out in
  * `feedback_registry_pattern.md`.
+ *
+ * @see {@link IFriendsManager}
+ * @see {@link Friends}
+ * @see {@link SnapcapClient.friends}
  */
 import type { ClientContext } from "./_context.ts";
 import {
@@ -50,17 +48,30 @@ import { bytesToUuid, extractUserId, makeFriendIdParams } from "./_helpers.ts";
 // These are the public types the SDK surfaces — strings for UUIDs, named
 // enums where appropriate, no protobuf-decoded objects leaking through.
 
-/** 16-byte UUID as a hyphenated string (e.g. "eabd1d89-239a-4f7b-bbcc-0ae3b26c5202"). */
+/**
+ * 16-byte UUID rendered as a hyphenated string.
+ *
+ * @example
+ * ```ts
+ * const id: UserId = "eabd1d89-239a-4f7b-bbcc-0ae3b26c5202";
+ * ```
+ */
 export type UserId = string;
 
-/** Cancel a previously-registered subscription. Idempotent. */
+/**
+ * Thunk returned by subscription methods (e.g.
+ * {@link IFriendsManager.onChange}). Calling it cancels the subscription.
+ * Idempotent — calling more than once is a no-op.
+ */
 export type Unsubscribe = () => void;
 
 /**
- * `FriendSource` enum — attribution for `add(userId, source?)`. Mirrors
- * the bundle's `J$.source` field on `FriendActionParams` (chat module
- * 10409, offset ~1406050 in `9846a7958a5f0bee7197.js`).
+ * Attribution source for {@link IFriendsManager.add}.
  *
+ * Mirrors the bundle's `J$.source` field on `FriendActionParams` (chat
+ * module 10409, offset ~1406050 in `9846a7958a5f0bee7197.js`).
+ *
+ * @remarks
  * Default for `add()` is `ADDED_BY_USERNAME` — what the SPA sends from
  * the search-result "Add" button.
  */
@@ -79,11 +90,18 @@ export const FriendSource = {
   ADDED_BY_SEARCH: 32,
   ADDED_BY_WEB: 33,
 } as const;
+/**
+ * String-keyed enum form of {@link FriendSource} — the type of any value
+ * read off the const object.
+ */
 export type FriendSource = typeof FriendSource[keyof typeof FriendSource];
 
 /**
- * Friend-link state. Captured codes from the bundle's `friendLinkType`
- * field; "unknown" for any other value until labelled.
+ * Friend-link state.
+ *
+ * @remarks
+ * Captured codes from the bundle's `friendLinkType` field; `"unknown"`
+ * for any other value until labelled.
  */
 export type FriendLinkType =
   | "mutual"
@@ -95,70 +113,94 @@ export type FriendLinkType =
 
 /**
  * A user surfaced from search / lookup. Carries no friend-graph metadata
- * (use `Friend` for that).
+ * (use {@link Friend} for that).
  *
+ * @remarks
  * `username` may be empty when the SDK has the userId but hasn't yet
- * back-filled the `state.user.publicUsers` cache for it (e.g. immediately
- * after `syncFriends()` returns ids before public-info is fetched). In
- * that case callers can still match by `userId`.
+ * back-filled the `state.user.publicUsers` cache for it (e.g.
+ * immediately after `syncFriends()` returns ids before public-info is
+ * fetched). In that case callers can still match by `userId`.
  */
 export interface User {
+  /** Hyphenated UUID. */
   userId: UserId;
+  /** Snap username (handle). May be empty during initial sync. */
   username: string;
+  /** Display name shown in the Snap UI. Optional — not always set. */
   displayName?: string;
 }
 
 /**
- * A friend in the logged-in user's social graph. Superset of `User`
- * with friend-link metadata and (when surfaced by the server) timestamps.
+ * A friend in the logged-in user's social graph.
+ *
+ * Superset of {@link User} with friend-link metadata and (when surfaced
+ * by the server) timestamps.
  */
 export interface Friend extends User {
+  /** Link state — `"mutual"` for entries returned by {@link IFriendsManager.list}. */
   friendType: FriendLinkType;
-  /** When the friend was added (server-side ms timestamp surfaced as Date). */
+  /** When the friend was added (server-side ms timestamp surfaced as a Date). */
   addedAt?: Date;
-  /** True if the logged-in user has muted this friend's story. */
+  /** `true` if the logged-in user has muted this friend's story. */
   isStoryMuted?: boolean;
-  /** True if the friend's account has Snapchat+. */
+  /** `true` if the friend's account has Snapchat+. */
   isPlusSubscriber?: boolean;
 }
 
 /**
  * An inbound friend request — someone has added the logged-in user and is
- * waiting for `acceptRequest` / `rejectRequest`.
+ * waiting for {@link IFriendsManager.acceptRequest} or
+ * {@link IFriendsManager.rejectRequest}.
  */
 export interface FriendRequest {
+  /** Hyphenated UUID of the requester. */
   fromUserId: UserId;
+  /** Requester's Snap username (handle). */
   fromUsername: string;
+  /** Requester's display name. Optional. */
   fromDisplayName?: string;
-  /** Server-side ms timestamp surfaced as Date. */
+  /** Server-side ms timestamp surfaced as a Date. */
   receivedAt?: Date;
-  /** Best-effort source attribution (mirrors FriendSource enum). */
+  /** Best-effort source attribution (mirrors {@link FriendSource} enum). */
   source?: FriendSource;
 }
 
 /**
  * An outbound friend request — the logged-in user has added this account
- * and is waiting for them to accept. `toUsername` / `toDisplayName` are
- * best-effort: populated only when the recipient is already in the
- * `publicUsers` cache (mutuals lookups, prior search, etc.). Callers can
- * always match on `toUserId`.
+ * and is waiting for them to accept.
+ *
+ * @remarks
+ * `toUsername` / `toDisplayName` are best-effort: populated only when
+ * the recipient is already in the `publicUsers` cache (mutuals lookups,
+ * prior search, etc.). Callers can always match on `toUserId`.
  */
 export interface OutgoingRequest {
+  /** Hyphenated UUID of the recipient. */
   toUserId: UserId;
+  /** Recipient's Snap username — only present when the public-users cache holds them. */
   toUsername?: string;
+  /** Recipient's display name — only present when the public-users cache holds them. */
   toDisplayName?: string;
 }
 
 /**
  * A point-in-time view of the entire friend graph — mutuals + pending
- * requests in both directions. Returned by `snapshot()` (canonical) and
- * the underlying source for `list()` / `incomingRequests()` /
- * `outgoingRequests()`. Same object shape is delivered to `onChange`
- * subscribers whenever any of the three slots mutates.
+ * requests in both directions.
+ *
+ * @remarks
+ * Returned by {@link IFriendsManager.snapshot} (canonical) and the
+ * underlying source for {@link IFriendsManager.list},
+ * {@link IFriendsManager.incomingRequests}, and
+ * {@link IFriendsManager.outgoingRequests}. The same object shape is
+ * delivered to {@link IFriendsManager.onChange} subscribers whenever any
+ * of the three slots mutates.
  */
 export interface FriendsSnapshot {
+  /** All mutually-confirmed friends. */
   mutuals: Friend[];
+  /** Pending inbound friend requests (others adding the logged-in user). */
   incoming: FriendRequest[];
+  /** Pending outbound friend requests (the logged-in user's adds). */
   outgoing: OutgoingRequest[];
 }
 
@@ -167,66 +209,203 @@ export interface FriendsSnapshot {
 /**
  * Friends domain manager — all friend-graph operations live here.
  *
- * All UUIDs are hyphenated string `UserId` values. Mutations resolve `void`
- * on success; reads return consumer-shape types (`Friend`, `User`,
- * `FriendRequest`, `OutgoingRequest`) — never bundle protobuf shapes.
+ * All UUIDs are hyphenated string {@link UserId} values. Mutations
+ * resolve `void` on success; reads return consumer-shape types
+ * ({@link Friend}, {@link User}, {@link FriendRequest},
+ * {@link OutgoingRequest}) — never bundle protobuf shapes.
  *
- * Reads share a single underlying `snapshot()` — `list()`,
- * `incomingRequests()`, and `outgoingRequests()` are slim accessors that
- * project the relevant slice. One subscription method (`onChange`) fires
- * whenever any of the three slots changes; it returns an `Unsubscribe`
- * thunk that's idempotent.
+ * @remarks
+ * Reads share a single underlying {@link IFriendsManager.snapshot}.
+ * {@link IFriendsManager.list}, {@link IFriendsManager.incomingRequests},
+ * and {@link IFriendsManager.outgoingRequests} are slim accessors that
+ * project the relevant slice. One subscription method
+ * ({@link IFriendsManager.onChange}) fires whenever any of the three
+ * slots changes; it returns an `Unsubscribe` thunk that's
+ * idempotent.
  *
- * Pending-request methods (`acceptRequest`, `rejectRequest`) are gated on
- * the chat-bundle source-patch surfacing the closure-private
- * `FriendRequests` client (planned global: `__SNAPCAP_FRIEND_REQUESTS_CLIENT`).
- * Until that lands, `acceptRequest` / `rejectRequest` throw an explicit
- * "not yet wired" error.
+ * Pending-request methods ({@link IFriendsManager.acceptRequest},
+ * {@link IFriendsManager.rejectRequest}) are gated on the chat-bundle
+ * source-patch surfacing the closure-private `FriendRequests` client
+ * (planned global: `__SNAPCAP_FRIEND_REQUESTS_CLIENT`). Until that
+ * lands, those methods throw an explicit "not yet wired" error.
+ *
+ * @see {@link Friends}
+ * @see {@link FriendsSnapshot}
  */
 export interface IFriendsManager {
   // ── Friend mutations ────────────────────────────────────────────────
+
   /**
-   * Send a friend request / add a user to the friend list. Resolves once
-   * the server acknowledges. `source` defaults to
-   * `FriendSource.ADDED_BY_USERNAME`.
+   * Send a friend request / add a user to the friend list.
+   *
+   * Resolves once the server acknowledges. `source` defaults to
+   * {@link FriendSource}`.ADDED_BY_USERNAME`.
+   *
+   * @param userId - Hyphenated UUID of the user to add.
+   * @param source - Attribution context; defaults to
+   * `ADDED_BY_USERNAME`. See {@link FriendSource}.
+   *
+   * @example
+   * ```ts
+   * await client.friends.add("eabd1d89-239a-4f7b-bbcc-0ae3b26c5202");
+   * ```
+   * @example
+   * ```ts
+   * import { FriendSource } from "@snapcap/native";
+   * await client.friends.add(userId, FriendSource.ADDED_BY_SEARCH);
+   * ```
    */
   add(userId: UserId, source?: FriendSource): Promise<void>;
-  /** Remove a friend from the social graph. */
+
+  /**
+   * Remove a friend from the social graph.
+   *
+   * @param userId - Hyphenated UUID of the friend to remove.
+   *
+   * @remarks
+   * Snap unfriend is asymmetric — the recipient unfriending the sender
+   * doesn't sever the link from the sender's side. Subsequent
+   * {@link IFriendsManager.add} calls against an account that still sees
+   * the caller as mutual become silent no-ops.
+   *
+   * @example
+   * ```ts
+   * await client.friends.remove(userId);
+   * ```
+   */
   remove(userId: UserId): Promise<void>;
-  /** Block a user — also removes any existing friend link. */
+
+  /**
+   * Block a user — also removes any existing friend link.
+   *
+   * @param userId - Hyphenated UUID of the user to block.
+   *
+   * @example
+   * ```ts
+   * await client.friends.block(userId);
+   * ```
+   */
   block(userId: UserId): Promise<void>;
-  /** Unblock a previously-blocked user. */
+
+  /**
+   * Unblock a previously-blocked user.
+   *
+   * @param userId - Hyphenated UUID of the user to unblock.
+   */
   unblock(userId: UserId): Promise<void>;
-  /** Ignore an incoming friend request without explicitly rejecting. */
+
+  /**
+   * Ignore an incoming friend request without explicitly rejecting.
+   *
+   * @param userId - Hyphenated UUID of the requester to ignore.
+   */
   ignore(userId: UserId): Promise<void>;
-  /** Accept an incoming friend request. */
+
+  /**
+   * Accept an incoming friend request.
+   *
+   * @param userId - Hyphenated UUID of the requester whose request to
+   * accept.
+   * @throws Currently always throws — gated on the
+   * `__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch landing in
+   * `register.ts`.
+   */
   acceptRequest(userId: UserId): Promise<void>;
-  /** Reject an incoming friend request. */
+
+  /**
+   * Reject an incoming friend request.
+   *
+   * @param userId - Hyphenated UUID of the requester whose request to
+   * reject.
+   * @throws Currently always throws — gated on the
+   * `__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch landing in
+   * `register.ts`.
+   */
   rejectRequest(userId: UserId): Promise<void>;
 
   // ── Reads ───────────────────────────────────────────────────────────
-  /** All friends in the logged-in user's social graph (excluding self). */
+
+  /**
+   * All friends in the logged-in user's social graph (excluding self).
+   *
+   * @returns Mutually-confirmed friends as {@link Friend} records.
+   *
+   * @example
+   * ```ts
+   * const friends = await client.friends.list();
+   * for (const f of friends) console.log(f.username);
+   * ```
+   */
   list(): Promise<Friend[]>;
-  /** All pending incoming friend requests. */
+
+  /**
+   * All pending incoming friend requests.
+   *
+   * @returns Inbound {@link FriendRequest} records waiting for accept /
+   * reject / ignore.
+   */
   incomingRequests(): Promise<FriendRequest[]>;
-  /** All pending outgoing friend requests (the logged-in user's adds). */
+
+  /**
+   * All pending outgoing friend requests (the logged-in user's adds
+   * waiting for the recipient to accept).
+   *
+   * @returns Outbound {@link OutgoingRequest} records.
+   */
   outgoingRequests(): Promise<OutgoingRequest[]>;
+
   /**
    * Canonical point-in-time view of the friend graph — mutuals + pending
-   * requests in both directions. The split read accessors (`list`,
-   * `incomingRequests`, `outgoingRequests`) all project from this.
+   * requests in both directions.
+   *
+   * @returns A {@link FriendsSnapshot} with all three slots populated.
+   *
+   * @remarks
+   * The split read accessors ({@link IFriendsManager.list},
+   * {@link IFriendsManager.incomingRequests},
+   * {@link IFriendsManager.outgoingRequests}) all project from this.
    */
   snapshot(): Promise<FriendsSnapshot>;
-  /** Search Snap's user index by username / display-name fragment. */
+
+  /**
+   * Search Snap's user index by username / display-name fragment.
+   *
+   * @param query - Free-text query — Snap's "Add Friends" search box
+   * matches both usernames and display names, with prefix and substring
+   * weighting.
+   * @returns A list of matching {@link User} records. Empty when `query`
+   * is empty or no users match.
+   *
+   * @example
+   * ```ts
+   * const users = await client.friends.search("alice");
+   * ```
+   */
   search(query: string): Promise<User[]>;
 
   // ── Subscriptions ───────────────────────────────────────────────────
+
   /**
    * Fire `cb` whenever any part of the friend graph changes — mutuals,
-   * incoming requests, or outgoing requests. The callback receives a full
-   * `FriendsSnapshot` reflecting the new state. Initial state is NOT
-   * replayed — call `snapshot()` once after subscribing if you need a
-   * baseline.
+   * incoming requests, or outgoing requests.
+   *
+   * The callback receives a full {@link FriendsSnapshot} reflecting the
+   * new state. Initial state is NOT replayed — call
+   * {@link IFriendsManager.snapshot} once after subscribing if you need
+   * a baseline.
+   *
+   * @param cb - Subscriber invoked with the latest snapshot on every
+   * relevant change.
+   * @returns An `Unsubscribe` thunk; idempotent on repeat calls.
+   *
+   * @example
+   * ```ts
+   * const unsub = client.friends.onChange((snap) => {
+   *   console.log(`mutuals=${snap.mutuals.length}`);
+   * });
+   * // ...later
+   * unsub();
+   * ```
    */
   onChange(cb: (snap: FriendsSnapshot) => void): Unsubscribe;
 }
@@ -399,53 +578,72 @@ function buildSnapshot(user: UserSlice): FriendsSnapshot {
 // ─── Implementation ───────────────────────────────────────────────────────
 
 /**
- * Friends — concrete `IFriendsManager` implementation.
+ * Concrete {@link IFriendsManager} implementation.
  *
- * Constructed once per `SnapcapClient` and held as `client.friends`.
+ * Constructed once per {@link SnapcapClient} and held as
+ * {@link SnapcapClient.friends}. See {@link IFriendsManager} for the
+ * full method-level documentation.
  *
+ * @remarks
  * Why a `() => Promise<ClientContext>` provider instead of a bare
- * `ClientContext`: the SDK's context is built asynchronously (cookie jar
- * load, etc.), but the `client.friends` field needs to exist
+ * `ClientContext`: the SDK's context is built asynchronously (cookie
+ * jar load, etc.), but the `client.friends` field needs to exist
  * synchronously off `new SnapcapClient(...)`. The provider defers
- * resolution until the first method call — which is when `authenticate()`
- * has typically already been called and the context is warm.
+ * resolution until the first method call — which is when
+ * `authenticate()` has typically already been called and the context
+ * is warm.
+ *
+ * @see {@link IFriendsManager}
  */
 export class Friends implements IFriendsManager {
+  /**
+   * @param _getCtx - Async accessor for the per-instance
+   * `ClientContext`. Constructed and supplied by {@link SnapcapClient}
+   * — consumers do not call this directly.
+   * @internal
+   */
   constructor(private readonly _getCtx: () => Promise<ClientContext>) {}
 
   // ── Mutations ───────────────────────────────────────────────────────
 
+  /** {@inheritDoc IFriendsManager.add} */
   async add(userId: UserId, source: FriendSource = FriendSource.ADDED_BY_USERNAME): Promise<void> {
     const ctx = await this._getCtx();
     return friendActionMutation(ctx, "Add", [userId], source);
   }
 
+  /** {@inheritDoc IFriendsManager.remove} */
   async remove(userId: UserId): Promise<void> {
     const ctx = await this._getCtx();
     return friendActionMutation(ctx, "Remove", [userId]);
   }
 
+  /** {@inheritDoc IFriendsManager.block} */
   async block(userId: UserId): Promise<void> {
     const ctx = await this._getCtx();
     return friendActionMutation(ctx, "Block", [userId]);
   }
 
+  /** {@inheritDoc IFriendsManager.unblock} */
   async unblock(userId: UserId): Promise<void> {
     const ctx = await this._getCtx();
     return friendActionMutation(ctx, "Unblock", [userId]);
   }
 
+  /** {@inheritDoc IFriendsManager.ignore} */
   async ignore(userId: UserId): Promise<void> {
     const ctx = await this._getCtx();
     return friendActionMutation(ctx, "Ignore", [userId]);
   }
 
+  /** {@inheritDoc IFriendsManager.acceptRequest} */
   async acceptRequest(_userId: UserId): Promise<void> {
     throw new Error(
       "Friends.acceptRequest: not yet wired — needs __SNAPCAP_FRIEND_REQUESTS_CLIENT source-patch (see register.ts G_FRIEND_REQUESTS_CLIENT TODO)",
     );
   }
 
+  /** {@inheritDoc IFriendsManager.rejectRequest} */
   async rejectRequest(_userId: UserId): Promise<void> {
     throw new Error(
       "Friends.rejectRequest: not yet wired — needs __SNAPCAP_FRIEND_REQUESTS_CLIENT source-patch (see register.ts G_FRIEND_REQUESTS_CLIENT TODO)",
@@ -481,22 +679,27 @@ export class Friends implements IFriendsManager {
     return user;
   }
 
+  /** {@inheritDoc IFriendsManager.snapshot} */
   async snapshot(): Promise<FriendsSnapshot> {
     return buildSnapshot(await this.#ensureSynced());
   }
 
+  /** {@inheritDoc IFriendsManager.list} */
   async list(): Promise<Friend[]> {
     return (await this.snapshot()).mutuals;
   }
 
+  /** {@inheritDoc IFriendsManager.incomingRequests} */
   async incomingRequests(): Promise<FriendRequest[]> {
     return (await this.snapshot()).incoming;
   }
 
+  /** {@inheritDoc IFriendsManager.outgoingRequests} */
   async outgoingRequests(): Promise<OutgoingRequest[]> {
     return (await this.snapshot()).outgoing;
   }
 
+  /** {@inheritDoc IFriendsManager.search} */
   async search(query: string): Promise<User[]> {
     const ctx = await this._getCtx();
     if (!query) return [];
@@ -523,6 +726,7 @@ export class Friends implements IFriendsManager {
 
   // ── Subscriptions ───────────────────────────────────────────────────
 
+  /** {@inheritDoc IFriendsManager.onChange} */
   onChange(cb: (snap: FriendsSnapshot) => void): Unsubscribe {
     // Composite selector — one subscription, three watched slots. The
     // `equals` is intentionally coarse (identity + size) rather than a

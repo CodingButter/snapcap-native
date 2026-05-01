@@ -1,0 +1,245 @@
+---
+title: SnapcapClient
+---
+
+# Class: SnapcapClient
+
+Defined in: [client.ts:160](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L160)
+
+Concrete [ISnapcapClient](../interfaces/ISnapcapClient.mdx) implementation — main SDK entry point.
+
+Each instance owns its own isolated `vm.Context` sandbox, Zustand
+state, bearer token, and webpack runtime cache, so multiple clients
+can coexist in one process without leaking state across tenants.
+
+Method-level documentation (auth verbs, manager fields) lives on
+[ISnapcapClient](../interfaces/ISnapcapClient.mdx). The constructor and constructor options are
+documented here.
+
+## See
+
+ - [ISnapcapClient](../interfaces/ISnapcapClient.mdx)
+ - [SnapcapClientOpts](../type-aliases/SnapcapClientOpts.mdx)
+
+## Implements
+
+- [`ISnapcapClient`](../interfaces/ISnapcapClient.mdx)
+
+## Constructors
+
+### Constructor
+
+```ts
+new SnapcapClient(opts: SnapcapClientOpts): SnapcapClient;
+```
+
+Defined in: [client.ts:197](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L197)
+
+Construct a new client.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `opts` | [`SnapcapClientOpts`](../type-aliases/SnapcapClientOpts.mdx) | Client options. See [SnapcapClientOpts](../type-aliases/SnapcapClientOpts.mdx). |
+
+#### Returns
+
+`SnapcapClient`
+
+#### Throws
+
+If `opts.browser.userAgent` is missing — every consumer
+defaulting to the same UA would itself become a snapcap fingerprint
+signature.
+
+## Properties
+
+| Property | Modifier | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ | ------ |
+| <a id="friends"></a> `friends` | `readonly` | [`Friends`](Friends.mdx) | Friend-graph manager — see [IFriendsManager](../interfaces/IFriendsManager.mdx) for the full surface (mutations, reads, search, subscriptions). | [client.ts:166](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L166) |
+| <a id="inbox"></a> `inbox` | `readonly` | [`Inbox`](Inbox.mdx) | Placeholder for the future Inbox manager. No methods today. | [client.ts:174](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L174) |
+| <a id="media"></a> `media` | `readonly` | [`Media`](Media.mdx) | Placeholder for the future Media manager. No methods today. | [client.ts:176](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L176) |
+| <a id="messaging"></a> `messaging` | `readonly` | [`Messaging`](Messaging.mdx) | Placeholder for the future Messaging manager. No methods today — `client.messaging.send(...)` is a compile-time error. | [client.ts:168](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L168) |
+| <a id="presence"></a> `presence` | `readonly` | [`Presence`](Presence.mdx) | Placeholder for the future Presence manager. No methods today. | [client.ts:170](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L170) |
+| <a id="stories"></a> `stories` | `readonly` | [`Stories`](Stories.mdx) | Placeholder for the future Stories manager. No methods today. | [client.ts:172](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L172) |
+
+## Methods
+
+### authenticate()
+
+```ts
+authenticate(): Promise<void>;
+```
+
+Defined in: [client.ts:256](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L256)
+
+Bring up the bundles, run warm-or-cold WebLogin, and populate the
+Zustand auth slice.
+
+The first call does the heavy lifting (loads the accounts and chat
+bundles, runs kameleon attestation, drives `WebLoginService` if no
+cookies are cached); subsequent process boots with restored cookies
+short-circuit through the warm SSO path (~1 redirect, ~100ms).
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+Resolves when the auth slice reports `LoggedIn`.
+
+#### Implementation of
+
+[`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`authenticate`](../interfaces/ISnapcapClient.mdx#authenticate)
+
+***
+
+### getAuthState()
+
+```ts
+getAuthState(): number;
+```
+
+Defined in: [client.ts:305](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L305)
+
+Live read: `state.auth.authState` enum value.
+
+#### Returns
+
+`number`
+
+`0` = LoggedOut, `1` = LoggedIn, `2` = Processing,
+`3` = MoreChallengesRequired.
+
+#### Implementation of
+
+[`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`getAuthState`](../interfaces/ISnapcapClient.mdx#getauthstate)
+
+***
+
+### getAuthToken()
+
+```ts
+getAuthToken(): string;
+```
+
+Defined in: [client.ts:300](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L300)
+
+Live read: current SSO bearer string from the Zustand auth slice.
+
+#### Returns
+
+`string`
+
+The bearer token (suitable for use as `Authorization: Bearer ...`).
+
+#### Implementation of
+
+[`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`getAuthToken`](../interfaces/ISnapcapClient.mdx#getauthtoken)
+
+***
+
+### hasEverLoggedIn()
+
+```ts
+hasEverLoggedIn(): boolean;
+```
+
+Defined in: [client.ts:310](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L310)
+
+Live read: the `hasEverLoggedIn` marker.
+
+Survives logout — useful for distinguishing a fresh install from a
+signed-out returning user.
+
+#### Returns
+
+`boolean`
+
+#### Implementation of
+
+[`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`hasEverLoggedIn`](../interfaces/ISnapcapClient.mdx#haseverloggedin)
+
+***
+
+### isAuthenticated()
+
+```ts
+isAuthenticated(): boolean;
+```
+
+Defined in: [client.ts:291](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L291)
+
+Live read: `true` iff the Zustand auth slice currently reports
+`LoggedIn`.
+
+Synchronous — backed by in-process state. Returns `false` before the
+bundle is brought up (i.e. before [ISnapcapClient.authenticate](../interfaces/ISnapcapClient.mdx#authenticate)
+has been called).
+
+#### Returns
+
+`boolean`
+
+#### Implementation of
+
+[`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`isAuthenticated`](../interfaces/ISnapcapClient.mdx#isauthenticated)
+
+***
+
+### logout()
+
+```ts
+logout(force?: boolean): Promise<void>;
+```
+
+Defined in: [client.ts:268](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L268)
+
+Tear down the bundle-side auth state.
+
+Calls Snap's own `state.auth.logout` thunk — clears Zustand, fires
+any subscribed teardown hooks, and (best-effort) revokes server-side.
+Also deletes the persisted cookie jar entry from the DataStore.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `force?` | `boolean` | If `true`, force the logout even if the server-side revoke call fails. Defaults to `false`. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+Resolves when local auth state has been cleared.
+
+#### Implementation of
+
+[`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`logout`](../interfaces/ISnapcapClient.mdx#logout)
+
+***
+
+### refreshAuthToken()
+
+```ts
+refreshAuthToken(): Promise<void>;
+```
+
+Defined in: [client.ts:281](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L281)
+
+Refresh the bearer in-place via Snap's own `state.auth.refreshToken`.
+
+Requires the client to have been constructed with credentials — the
+bundle's refresh path mints a fresh kameleon attestation bound to
+the active identifier.
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+Resolves once the new bearer has been written back into the
+Zustand auth slice.
+
+#### Implementation of
+
+[`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`refreshAuthToken`](../interfaces/ISnapcapClient.mdx#refreshauthtoken)

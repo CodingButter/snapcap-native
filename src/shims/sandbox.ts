@@ -27,14 +27,33 @@ import { createThrottle, type ThrottleConfig, type ThrottleGate } from "../trans
 import { getOrCreateJar } from "./cookie-jar.ts";
 import { SDK_SHIMS, type ShimContext } from "./index.ts";
 
+/**
+ * Construction options for a {@link Sandbox}.
+ *
+ * @internal
+ */
 export type SandboxOpts = {
-  /** Page URL the Window pretends to be on. Default www.snapchat.com/web. */
+  /**
+   * Page URL the Window pretends to be on.
+   *
+   * @defaultValue `https://www.snapchat.com/web`
+   */
   url?: string;
-  /** UA string. Default matches the SDK's MacOS Chrome 147 fingerprint. */
+  /**
+   * UA string. Default matches the SDK's MacOS Chrome 147 fingerprint.
+   */
   userAgent?: string;
-  /** Width of the (virtual) viewport. Default 1440. */
+  /**
+   * Width of the (virtual) viewport.
+   *
+   * @defaultValue `1440`
+   */
   viewportWidth?: number;
-  /** Height of the (virtual) viewport. Default 900. */
+  /**
+   * Height of the (virtual) viewport.
+   *
+   * @defaultValue `900`
+   */
   viewportHeight?: number;
   /** Persistent backing for localStorage / sessionStorage shims. */
   dataStore?: DataStore;
@@ -99,9 +118,26 @@ function maybeWarnMultiInstancePerInstanceThrottle(): void {
   );
 }
 
+/**
+ * Isolated browser-API sandbox for Snap's bundles.
+ *
+ * Constructs an empty `vm.Context`, projects happy-dom Window properties
+ * onto it, and layers SDK shims (cookies, storage, fetch/XHR, WebAssembly
+ * polyfills) on top. Each `SnapcapClient` owns its own `Sandbox` —
+ * isolation lives at the V8 vm.Context boundary.
+ *
+ * @internal Lower-level than the public `SnapcapClient` constructor.
+ * Consumers shouldn't need to construct a `Sandbox` directly.
+ */
 export class Sandbox {
-  /** Synthesized vm-realm global; this is what bundle code sees as `globalThis`. */
+  /**
+   * Synthesized vm-realm global; this is what bundle code sees as
+   * `globalThis`.
+   *
+   * @internal
+   */
   readonly window: Record<string, unknown>;
+  /** @internal */
   readonly context: vm.Context;
   /** happy-dom Window — kept for direct DOM access (e.g. injecting #root). */
   private readonly hdWindow: Window;
@@ -115,6 +151,8 @@ export class Sandbox {
    *
    * Per-instance (not module-level) so two Sandboxes can coexist with
    * independent throttle configs without stepping on each other.
+   *
+   * @internal
    */
   readonly throttleGate: (url: string) => Promise<void>;
 
@@ -125,13 +163,30 @@ export class Sandbox {
   // Sandbox owns its own bring-up state. Loaders own the type semantics;
   // this class just provides typed storage slots.
 
-  /** Resolved kameleon Module + finalize() context (bundle/accounts-loader). */
+  /**
+   * Resolved kameleon Module + finalize() context (bundle/accounts-loader).
+   *
+   * @internal
+   */
   kameleonBoot?: Promise<unknown>;
-  /** True once the chat bundle's main JS has been eval'd in this sandbox. */
+  /**
+   * True once the chat bundle's main JS has been eval'd in this sandbox.
+   *
+   * @internal
+   */
   chatBundleLoaded = false;
-  /** True once the chat bundle's webpack runtime has been eval'd in this sandbox. */
+  /**
+   * True once the chat bundle's webpack runtime has been eval'd in this
+   * sandbox.
+   *
+   * @internal
+   */
   chatRuntimeLoaded = false;
-  /** Resolved chat-WASM moduleEnv with Embind classes (bundle/chat-wasm-boot). */
+  /**
+   * Resolved chat-WASM moduleEnv with Embind classes (bundle/chat-wasm-boot).
+   *
+   * @internal
+   */
   chatWasmBoot?: Promise<unknown>;
 
   constructor(opts: SandboxOpts = {}) {
@@ -295,25 +350,46 @@ export class Sandbox {
    * Eval source code in the sandbox. The code's `globalThis`, bare global
    * references (`localStorage`, `document`, etc.), and `this` at the top
    * level all resolve to the synthesized vm global.
+   *
+   * @internal
+   * @param source - JavaScript source to evaluate
+   * @param filename - optional filename for stack-trace attribution
+   * @returns whatever the source's last expression evaluates to
    */
   runInContext(source: string, filename?: string): unknown {
     return vm.runInContext(source, this.context, filename ? { filename } : undefined);
   }
 
-  /** Read a property from the sandbox global — for SDK code that needs
-   *  to access bundle-registered artifacts (Module objects, webpack maps). */
+  /**
+   * Read a property from the sandbox global — for SDK code that needs to
+   * access bundle-registered artifacts (Module objects, webpack maps).
+   *
+   * @internal
+   * @param key - global property name
+   * @returns the value stored on the sandbox global, or `undefined`
+   */
   getGlobal<T = unknown>(key: string): T | undefined {
     return this.window[key] as T | undefined;
   }
 
-  /** Set a property on the sandbox global — for pre-staging values
-   *  the bundle's eval needs to find at the top level. */
+  /**
+   * Set a property on the sandbox global — for pre-staging values the
+   * bundle's eval needs to find at the top level.
+   *
+   * @internal
+   * @param key - global property name
+   * @param value - value to assign
+   */
   setGlobal(key: string, value: unknown): void {
     this.window[key] = value;
   }
 
-  /** happy-dom document, for direct DOM mutation (e.g. injecting a #root
-   *  div before React mounts during a bundle's top-level eval). */
+  /**
+   * happy-dom document, for direct DOM mutation (e.g. injecting a `#root`
+   * div before React mounts during a bundle's top-level eval).
+   *
+   * @internal
+   */
   get document(): unknown {
     return (this.hdWindow as unknown as { document: unknown }).document;
   }
@@ -326,6 +402,10 @@ export class Sandbox {
    *
    * Use this any time SDK (host-realm) code hands raw bytes into a bundle
    * function — gRPC response decode, Embind argument marshalling, etc.
+   *
+   * @internal
+   * @param bytes - host-realm typed-array view
+   * @returns sandbox-realm `Uint8Array` containing the same bytes
    */
   toVmU8(bytes: Uint8Array | ArrayBufferView): Uint8Array {
     const VmU8 = this.runInContext("Uint8Array") as Uint8ArrayConstructor;

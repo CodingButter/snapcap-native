@@ -31,6 +31,10 @@ import { Shim, type ShimContext } from "./types.ts";
  * Override `document.cookie` on the sandbox's happy-dom Document with a
  * DataStore-backed accessor. Idempotent guard via a marker symbol so a
  * double-install doesn't re-wrap.
+ *
+ * @internal
+ * @param sandbox - target sandbox whose document gets the override
+ * @param store - DataStore backing the shared cookie jar
  */
 export function installDocumentCookieShim(sandbox: Sandbox, store: DataStore): void {
   const doc = sandbox.document as object | undefined;
@@ -88,11 +92,16 @@ export function installDocumentCookieShim(sandbox: Sandbox, store: DataStore): v
 }
 
 /**
- * `Shim`-shaped wrapper around `installDocumentCookieShim`. Reads from
- * the shared jar populated by `CookieContainerShim` — must run after it.
+ * `Shim`-shaped wrapper around {@link installDocumentCookieShim}. Reads
+ * from the shared jar populated by {@link CookieContainerShim} — must run
+ * after it.
+ *
+ * @internal
  */
 export class DocumentCookieShim extends Shim {
+  /** @internal */
   readonly name = "document-cookie";
+  /** @internal */
   install(sandbox: Sandbox, ctx: ShimContext): void {
     installDocumentCookieShim(sandbox, ctx.dataStore);
   }

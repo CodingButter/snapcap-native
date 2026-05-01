@@ -82,12 +82,20 @@ function fallbackOriginURL(domain: string, path: string, secure: boolean): URL {
 /**
  * happy-dom-shaped CookieContainer that delegates to a tough-cookie jar.
  * Exported for tests / advanced consumers that want to drive the container
- * directly. Production callers should use `installCookieContainer`.
+ * directly. Production callers should use {@link installCookieContainer}.
+ *
+ * @internal
  */
 export class DataStoreCookieContainer {
   constructor(private readonly jar: CookieJar, private readonly store: DataStore) {}
 
-  /** ICookieContainer.addCookies — translate each ICookie → tough-cookie + persist once. */
+  /**
+   * `ICookieContainer.addCookies` — translate each ICookie to tough-cookie
+   * and persist once at the end of the batch.
+   *
+   * @internal
+   * @param cookies - happy-dom-shaped cookie array
+   */
   addCookies(cookies: ICookie[]): void {
     if (!Array.isArray(cookies) || cookies.length === 0) return;
     let mutated = false;
@@ -118,13 +126,21 @@ export class DataStoreCookieContainer {
   }
 
   /**
-   * ICookieContainer.getCookies — happy-dom's contract:
-   *   - `httpOnly === true` ⇒ return ONLY HttpOnly cookies.
-   *   - `httpOnly === false` (the FetchRequestHeaderUtility caller) ⇒
-   *     return ALL cookies, INCLUDING HttpOnly.
+   * `ICookieContainer.getCookies` — happy-dom's contract:
+   *
+   * - `httpOnly === true` returns ONLY HttpOnly cookies.
+   * - `httpOnly === false` (the FetchRequestHeaderUtility caller) returns
+   *   ALL cookies, INCLUDING HttpOnly.
+   *
    * tough-cookie's `{ http: true }` means "HTTP context — HttpOnly visible";
    * `{ http: false }` means "non-HTTP (e.g. JS) context — HttpOnly hidden".
-   * So the caller's `httpOnly === false` ⇒ tough-cookie `{ http: true }`.
+   * So the caller's `httpOnly === false` maps to tough-cookie `{ http: true }`.
+   *
+   * @internal
+   * @param url - request URL (for path/domain matching); `null` falls back
+   *   to a synthetic snapchat.com URL
+   * @param httpOnly - happy-dom semantic: true for "HttpOnly only"
+   * @returns happy-dom `ICookie[]` projection of the matching jar entries
    */
   getCookies(url: URL | null, httpOnly: boolean): ICookie[] {
     const target = url?.href ?? "https://www.snapchat.com/";
@@ -165,6 +181,9 @@ export class DataStoreCookieContainer {
  *
  * Idempotent — repeated calls update the active jar binding without
  * re-patching the prototype.
+ *
+ * @internal
+ * @param store - DataStore that backs the shared cookie jar
  */
 export function installCookieContainer(store: DataStore): void {
   activeJar = getOrCreateJar(store);
@@ -194,16 +213,20 @@ export function installCookieContainer(store: DataStore): void {
 }
 
 /**
- * `Shim`-shaped wrapper around `installCookieContainer`. Consumes the
- * shared jar from `ShimContext` (populated by `getOrCreateJar` upstream
- * in the Sandbox constructor) and patches happy-dom's CookieContainer
- * prototype so the per-Window instance routes through it.
+ * `Shim`-shaped wrapper around {@link installCookieContainer}. Consumes
+ * the shared jar from {@link ShimContext} (populated by {@link getOrCreateJar}
+ * upstream in the {@link Sandbox} constructor) and patches happy-dom's
+ * CookieContainer prototype so the per-Window instance routes through it.
  *
- * MUST run before any other shim that needs cookies (DocumentCookieShim,
- * WebSocketShim) — see `./index.ts` for the canonical order.
+ * MUST run before any other shim that needs cookies ({@link DocumentCookieShim},
+ * {@link WebSocketShim}) — see `./index.ts` for the canonical order.
+ *
+ * @internal
  */
 export class CookieContainerShim extends Shim {
+  /** @internal */
   readonly name = "cookie-container";
+  /** @internal */
   install(_sandbox: Sandbox, ctx: ShimContext): void {
     installCookieContainer(ctx.dataStore);
   }

@@ -62,10 +62,15 @@ import type {
 } from "./types.ts";
 
 /**
- * Re-export `Unsubscribe` so api files can import the cancel-thunk type
- * from the same module they import the subscriber helpers from. Kept thin
- * (`() => void`) — same shape as Zustand's `unsubscribe` and the api-side
- * `Unsubscribe` aliases.
+ * Cancel-thunk type for store / event subscriptions — same shape as
+ * Zustand's `unsubscribe`.
+ *
+ * Re-exported here so api files can import the cancel-thunk type from
+ * the same module they import the subscriber helpers from. Kept thin
+ * (`() => void`) — matches the api-side `Unsubscribe` aliases.
+ *
+ * @internal Bundle-layer type alias; consumers receive this shape from
+ * public subscribe APIs without needing to import it directly.
  */
 export type Unsubscribe = () => void;
 
@@ -140,6 +145,13 @@ const MOD_DEFAULT_AUTHED_FETCH = "34010";
  * Accepts `string | undefined` so TODO getters (whose constant mapper
  * is still `undefined`) pass through untouched and produce a uniform
  * "not yet mapped" error at call time.
+ *
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @param globalKey - source-patched `__SNAPCAP_*` key, or `undefined` for TODO getters
+ * @param name - human-readable getter name used in error messages
+ * @returns the live bundle entity at `globalThis[globalKey]`
+ * @throws when `globalKey` is undefined (TODO getter), when the bundle
+ *   hasn't been loaded yet, or when the source-patch site shifted
  */
 function reach<T>(sandbox: Sandbox, globalKey: string | undefined, name: string): T {
   if (!globalKey) {
@@ -155,7 +167,15 @@ function reach<T>(sandbox: Sandbox, globalKey: string | undefined, name: string)
   return inst;
 }
 
-/** Reach a chat-bundle webpack module by id. */
+/**
+ * Reach a chat-bundle webpack module by id.
+ *
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @param moduleId - webpack module id (string)
+ * @param name - human-readable getter name used in error messages
+ * @returns the module export object
+ * @throws when the chat wreq lookup fails for `moduleId`
+ */
 function reachModule<T>(sandbox: Sandbox, moduleId: string, name: string): T {
   try {
     return getChatWreq(sandbox)(moduleId) as T;
@@ -168,92 +188,210 @@ function reachModule<T>(sandbox: Sandbox, moduleId: string, name: string): T {
 
 // ─── 4. manager-getter exports ───────────────────────────────────────────
 
-// Friend graph mutations — `jz` FriendAction client (chat module 10409).
-// Methods: TransferInvites, AddFriends, InviteFriends, InviteOrAddFriendsByPhone,
-// BlockFriends, UnblockFriends, RemoveFriends, IgnoreFriends,
-// ChangeDisplayNameForFriends, MuteStoryForFriends, UnmuteStoryForFriends,
-// SetPostViewEmojiFoFriends, CheckActionEligibility.
+/**
+ * Friend graph mutations — `jz` FriendAction client (chat module 10409).
+ *
+ * Methods: `TransferInvites`, `AddFriends`, `InviteFriends`,
+ * `InviteOrAddFriendsByPhone`, `BlockFriends`, `UnblockFriends`,
+ * `RemoveFriends`, `IgnoreFriends`, `ChangeDisplayNameForFriends`,
+ * `MuteStoryForFriends`, `UnmuteStoryForFriends`,
+ * `SetPostViewEmojiFoFriends`, `CheckActionEligibility`. See
+ * {@link JzFriendAction} for the full surface.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach friend ops via
+ * the api layer (see `src/api/friends.ts` / `src/api/friending.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `jz` FriendAction client instance
+ */
 export const friendActionClient = (sandbox: Sandbox): JzFriendAction =>
   reach<JzFriendAction>(sandbox, G_FRIEND_ACTION, "friendActionClient");
 
-// Login — accounts module 13150 `WebLoginServiceClientImpl` ctor.
-// Construct with `new (loginClient(sandbox))({ unary }).WebLogin(req)`.
+/**
+ * Login client constructor — accounts module 13150
+ * `WebLoginServiceClientImpl`.
+ *
+ * Construct with `new (loginClient(sandbox))({ unary }).WebLogin(req)`.
+ * See {@link LoginClientCtor}.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach login via
+ * `SnapcapClient.authenticate()` (see `src/auth/login.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `WebLoginServiceClientImpl` constructor
+ */
 export const loginClient = (sandbox: Sandbox): LoginClientCtor =>
   reach<LoginClientCtor>(sandbox, G_LOGIN_CLIENT_IMPL, "loginClient");
 
-// Raw chat-bundle Zustand store — exposes `subscribe`, `getState`,
-// `setState`. Chat module 94704. Use this when you need a live
-// subscription to state mutations (e.g. friends-list deltas) or to peek
-// at slices the registry does not yet expose a getter for. Per Phase 1B
-// empirical finding the bundle uses plain Zustand (no `subscribeWithSelector`
-// middleware) — `subscribe` is single-arg `(state, prev) => void`.
+/**
+ * Raw chat-bundle Zustand store — exposes `subscribe`, `getState`,
+ * `setState`. Chat module 94704.
+ *
+ * Use this when you need a live subscription to state mutations (e.g.
+ * friends-list deltas) or to peek at slices the registry does not yet
+ * expose a getter for. Per Phase 1B empirical finding the bundle uses
+ * plain Zustand (no `subscribeWithSelector` middleware) — `subscribe`
+ * is single-arg `(state, prev) => void`.
+ *
+ * @internal Bundle-layer accessor. Public consumers receive shaped
+ * slices via the api layer rather than touching the raw store.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live Zustand {@link ChatStore}
+ */
 export const chatStore = (sandbox: Sandbox): ChatStore =>
   reachModule<{ M: ChatStore }>(sandbox, MOD_CHAT_STORE, "chatStore").M;
 
-// Auth slice — Zustand store on chat module 94704; methods: initialize,
-// logout, refreshToken, fetchToken (PageLoad-time SPA only).
+/**
+ * Auth slice — Zustand store on chat module 94704.
+ *
+ * Methods: `initialize`, `logout`, `refreshToken`, `fetchToken`
+ * (PageLoad-time SPA only). See {@link AuthSlice}.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach auth via
+ * `SnapcapClient` methods (see `src/client.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `auth` slice from the chat-bundle state
+ */
 export const authSlice = (sandbox: Sandbox): AuthSlice =>
   (chatStore(sandbox).getState() as ChatState).auth;
 
-// User slice — Zustand store on chat module 94704; carries the friend
-// graph (`mutuallyConfirmedFriendIds`), pending requests
-// (`incomingFriendRequests`, `outgoingFriendRequestIds`), and the
-// `publicUsers` cache populated by `GetSnapchatterPublicInfo`. Mutated
-// in place by Immer drafts; subscribers should use `chatStore().subscribe`
-// for delta detection.
+/**
+ * User slice — Zustand store on chat module 94704.
+ *
+ * Carries the friend graph (`mutuallyConfirmedFriendIds`), pending
+ * requests (`incomingFriendRequests`, `outgoingFriendRequestIds`), and
+ * the `publicUsers` cache populated by `GetSnapchatterPublicInfo`.
+ * Mutated in place by Immer drafts; subscribers should use
+ * {@link chatStore}().subscribe for delta detection.
+ *
+ * See {@link UserSlice}.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach friend / user
+ * data via the api layer.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `user` slice from the chat-bundle state
+ */
 export const userSlice = (sandbox: Sandbox): UserSlice =>
   (chatStore(sandbox).getState() as ChatState).user;
 
-// Generic chat-side gRPC escape hatch — `Ni.rpc.unary` for arbitrary
-// AtlasGw / friending / etc. calls bypassing the typed registry.
+/**
+ * Generic chat-side gRPC escape hatch — `Ni.rpc.unary` for arbitrary
+ * AtlasGw / friending / etc. calls bypassing the typed registry.
+ *
+ * See {@link NiChatRpc}.
+ *
+ * @internal Bundle-layer accessor for one-off RPCs the typed registry
+ * doesn't yet cover. Public consumers should not depend on this.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `Ni` chat RPC client
+ */
 export const chatRpc = (sandbox: Sandbox): NiChatRpc =>
   reach<NiChatRpc>(sandbox, G_CHAT_RPC, "chatRpc");
 
 /**
  * Raw chat-bundle webpack require — escape hatch for code that needs to
  * walk `wreq.m` (the factory map) or call factories directly through a
- * shimmed wreq (priming, cache-cycle rewiring). Most consumers should
- * reach for the typed getters above instead — this is reserved for
- * bundle-plumbing helpers (see `bundle/prime.ts`) that have to bypass
- * webpack's closure-private cache to break factory-time cyclic deps.
+ * shimmed wreq (priming, cache-cycle rewiring).
+ *
+ * Most consumers should reach for the typed getters above instead — this
+ * is reserved for bundle-plumbing helpers (see `bundle/prime.ts`) that
+ * have to bypass webpack's closure-private cache to break factory-time
+ * cyclic deps.
  *
  * Re-exported here so api files don't have to import `getChatWreq`
  * directly from `./chat-loader.ts` (the architecture rule's gate point).
+ *
+ * @internal Bundle-plumbing escape hatch. Public consumers should never
+ * touch the raw webpack require.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the chat-bundle webpack require with its `m` factory map
  */
 export const chatWreq = (sandbox: Sandbox): ((id: string) => unknown) & { m: Record<string, Function> } =>
   getChatWreq(sandbox);
 
-// Media upload delegate — `Fi` (chat module 76877). `uploadMedia` /
-// `uploadMediaReferences` for direct upload control; sends/snaps usually
-// drive uploads as a side-effect.
+/**
+ * Media upload delegate — `Fi` (chat module 76877).
+ *
+ * `uploadMedia` / `uploadMediaReferences` for direct upload control;
+ * sends/snaps usually drive uploads as a side-effect. See {@link FiUpload}.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach uploads via
+ * higher-level send APIs (see `src/api/messaging.ts`, `src/api/media.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `Fi` mediaUploadDelegate
+ */
 export const uploadDelegate = (sandbox: Sandbox): FiUpload =>
   reach<FiUpload>(sandbox, G_FI_UPLOAD, "uploadDelegate");
 
-// Messaging sends + reads + lifecycle — chat module 56639. Exposes the
-// bundle-private letter pairs (pn, E$, HM, Sd, Mw, ON, etc.) that hang
-// off `getConversationManager()` / `getFeedManager()` / `getSnapManager()`
-// on the WASM session. See `SendsModule` interface in `./types.ts` for
-// the full export map.
+/**
+ * Messaging sends + reads + lifecycle — chat module 56639.
+ *
+ * Exposes the bundle-private letter pairs (pn, E$, HM, Sd, Mw, ON, etc.)
+ * that hang off `getConversationManager()` / `getFeedManager()` /
+ * `getSnapManager()` on the WASM session. See {@link SendsModule} for
+ * the full export map.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach sends via
+ * `Conversation.sendText` / `sendImage` / etc. (see `src/api/messaging.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live module-56639 export
+ */
 export const messagingSends = (sandbox: Sandbox): SendsModule =>
   reachModule<SendsModule>(sandbox, MOD_SENDS, "messagingSends");
 
-// Destinations builder — chat module 79028 `Ju` builds a
-// `SnapDestinations` envelope from a partial.
+/**
+ * Destinations builder — chat module 79028 `Ju` builds a
+ * `SnapDestinations` envelope from a partial.
+ *
+ * See {@link DestinationsModule}.
+ *
+ * @internal Bundle-layer accessor. Used by the api layer when building
+ * `sendSnap` / `postStory` destinations.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live module-79028 export
+ */
 export const destinationsModule = (sandbox: Sandbox): DestinationsModule =>
   reachModule<DestinationsModule>(sandbox, MOD_DESTINATIONS, "destinationsModule");
 
-// Story descriptor helpers — chat module 74762 (`R9` MY_STORY descriptor,
-// `ge` server-destination conversion).
+/**
+ * Story descriptor helpers — chat module 74762.
+ *
+ * `R9` returns the single-element MY_STORY descriptor array; `ge`
+ * converts each descriptor to its server-side destination shape. See
+ * {@link StoryDescModule}.
+ *
+ * @internal Bundle-layer accessor. Used by the api layer's `postStory`
+ * pipeline.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live module-74762 export
+ */
 export const storyDescModule = (sandbox: Sandbox): StoryDescModule =>
   reachModule<StoryDescModule>(sandbox, MOD_STORY_DESC, "storyDescModule");
 
-// Host constants — chat module 41359 (`r5` is `https://web.snapchat.com`).
+/**
+ * Host constants — chat module 41359 (`r5` is `https://web.snapchat.com`).
+ *
+ * See {@link HostModule}.
+ *
+ * @internal Bundle-layer accessor. Used by the api layer when building
+ * same-origin URLs.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live module-41359 export
+ */
 export const hostModule = (sandbox: Sandbox): HostModule =>
   reachModule<HostModule>(sandbox, MOD_HOST, "hostModule");
 
-// Default-authed fetch helper — chat module 34010. `s(url, opts)` is the
-// bundle's same-origin POST helper with bearer + cookies attached the way
-// the SPA does. Friends.search routes the `/search/search` POST through it.
+/**
+ * Default-authed fetch helper — chat module 34010.
+ *
+ * `s(url, opts)` is the bundle's same-origin POST helper with bearer +
+ * cookies attached the way the SPA does. `Friends.search` routes the
+ * `/search/search` POST through it. See {@link DefaultAuthedFetchModule}.
+ *
+ * @internal Bundle-layer accessor. Public consumers should not call the
+ * bundle's authed-fetch directly — the api layer wraps it.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live module-34010 export with its `s` POST helper
+ * @throws when the module's shape has shifted (no `s` function present)
+ */
 export const defaultAuthedFetch = (sandbox: Sandbox): DefaultAuthedFetchModule => {
   const mod = reachModule<Partial<DefaultAuthedFetchModule>>(sandbox, MOD_DEFAULT_AUTHED_FETCH, "defaultAuthedFetch");
   if (!mod || typeof mod.s !== "function") {
@@ -262,10 +400,21 @@ export const defaultAuthedFetch = (sandbox: Sandbox): DefaultAuthedFetchModule =
   return mod as DefaultAuthedFetchModule;
 };
 
-// AtlasGw class — chat module 74052; consumers wrap with their own
-// `{unary}` rpc transport. Walks the module's exports to find the class
-// whose prototype has `SyncFriendData`. Switch to the natural instance
-// once `__SNAPCAP_ATLAS` lands (see `atlasClient` below).
+/**
+ * AtlasGw class — chat module 74052.
+ *
+ * Consumers wrap with their own `{unary}` rpc transport. Walks the
+ * module's exports to find the class whose prototype has
+ * `SyncFriendData`. Switch to the natural instance once `__SNAPCAP_ATLAS`
+ * lands (see {@link atlasClient}).
+ *
+ * @internal Bundle-layer accessor. Prefer {@link atlasClient} for the
+ * natural per-bundle instance.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live AtlasGw class constructor
+ * @throws when the AtlasGw class can't be located in module 74052
+ *   (export shape may have shifted)
+ */
 export const atlasGwClass = (sandbox: Sandbox): AtlasGwClassCtor => {
   const exp = reachModule<Record<string, unknown>>(sandbox, MOD_ATLAS_CLASS, "atlasGwClass");
   for (const k of Object.keys(exp)) {
@@ -281,31 +430,70 @@ export const atlasGwClass = (sandbox: Sandbox): AtlasGwClassCtor => {
 
 // ─── 5. TODO getters — constant mappers undefined; throw at call time ───
 
-// TODO: FriendRequests `N` client — chat main byte ~6939950 (Process,
-// IncomingFriendSync). SDK currently routes around via api/friending.ts.
+/**
+ * FriendRequests `N` client — chat main byte ~6939950 (Process,
+ * IncomingFriendSync). SDK currently routes around via api/friending.ts.
+ *
+ * @remarks TODO — constant mapper is `undefined`; this getter throws
+ * "not yet mapped" at call time. Source-patch as
+ * `__SNAPCAP_FRIEND_REQUESTS` and wire `G_FRIEND_REQUESTS_CLIENT`.
+ *
+ * @internal Bundle-layer accessor (TODO).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live FriendRequests `N` client (when mapped)
+ * @throws always, until the source-patch lands
+ */
 export const friendRequestsClient = (sandbox: Sandbox): FriendRequestsClient =>
   reach<FriendRequestsClient>(sandbox, G_FRIEND_REQUESTS_CLIENT, "friendRequestsClient");
 
-// TODO: UserInfo/Self client — no dedicated RPC located yet; investigate
-// AtlasGw `GetSnapchatterPublicInfo` and any `GetSelf` candidate.
+/**
+ * UserInfo / Self client — placeholder.
+ *
+ * @remarks TODO — no dedicated RPC located yet; investigate AtlasGw
+ * `GetSnapchatterPublicInfo` and any `GetSelf` candidate.
+ *
+ * @internal Bundle-layer accessor (TODO).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live UserInfo client (when mapped)
+ * @throws always, until the source-patch lands
+ */
 export const userInfoClient = (sandbox: Sandbox): UserInfoClient =>
   reach<UserInfoClient>(sandbox, G_USER_INFO_CLIENT, "userInfoClient");
 
-// TODO: StoryManager — `getStoryManager()` on the WASM session; needs an
-// Embind trace + a source-patch to surface as `__SNAPCAP_STORY_MANAGER`.
+/**
+ * StoryManager — `getStoryManager()` on the WASM session.
+ *
+ * @remarks TODO — needs an Embind trace + a source-patch to surface as
+ * `__SNAPCAP_STORY_MANAGER`.
+ *
+ * @internal Bundle-layer accessor (TODO).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live StoryManager (when mapped)
+ * @throws always, until the source-patch lands
+ */
 export const storyManager = (sandbox: Sandbox): StoryManager =>
   reach<StoryManager>(sandbox, G_STORY_MANAGER, "storyManager");
 
-// AtlasGw natural instance — chat main byte ~6940575 closure-private `A`,
-// source-patched as `__SNAPCAP_ATLAS`. Prefer this over `atlasGwClass()` —
-// it's the same per-bundle `A` instance the SPA uses, with `rpc.unary`
-// wired to the bundle's own `default-authed-fetch` (so bearer + cookies
-// are attached the way the SPA does).
-//
-// NOTE: AtlasGw has no fuzzy user-search method. `friends.search()`
-// continues to use the closure-private `HY/jY` codecs + `defaultAuthedFetch`
-// because the bundle's own search path (`Yz`, byte ~1435000) is REST POST
-// to `/search/search`, not a gRPC call on AtlasGw.
+/**
+ * AtlasGw natural instance — chat main byte ~6940575 closure-private `A`,
+ * source-patched as `__SNAPCAP_ATLAS`.
+ *
+ * Prefer this over {@link atlasGwClass} — it's the same per-bundle `A`
+ * instance the SPA uses, with `rpc.unary` wired to the bundle's own
+ * `default-authed-fetch` (so bearer + cookies are attached the way the
+ * SPA does).
+ *
+ * @remarks AtlasGw has no fuzzy user-search method. `friends.search()`
+ * continues to use the closure-private `HY/jY` codecs +
+ * {@link defaultAuthedFetch} because the bundle's own search path
+ * (`Yz`, byte ~1435000) is REST POST to `/search/search`, not a gRPC
+ * call on AtlasGw.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach AtlasGw
+ * methods via `src/api/friends.ts`.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `A` AtlasGw client instance
+ */
 export const atlasClient = (sandbox: Sandbox): AtlasGwClient =>
   reach<AtlasGwClient>(sandbox, G_ATLAS_CLIENT, "atlasClient");
 
@@ -313,32 +501,48 @@ export const atlasClient = (sandbox: Sandbox): AtlasGwClient =>
 
 /**
  * Bundle's `SearchRequest` ts-proto codec — `HY` in chat module ~10409.
+ *
  * Returns the live codec object; consumers call `.fromPartial(...)` and
  * `.encode(msg).finish()` to build the request body for the
- * `/search/search` POST.
+ * `/search/search` POST. See {@link SearchRequestCodec}.
+ *
+ * @internal Bundle-layer accessor. Used by {@link searchUsers} below.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `HY` codec
  */
 export const searchRequestCodec = (sandbox: Sandbox): SearchRequestCodec =>
   reach<SearchRequestCodec>(sandbox, G_SEARCH_REQ_CODEC, "searchRequestCodec");
 
 /**
  * Bundle's `SearchResponse` ts-proto codec — `JY` in chat module ~10409.
- * Returns the live codec object; consumers call `.decode(bytes)` to parse
- * the `/search/search` POST response.
+ *
+ * Returns the live codec object; consumers call `.decode(bytes)` to
+ * parse the `/search/search` POST response. See {@link SearchResponseCodec}.
+ *
+ * @internal Bundle-layer accessor. Used by {@link searchUsers} below.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `JY` codec
  */
 export const searchResponseCodec = (sandbox: Sandbox): SearchResponseCodec =>
   reach<SearchResponseCodec>(sandbox, G_SEARCH_RESP_CODEC, "searchResponseCodec");
 
 /**
  * Wrap a host-realm `Uint8Array` (or `ArrayBuffer`) with the SANDBOX
- * realm's `Uint8Array` constructor. The bundle's protobuf reader (chat
- * main ~byte 2840000) does an `e instanceof Uint8Array` check before
- * constructing a Reader; cross-realm `Uint8Array`s fail that check
- * because the sandbox `vm.Context` has its own constructor (see
- * `shims/sandbox.ts`).
+ * realm's `Uint8Array` constructor.
+ *
+ * The bundle's protobuf reader (chat main ~byte 2840000) does an
+ * `e instanceof Uint8Array` check before constructing a Reader;
+ * cross-realm `Uint8Array`s fail that check because the sandbox
+ * `vm.Context` has its own constructor (see `shims/sandbox.ts`).
  *
  * Falls back to host `Uint8Array` if the sandbox isn't initialized — the
  * resulting buffer will fail bundle decode, but that surfaces as a
  * cleaner error at call-site than throwing here.
+ *
+ * @internal Cross-realm helper for bundle-bound byte buffers.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @param src - host-realm `Uint8Array` or `ArrayBuffer`
+ * @returns a sandbox-realm `Uint8Array` over the same bytes
  */
 export const toVmU8 = (sandbox: Sandbox, src: Uint8Array | ArrayBuffer): Uint8Array => {
   const SU8 = sandbox.getGlobal<typeof Uint8Array>("Uint8Array") ?? Uint8Array;
@@ -346,10 +550,16 @@ export const toVmU8 = (sandbox: Sandbox, src: Uint8Array | ArrayBuffer): Uint8Ar
 };
 
 /**
- * Generate a UUID using the SANDBOX realm's `crypto.randomUUID`. Returns
- * `""` (not undefined) when the sandbox `crypto` global is missing — the
- * bundle's search request accepts an empty `sessionId` and a string
- * fallback keeps consumer types simple.
+ * Generate a UUID using the SANDBOX realm's `crypto.randomUUID`.
+ *
+ * Returns `""` (not undefined) when the sandbox `crypto` global is
+ * missing — the bundle's search request accepts an empty `sessionId`
+ * and a string fallback keeps consumer types simple.
+ *
+ * @internal Cross-realm helper used when seeding bundle-bound request
+ * envelopes with a sessionId.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns a hyphenated UUID string, or `""` when `crypto` is absent
  */
 export const sandboxRandomUUID = (sandbox: Sandbox): string =>
   sandbox.getGlobal<{ randomUUID?: () => string }>("crypto")?.randomUUID?.() ?? "";
@@ -360,13 +570,20 @@ export const sandboxRandomUUID = (sandbox: Sandbox): string =>
  * layer adapts the result into consumer-shape `User[]`.
  *
  * Lives here (not in api/) because it composes three register-internal
- * primitives (codecs + `defaultAuthedFetch` + `hostModule`) and the api
- * rule forbids reaching for those directly. Returns the raw decoded
- * shape so the api layer owns the field-mapping decisions.
+ * primitives (codecs + {@link defaultAuthedFetch} + {@link hostModule})
+ * and the api rule forbids reaching for those directly. Returns the raw
+ * decoded shape so the api layer owns the field-mapping decisions.
  *
  * `sectionType` defaults to 2 (`SECTION_TYPE_ADD_FRIENDS`); `origin`
  * defaults to 21 (`ORIGIN_DWEB`); `numToReturn` defaults to 20 — all
  * matching what the SPA sends from its search-bar code path.
+ *
+ * @internal Bundle-layer composition. Public consumers reach search via
+ * `SnapcapClient.searchUsers()` (see `src/api/search.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @param query - free-form search string (username / display-name fragment)
+ * @param opts - optional overrides for `sectionType` / `numToReturn` / `origin`
+ * @returns the raw decoded {@link DecodedSearchResponse}
  */
 export const searchUsers = async (
   sandbox: Sandbox,
@@ -395,9 +612,15 @@ export const searchUsers = async (
 // ─── 7. slice-from-state + subscription helpers ─────────────────────────
 
 /**
- * Project the `user` slice out of a chat-bundle `ChatState`. Pure thunk —
- * exists so subscribers don't have to reach for `state.user.*` directly
- * (and so the per-slice diffing API stays uniform across api files).
+ * Project the `user` slice out of a chat-bundle `ChatState`.
+ *
+ * Pure thunk — exists so subscribers don't have to reach for
+ * `state.user.*` directly (and so the per-slice diffing API stays
+ * uniform across api files).
+ *
+ * @internal Bundle-layer projection helper.
+ * @param state - a {@link ChatState} snapshot from the chat-bundle store
+ * @returns the `user` slice of `state`
  */
 export const userSliceFrom = (state: ChatState): UserSlice => state.user;
 
@@ -413,10 +636,18 @@ export const userSliceFrom = (state: ChatState): UserSlice => state.user;
  *
  * The first invocation primes `prev` from the initial selector value and
  * does NOT fire `cb` — same no-replay semantics as the manual subscribers
- * in `friends.ts`. Returns an `Unsubscribe` thunk that's idempotent and
- * never throws (Zustand's own unsubscribe is safe to call twice; we
+ * in `friends.ts`. Returns an {@link Unsubscribe} thunk that's idempotent
+ * and never throws (Zustand's own unsubscribe is safe to call twice; we
  * swallow consumer errors inside the listener so a misbehaving callback
  * doesn't tear down the subscription).
+ *
+ * @internal Bundle-layer subscription helper. Public consumers reach
+ * subscriptions via the api layer's `subscribeFriends` etc.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @param select - projection from {@link UserSlice} to a comparable value
+ * @param equals - equality predicate over the projected value
+ * @param cb - listener fired with `(curr, prev, fullState)` on each change
+ * @returns an idempotent {@link Unsubscribe} thunk
  */
 export const subscribeUserSlice = <T>(
   sandbox: Sandbox,

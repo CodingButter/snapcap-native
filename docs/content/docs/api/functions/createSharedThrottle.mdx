@@ -1,0 +1,54 @@
+---
+title: createSharedThrottle
+---
+
+# Function: createSharedThrottle()
+
+```ts
+function createSharedThrottle(config: ThrottleConfig): ThrottleGate;
+```
+
+Defined in: [transport/throttle.ts:261](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/transport/throttle.ts#L261)
+
+Build a SHARED [ThrottleGate](../type-aliases/ThrottleGate.mdx) for use across multiple
+`SnapcapClient` instances in the same process.
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `config` | [`ThrottleConfig`](../type-aliases/ThrottleConfig.mdx) | The throttle config (rules) to enforce across all clients that share the returned gate. |
+
+## Returns
+
+[`ThrottleGate`](../type-aliases/ThrottleGate.mdx)
+
+A [ThrottleGate](../type-aliases/ThrottleGate.mdx) that can be passed into every
+  `SnapcapClient`'s `throttle` constructor option.
+
+## Remarks
+
+Pass the returned gate as `throttle: gate` into each client's constructor
+— all clients will await the same internal state, so the aggregate request
+rate respects the configured rules regardless of how many clients are
+coordinating.
+
+This is the multi-tenant anti-spam pattern. The in-process multi-instance
+architecture makes it possible — process-per-instance deployments would
+require external coordination (file locks, network coordinator, shared
+memory) which is genuine pain.
+
+## Example
+
+```ts
+const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES });
+const clients = tenants.map(t => new SnapcapClient({
+  dataStore: t.store, username: t.name, password: t.pw,
+  throttle: gate,
+}));
+```
+
+## See
+
+ - [RECOMMENDED\_THROTTLE\_RULES](../variables/RECOMMENDED_THROTTLE_RULES.mdx)
+ - [ThrottleConfig](../type-aliases/ThrottleConfig.mdx)

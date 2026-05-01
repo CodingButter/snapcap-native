@@ -1,0 +1,48 @@
+---
+title: RECOMMENDED_THROTTLE_RULES
+---
+
+# Variable: RECOMMENDED\_THROTTLE\_RULES
+
+```ts
+const RECOMMENDED_THROTTLE_RULES: ThrottleRule[];
+```
+
+Defined in: [transport/throttle.ts:172](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/transport/throttle.ts#L172)
+
+Recommended starter rules tuned for human-cadence anti-spam friendliness
+against Snap's web endpoints.
+
+## Remarks
+
+Each entry is calibrated to what a real human user would plausibly do:
+
+- **Mutations** (`/JzFriendAction/`, `/FriendRequests/`) — `1500ms`
+  floor. Humans don't add or unfriend at sub-second cadence.
+- **Friend roster sync** (`/AtlasGw/SyncFriendData`) — `5000ms` floor.
+  Snap rate-limits sustained roster polling aggressively.
+- **Public-info lookups** (`/AtlasGw/GetSnapchatterPublicInfo`) — `100ms`
+  floor with a `burst: 10` allowance, modelling the in-app prefetch
+  behaviour for chat-row avatars and friend-grid hydration.
+- **Search** (`/search/search`) — `300ms` floor, modelling debounced
+  typing in the browser search box.
+
+Consumers opt in by importing this and passing it as
+`throttle: { rules: RECOMMENDED_THROTTLE_RULES }` (per-instance) or
+`throttle: createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES })`
+(shared across instances).
+
+## Example
+
+```ts
+import { SnapcapClient, RECOMMENDED_THROTTLE_RULES } from "@snapcap/native";
+const client = new SnapcapClient({
+  dataStore, username, password,
+  throttle: { rules: RECOMMENDED_THROTTLE_RULES },
+});
+```
+
+## See
+
+ - [createSharedThrottle](../functions/createSharedThrottle.mdx)
+ - [ThrottleRule](../type-aliases/ThrottleRule.mdx)

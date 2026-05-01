@@ -1,0 +1,53 @@
+---
+title: FriendSource
+---
+
+# Variable: FriendSource
+
+```ts
+const FriendSource: {
+  ADDED_BY_ADDED_ME_BACK: 4;
+  ADDED_BY_CHAT: 28;
+  ADDED_BY_DEEP_LINK: 8;
+  ADDED_BY_MENTION: 21;
+  ADDED_BY_PHONE: 1;
+  ADDED_BY_QR_CODE: 3;
+  ADDED_BY_SEARCH: 32;
+  ADDED_BY_SUBSCRIPTION: 22;
+  ADDED_BY_UNKNOWN: 0;
+  ADDED_BY_USERNAME: 2;
+  ADDED_BY_WEB: 33;
+  ADDED_FROM_PUBLIC_PROFILE: 26;
+  ADDED_FROM_SPOTLIGHT: 25;
+};
+```
+
+Defined in: [api/friends.ts:78](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L78)
+
+Attribution source for [IFriendsManager.add](../interfaces/IFriendsManager.mdx#add).
+
+Mirrors the bundle's `J$.source` field on `FriendActionParams` (chat
+module 10409, offset ~1406050 in `9846a7958a5f0bee7197.js`).
+
+## Type Declaration
+
+| Name | Type | Default value | Defined in |
+| ------ | ------ | ------ | ------ |
+| <a id="property-added_by_added_me_back"></a> `ADDED_BY_ADDED_ME_BACK` | `4` | `4` | [api/friends.ts:83](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L83) |
+| <a id="property-added_by_chat"></a> `ADDED_BY_CHAT` | `28` | `28` | [api/friends.ts:89](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L89) |
+| <a id="property-added_by_deep_link"></a> `ADDED_BY_DEEP_LINK` | `8` | `8` | [api/friends.ts:84](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L84) |
+| <a id="property-added_by_mention"></a> `ADDED_BY_MENTION` | `21` | `21` | [api/friends.ts:85](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L85) |
+| <a id="property-added_by_phone"></a> `ADDED_BY_PHONE` | `1` | `1` | [api/friends.ts:80](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L80) |
+| <a id="property-added_by_qr_code"></a> `ADDED_BY_QR_CODE` | `3` | `3` | [api/friends.ts:82](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L82) |
+| <a id="property-added_by_search"></a> `ADDED_BY_SEARCH` | `32` | `32` | [api/friends.ts:90](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L90) |
+| <a id="property-added_by_subscription"></a> `ADDED_BY_SUBSCRIPTION` | `22` | `22` | [api/friends.ts:86](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L86) |
+| <a id="property-added_by_unknown"></a> `ADDED_BY_UNKNOWN` | `0` | `0` | [api/friends.ts:79](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L79) |
+| <a id="property-added_by_username"></a> `ADDED_BY_USERNAME` | `2` | `2` | [api/friends.ts:81](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L81) |
+| <a id="property-added_by_web"></a> `ADDED_BY_WEB` | `33` | `33` | [api/friends.ts:91](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L91) |
+| <a id="property-added_from_public_profile"></a> `ADDED_FROM_PUBLIC_PROFILE` | `26` | `26` | [api/friends.ts:88](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L88) |
+| <a id="property-added_from_spotlight"></a> `ADDED_FROM_SPOTLIGHT` | `25` | `25` | [api/friends.ts:87](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L87) |
+
+## Remarks
+
+Default for `add()` is `ADDED_BY_USERNAME` — what the SPA sends from
+the search-result "Add" button.

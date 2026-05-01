@@ -1,66 +1,142 @@
 ---
-title: 'API reference'
-description: 'Every public surface of @snapcap/native — the methods, types, and helpers you use to build against the SDK.'
+title: "@snapcap/native"
 ---
 
-Every public surface of `@snapcap/native`. Anything not listed here is internal and can change without notice.
+# @snapcap/native v0.0.1
 
-For most apps you'll only need [`SnapcapClient`](/docs/api/snapcap-client), [`Conversation`](/docs/api/conversation), [`User`](/docs/api/user), and [`FileDataStore`](/docs/api/storage#filedatastore). The rest is escape hatches.
+`@snapcap/native` — browser-free Snapchat client for Node.
 
-| Page | What's there |
-|---|---|
-| [SnapcapClient](/docs/api/snapcap-client) | The main class. Constructor, auth, friends, conversations, messaging, presence, low-level RPC. |
-| [Conversation](/docs/api/conversation) | Domain object for a single chat. `sendText`, `sendImage`, `setTyping`, `markViewed`. |
-| [User](/docs/api/user) | The `User` data class + factory methods. |
-| [Messages & inbound stream](/docs/api/messages) | `DecodedMessage`, `Unsubscribe` — the types you touch from `client.onMessage`. |
-| [Storage](/docs/api/storage) | `DataStore` interface, built-in stores, `StorageShim`, `CookieJarStore`, IDB helpers. |
-| [Sandbox](/docs/api/sandbox) | `installShims`, `getSandbox`, the `Sandbox` class. Advanced bundle-interop only. |
+Loads Snap's web JavaScript bundle and 814 KB of WASM directly inside an
+isolated Node `vm.Context`, with shimmed Chrome APIs so the bundle "thinks"
+it's still running in Chromium. No Playwright, no emulator, no rooted phone
+— many accounts run on a fraction of the resources a browser harness would
+require.
 
-## Imports at a glance
+## Remarks
+
+The package is the public surface for the Snap automation runner — a thin
+facade over Snap's own bundle plus an opt-in observability + throttling
+layer. Authentication, friends, messaging, stories, presence, and inbox are
+surfaced via the [SnapcapClient](classes/SnapcapClient.mdx) entry point; persistence plugs in via
+the [DataStore](interfaces/DataStore.mdx) interface.
+
+## Examples
+
+Quick start:
+
+```ts
+import { SnapcapClient, FileDataStore } from "@snapcap/native";
+
+const dataStore = new FileDataStore(".tmp/auth/auth.json");
+const client = new SnapcapClient({
+  dataStore,
+  username: "...",
+  password: "...",
+  browser: {
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+  },
+});
+
+await client.isAuthorized();        // restore-or-login, idempotent
+const friends = await client.listFriends();
+```
+
+Multi-tenant runners should share one throttle gate across clients —
+see [createSharedThrottle](functions/createSharedThrottle.mdx) and [RECOMMENDED\_THROTTLE\_RULES](variables/RECOMMENDED_THROTTLE_RULES.mdx):
 
 ```ts
 import {
-  // Client + types
   SnapcapClient,
-  type SnapcapClientOpts,
-
-  // Domain objects
-  Conversation,
-  TypingActivity,
-  ConversationViewState,
-  type ConversationKind,
-  type ConversationSummary,
-  User,
-  FriendSource,
-  FriendAction,            // legacy enum; prefer FriendSource
-
-  // Inbound message stream
-  type DecodedMessage,
-  type Unsubscribe,
-
-  // Storage
-  type DataStore,
-  FileDataStore,
-  MemoryDataStore,
-  StorageShim,
-  CookieJarStore,
-  idbGet,
-  idbPut,
-  idbDelete,
-
-  // Sandbox / bundle interop (advanced)
-  installShims,
-  getSandbox,
-  isShimInstalled,
-  Sandbox,
-  type SandboxOpts,
-  type InstallShimOpts,
-
-  // Low-level helpers
-  uuidToBytes,
-  bytesToUuid,
-  uuidToHighLow,
+  createSharedThrottle,
+  RECOMMENDED_THROTTLE_RULES,
 } from "@snapcap/native";
+
+const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES });
+const clients = tenants.map(t => new SnapcapClient({ ...t, throttle: gate }));
 ```
 
-> The `FideliusIdentityBlob` type is also exported but **deprecated** — the SDK no longer mints or persists Fidelius identities (the chat bundle owns that end-to-end). Don't use it in new code. See [SnapcapClient → Types](/docs/api/snapcap-client#fideliusidentityblob-deprecated).
+Opt into structured network observability with [setLogger](functions/setLogger.mdx) (or set
+`SNAP_NETLOG=1` in the environment for the built-in text formatter):
+
+```ts
+import { setLogger, defaultTextLogger } from "@snapcap/native";
+setLogger(defaultTextLogger);
+```
+
+## See
+
+ - [SnapcapClient](classes/SnapcapClient.mdx) — the main entry point
+ - [Friends](classes/Friends.mdx) — friends domain manager
+ - [DataStore](interfaces/DataStore.mdx) — persistence interface
+ - [ThrottleConfig](type-aliases/ThrottleConfig.mdx) — opt-in HTTP throttling
+ - [Logger](type-aliases/Logger.mdx) — structured network observability
+
+## Classes
+
+| Class | Description |
+| ------ | ------ |
+| [CookieJarStore](classes/CookieJarStore.mdx) | DataStore-backed wrapper around a tough-cookie `CookieJar`. |
+| [FileDataStore](classes/FileDataStore.mdx) | File-backed [DataStore](interfaces/DataStore.mdx) implementation. |
+| [Friends](classes/Friends.mdx) | Concrete [IFriendsManager](interfaces/IFriendsManager.mdx) implementation. |
+| [Inbox](classes/Inbox.mdx) | Placeholder for the future Inbox domain manager. |
+| [Media](classes/Media.mdx) | Placeholder for the future Media domain manager. |
+| [MemoryDataStore](classes/MemoryDataStore.mdx) | In-memory [DataStore](interfaces/DataStore.mdx) implementation — useful for tests and ephemeral sandboxes. |
+| [Messaging](classes/Messaging.mdx) | Placeholder for the future Messaging domain manager. |
+| [Presence](classes/Presence.mdx) | Placeholder for the future Presence domain manager. |
+| [SnapcapClient](classes/SnapcapClient.mdx) | Concrete [ISnapcapClient](interfaces/ISnapcapClient.mdx) implementation — main SDK entry point. |
+| [StorageShim](classes/StorageShim.mdx) | Web Storage API (`localStorage` / `sessionStorage`) implementation backed by a [DataStore](interfaces/DataStore.mdx). |
+| [Stories](classes/Stories.mdx) | Placeholder for the future Stories domain manager. |
+
+## Interfaces
+
+| Interface | Description |
+| ------ | ------ |
+| [DataStore](interfaces/DataStore.mdx) | Persistent key-value storage interface — the SDK's pluggable persistence backbone. |
+| [Friend](interfaces/Friend.mdx) | A friend in the logged-in user's social graph. |
+| [FriendRequest](interfaces/FriendRequest.mdx) | An inbound friend request — someone has added the logged-in user and is waiting for [IFriendsManager.acceptRequest](interfaces/IFriendsManager.mdx#acceptrequest) or [IFriendsManager.rejectRequest](interfaces/IFriendsManager.mdx#rejectrequest). |
+| [FriendsSnapshot](interfaces/FriendsSnapshot.mdx) | A point-in-time view of the entire friend graph — mutuals + pending requests in both directions. |
+| [FriendsUser](interfaces/FriendsUser.mdx) | A user surfaced from search / lookup. Carries no friend-graph metadata (use [Friend](interfaces/Friend.mdx) for that). |
+| [IFriendsManager](interfaces/IFriendsManager.mdx) | Friends domain manager — all friend-graph operations live here. |
+| [ISnapcapClient](interfaces/ISnapcapClient.mdx) | The public contract that [SnapcapClient](classes/SnapcapClient.mdx) implements. |
+| [OutgoingRequest](interfaces/OutgoingRequest.mdx) | An outbound friend request — the logged-in user has added this account and is waiting for them to accept. |
+
+## Type Aliases
+
+| Type Alias | Description |
+| ------ | ------ |
+| [BrowserContext](type-aliases/BrowserContext.mdx) | Browser-context fingerprint settings — what "browser" the SDK pretends to be when talking to Snap. |
+| [Credentials](type-aliases/Credentials.mdx) | Login credentials passed to [SnapcapClient](classes/SnapcapClient.mdx)'s constructor. |
+| [FriendLinkType](type-aliases/FriendLinkType.mdx) | Friend-link state. |
+| [FriendSource](type-aliases/FriendSource.mdx) | String-keyed enum form of [FriendSource](variables/FriendSource.mdx) — the type of any value read off the const object. |
+| [LogEvent](type-aliases/LogEvent.mdx) | All emitted log events. Closed discriminated union — switch on `event.kind` to narrow. |
+| [Logger](type-aliases/Logger.mdx) | Handler signature passed to [setLogger](functions/setLogger.mdx). |
+| [SnapcapClientOpts](type-aliases/SnapcapClientOpts.mdx) | Public constructor options for [SnapcapClient](classes/SnapcapClient.mdx). |
+| [ThrottleConfig](type-aliases/ThrottleConfig.mdx) | Throttle configuration accepted by `SnapcapClient`'s `throttle` option. |
+| [ThrottleGate](type-aliases/ThrottleGate.mdx) | Function shape that throttles outbound requests. Awaited once per wire request, immediately before the SDK calls into the underlying fetch / XHR layer. |
+| [ThrottleRule](type-aliases/ThrottleRule.mdx) | One throttle rule. Matches outbound URLs and gates them at a minimum inter-call interval, with optional burst headroom. |
+| [Unsubscribe](type-aliases/Unsubscribe.mdx) | Thunk returned by subscription methods (e.g. [IFriendsManager.onChange](interfaces/IFriendsManager.mdx#onchange)). Calling it cancels the subscription. Idempotent — calling more than once is a no-op. |
+| [UserId](type-aliases/UserId.mdx) | 16-byte UUID rendered as a hyphenated string. |
+
+## Variables
+
+| Variable | Description |
+| ------ | ------ |
+| [defaultTextLogger](variables/defaultTextLogger.mdx) | Built-in human-readable formatter. One line per event, no embedded newlines. Tag column is fixed-width (15 chars) so the output aligns regardless of which event variant is being logged. |
+| [FriendSource](variables/FriendSource.mdx) | Attribution source for [IFriendsManager.add](interfaces/IFriendsManager.mdx#add). |
+| [RECOMMENDED\_THROTTLE\_RULES](variables/RECOMMENDED_THROTTLE_RULES.mdx) | Recommended starter rules tuned for human-cadence anti-spam friendliness against Snap's web endpoints. |
+
+## Functions
+
+| Function | Description |
+| ------ | ------ |
+| [activeIdentifier](functions/activeIdentifier.mdx) | Pull the active identifier (and its `loginIdentifier` `$case`) out of a [Credentials](type-aliases/Credentials.mdx) object. |
+| [bytesToUuid](functions/bytesToUuid.mdx) | Inverse of [uuidToBytes](functions/uuidToBytes.mdx): 16-byte buffer → hyphenated UUID string. |
+| [createSharedThrottle](functions/createSharedThrottle.mdx) | Build a SHARED [ThrottleGate](type-aliases/ThrottleGate.mdx) for use across multiple `SnapcapClient` instances in the same process. |
+| [highLowToUuid](functions/highLowToUuid.mdx) | Inverse of [uuidToHighLow](functions/uuidToHighLow.mdx): assemble a UUID string from the `{high, low}` pair. |
+| [idbDelete](functions/idbDelete.mdx) | Delete the entry at `(dbName, storeName, key)`. No-op if absent. |
+| [idbGet](functions/idbGet.mdx) | Read a value from the sandbox's IndexedDB at `(dbName, storeName, key)`. |
+| [idbPut](functions/idbPut.mdx) | Write `value` into the sandbox's IndexedDB at `(dbName, storeName, key)`. |
+| [setLogger](functions/setLogger.mdx) | Install (or clear) the active logger. |
+| [uuidToBytes](functions/uuidToBytes.mdx) | Convert a hyphenated UUID string into its 16-byte representation. |
+| [uuidToHighLow](functions/uuidToHighLow.mdx) | Split a UUID into the `{high, low}` fixed64 pair Snap uses in some RPCs (e.g. `FriendAction.AddFriends`) instead of the bytes16 wrapper. |

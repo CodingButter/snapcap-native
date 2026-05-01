@@ -1,0 +1,33 @@
+---
+title: bytesToUuid
+---
+
+# Function: bytesToUuid()
+
+```ts
+function bytesToUuid(bytes: Uint8Array): string;
+```
+
+Defined in: [api/\_helpers.ts:73](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/_helpers.ts#L73)
+
+Inverse of [uuidToBytes](uuidToBytes.mdx): 16-byte buffer → hyphenated UUID string.
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `bytes` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | 16-byte buffer. |
+
+## Returns
+
+`string`
+
+Hyphenated UUID string.
+
+## Throws
+
+If `bytes.byteLength !== 16`.
+
+## See
+
+[uuidToBytes](uuidToBytes.mdx)

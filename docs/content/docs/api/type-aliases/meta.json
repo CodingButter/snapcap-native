@@ -1,0 +1,16 @@
+{
+  "title": "Type Aliases",
+  "pages": [
+    "SnapcapClientOpts",
+    "Credentials",
+    "BrowserContext",
+    "UserId",
+    "FriendSource",
+    "FriendLinkType",
+    "Logger",
+    "LogEvent",
+    "ThrottleConfig",
+    "ThrottleGate",
+    "ThrottleRule"
+  ]
+}

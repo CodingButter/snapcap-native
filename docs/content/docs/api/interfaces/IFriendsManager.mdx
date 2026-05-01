@@ -1,0 +1,394 @@
+---
+title: IFriendsManager
+---
+
+# Interface: IFriendsManager
+
+Defined in: [api/friends.ts:235](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L235)
+
+Friends domain manager — all friend-graph operations live here.
+
+All UUIDs are hyphenated string [UserId](../type-aliases/UserId.mdx) values. Mutations
+resolve `void` on success; reads return consumer-shape types
+([Friend](Friend.mdx), [User](FriendsUser.mdx), [FriendRequest](FriendRequest.mdx),
+[OutgoingRequest](OutgoingRequest.mdx)) — never bundle protobuf shapes.
+
+## Remarks
+
+Reads share a single underlying [IFriendsManager.snapshot](#snapshot).
+[IFriendsManager.list](#list), [IFriendsManager.incomingRequests](#incomingrequests),
+and [IFriendsManager.outgoingRequests](#outgoingrequests) are slim accessors that
+project the relevant slice. One subscription method
+([IFriendsManager.onChange](#onchange)) fires whenever any of the three
+slots changes; it returns an `Unsubscribe` thunk that's
+idempotent.
+
+Pending-request methods ([IFriendsManager.acceptRequest](#acceptrequest),
+[IFriendsManager.rejectRequest](#rejectrequest)) are gated on the chat-bundle
+source-patch surfacing the closure-private `FriendRequests` client
+(planned global: `__SNAPCAP_FRIEND_REQUESTS_CLIENT`). Until that
+lands, those methods throw an explicit "not yet wired" error.
+
+## See
+
+ - [Friends](../classes/Friends.mdx)
+ - [FriendsSnapshot](FriendsSnapshot.mdx)
+
+## Methods
+
+### acceptRequest()
+
+```ts
+acceptRequest(userId: string): Promise<void>;
+```
+
+Defined in: [api/friends.ts:313](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L313)
+
+Accept an incoming friend request.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `userId` | `string` | Hyphenated UUID of the requester whose request to accept. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Throws
+
+Currently always throws — gated on the
+`__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch landing in
+`register.ts`.
+
+***
+
+### add()
+
+```ts
+add(userId: string, source?: FriendSource): Promise<void>;
+```
+
+Defined in: [api/friends.ts:258](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L258)
+
+Send a friend request / add a user to the friend list.
+
+Resolves once the server acknowledges. `source` defaults to
+[FriendSource](../variables/FriendSource.mdx)`.ADDED_BY_USERNAME`.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `userId` | `string` | Hyphenated UUID of the user to add. |
+| `source?` | [`FriendSource`](../type-aliases/FriendSource.mdx) | Attribution context; defaults to `ADDED_BY_USERNAME`. See [FriendSource](../variables/FriendSource.mdx). |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Examples
+
+```ts
+await client.friends.add("eabd1d89-239a-4f7b-bbcc-0ae3b26c5202");
+```
+
+```ts
+import { FriendSource } from "@snapcap/native";
+await client.friends.add(userId, FriendSource.ADDED_BY_SEARCH);
+```
+
+***
+
+### block()
+
+```ts
+block(userId: string): Promise<void>;
+```
+
+Defined in: [api/friends.ts:288](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L288)
+
+Block a user — also removes any existing friend link.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `userId` | `string` | Hyphenated UUID of the user to block. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Example
+
+```ts
+await client.friends.block(userId);
+```
+
+***
+
+### ignore()
+
+```ts
+ignore(userId: string): Promise<void>;
+```
+
+Defined in: [api/friends.ts:302](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L302)
+
+Ignore an incoming friend request without explicitly rejecting.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `userId` | `string` | Hyphenated UUID of the requester to ignore. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+***
+
+### incomingRequests()
+
+```ts
+incomingRequests(): Promise<FriendRequest[]>;
+```
+
+Defined in: [api/friends.ts:347](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L347)
+
+All pending incoming friend requests.
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`FriendRequest`](FriendRequest.mdx)[]\>
+
+Inbound [FriendRequest](FriendRequest.mdx) records waiting for accept /
+reject / ignore.
+
+***
+
+### list()
+
+```ts
+list(): Promise<Friend[]>;
+```
+
+Defined in: [api/friends.ts:339](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L339)
+
+All friends in the logged-in user's social graph (excluding self).
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`Friend`](Friend.mdx)[]\>
+
+Mutually-confirmed friends as [Friend](Friend.mdx) records.
+
+#### Example
+
+```ts
+const friends = await client.friends.list();
+for (const f of friends) console.log(f.username);
+```
+
+***
+
+### onChange()
+
+```ts
+onChange(cb: (snap: FriendsSnapshot) => void): Unsubscribe;
+```
+
+Defined in: [api/friends.ts:410](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L410)
+
+Fire `cb` whenever any part of the friend graph changes — mutuals,
+incoming requests, or outgoing requests.
+
+The callback receives a full [FriendsSnapshot](FriendsSnapshot.mdx) reflecting the
+new state. Initial state is NOT replayed — call
+[IFriendsManager.snapshot](#snapshot) once after subscribing if you need
+a baseline.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `cb` | (`snap`: [`FriendsSnapshot`](FriendsSnapshot.mdx)) => `void` | Subscriber invoked with the latest snapshot on every relevant change. |
+
+#### Returns
+
+[`Unsubscribe`](../type-aliases/Unsubscribe.mdx)
+
+An `Unsubscribe` thunk; idempotent on repeat calls.
+
+#### Example
+
+```ts
+const unsub = client.friends.onChange((snap) => {
+  console.log(`mutuals=${snap.mutuals.length}`);
+});
+// ...later
+unsub();
+```
+
+***
+
+### outgoingRequests()
+
+```ts
+outgoingRequests(): Promise<OutgoingRequest[]>;
+```
+
+Defined in: [api/friends.ts:355](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L355)
+
+All pending outgoing friend requests (the logged-in user's adds
+waiting for the recipient to accept).
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`OutgoingRequest`](OutgoingRequest.mdx)[]\>
+
+Outbound [OutgoingRequest](OutgoingRequest.mdx) records.
+
+***
+
+### rejectRequest()
+
+```ts
+rejectRequest(userId: string): Promise<void>;
+```
+
+Defined in: [api/friends.ts:324](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L324)
+
+Reject an incoming friend request.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `userId` | `string` | Hyphenated UUID of the requester whose request to reject. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Throws
+
+Currently always throws — gated on the
+`__SNAPCAP_FRIEND_REQUESTS_CLIENT` source-patch landing in
+`register.ts`.
+
+***
+
+### remove()
+
+```ts
+remove(userId: string): Promise<void>;
+```
+
+Defined in: [api/friends.ts:276](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L276)
+
+Remove a friend from the social graph.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `userId` | `string` | Hyphenated UUID of the friend to remove. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Remarks
+
+Snap unfriend is asymmetric — the recipient unfriending the sender
+doesn't sever the link from the sender's side. Subsequent
+[IFriendsManager.add](#add) calls against an account that still sees
+the caller as mutual become silent no-ops.
+
+#### Example
+
+```ts
+await client.friends.remove(userId);
+```
+
+***
+
+### search()
+
+```ts
+search(query: string): Promise<FriendsUser[]>;
+```
+
+Defined in: [api/friends.ts:384](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L384)
+
+Search Snap's user index by username / display-name fragment.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `query` | `string` | Free-text query — Snap's "Add Friends" search box matches both usernames and display names, with prefix and substring weighting. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`FriendsUser`](FriendsUser.mdx)[]\>
+
+A list of matching [User](FriendsUser.mdx) records. Empty when `query`
+is empty or no users match.
+
+#### Example
+
+```ts
+const users = await client.friends.search("alice");
+```
+
+***
+
+### snapshot()
+
+```ts
+snapshot(): Promise<FriendsSnapshot>;
+```
+
+Defined in: [api/friends.ts:368](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L368)
+
+Canonical point-in-time view of the friend graph — mutuals + pending
+requests in both directions.
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`FriendsSnapshot`](FriendsSnapshot.mdx)\>
+
+A [FriendsSnapshot](FriendsSnapshot.mdx) with all three slots populated.
+
+#### Remarks
+
+The split read accessors ([IFriendsManager.list](#list),
+[IFriendsManager.incomingRequests](#incomingrequests),
+[IFriendsManager.outgoingRequests](#outgoingrequests)) all project from this.
+
+***
+
+### unblock()
+
+```ts
+unblock(userId: string): Promise<void>;
+```
+
+Defined in: [api/friends.ts:295](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L295)
+
+Unblock a previously-blocked user.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `userId` | `string` | Hyphenated UUID of the user to unblock. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>

@@ -585,13 +585,17 @@ function createNativeFetchShim(opts: {
  * jar-cookie / cross-realm bugs) with a Node-fetch-backed substrate that
  * rides the shared cookie jar and produces sandbox-realm Responses.
  *
- * Last-write-wins: this runs after the projection loop in `Sandbox`'s
+ * Last-write-wins: this runs after the projection loop in {@link Sandbox}'s
  * constructor, so happy-dom's fetch is silently replaced before any
  * bundle code runs.
+ *
+ * @internal
  */
 export class FetchShim extends Shim {
+  /** @internal */
   readonly name = "fetch";
 
+  /** @internal */
   install(sandbox: Sandbox, ctx: ShimContext): void {
     sandbox.window.fetch = createNativeFetchShim({
       jar: ctx.jar,

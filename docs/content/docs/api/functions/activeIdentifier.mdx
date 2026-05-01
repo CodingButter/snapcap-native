@@ -1,0 +1,59 @@
+---
+title: activeIdentifier
+---
+
+# Function: activeIdentifier()
+
+```ts
+function activeIdentifier(c: Credentials): {
+  type: "username" | "email" | "phone";
+  value: string;
+};
+```
+
+Defined in: [types.ts:126](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/types.ts#L126)
+
+Pull the active identifier (and its `loginIdentifier` `$case`) out of a
+[Credentials](../type-aliases/Credentials.mdx) object.
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `c` | [`Credentials`](../type-aliases/Credentials.mdx) | The credentials to inspect. |
+
+## Returns
+
+```ts
+{
+  type: "username" | "email" | "phone";
+  value: string;
+}
+```
+
+A `{ type, value }` pair where `type` is the identifier kind
+  (`"username"`, `"email"`, or `"phone"`) and `value` is the supplied
+  identifier string.
+
+| Name | Type | Defined in |
+| ------ | ------ | ------ |
+| `type` | `"username"` \| `"email"` \| `"phone"` | [types.ts:126](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/types.ts#L126) |
+| `value` | `string` | [types.ts:126](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/types.ts#L126) |
+
+## Remarks
+
+Used by `api/auth.ts:fullLogin` to map the consumer-shape Credentials into
+Snap's WebLogin proto `loginIdentifier` oneof, and by `client.ts` to extract
+the identifier for `refreshAuthToken` / kameleon binding.
+
+## Throws
+
+If no identifier is set, or if more than one identifier is set —
+  exactly one is required.
+
+## Example
+
+```ts
+activeIdentifier({ username: "alice", password: "..." });
+// { type: "username", value: "alice" }
+```

@@ -25,9 +25,28 @@ const HINT_PATTERNS = [
   /Fidelius/i,
 ];
 
+/**
+ * Map of webpack module id to the captured `module.exports` value.
+ *
+ * @internal
+ */
 export type CapturedModules = Map<string, unknown>;
+/**
+ * Map of synthetic stamp (`m<index>#<id>`) to the unwrapped factory function,
+ * preserved so callers can re-invoke it directly without our exports-capture
+ * wrapper.
+ *
+ * @internal
+ */
 export type OriginalFactories = Map<string, Function>;
 
+/**
+ * Heuristic match recorded when a module's exports object includes a key
+ * matching one of the {@link HINT_PATTERNS} regexes (sendMessage,
+ * SyncFriendData, Fidelius, etc.).
+ *
+ * @internal
+ */
 export type ModuleHint = {
   moduleId: string;
   hint: string;
@@ -40,6 +59,16 @@ let installed: {
   hints: ModuleHint[];
 } | null = null;
 
+/**
+ * Install the webpack-chunk hook on the sandbox's window. Pre-creates the
+ * known `webpackChunk_*` arrays with a wrapped `push`, so factories can be
+ * intercepted from the very first chunk the bundle loads. Idempotent —
+ * repeated calls return the same accumulator.
+ *
+ * @internal
+ * @param sandbox - target sandbox to instrument
+ * @returns mutable maps the caller can poll for module exports / hints
+ */
 export function installWebpackCapture(sandbox: Sandbox): {
   modules: CapturedModules;
   originals: OriginalFactories;

@@ -1,0 +1,72 @@
+---
+title: LogEvent
+---
+
+# Type Alias: LogEvent
+
+```ts
+type LogEvent = 
+  | {
+  kind: "net.xhr.open";
+  method: string;
+  url: string;
+}
+  | {
+  durMs: number;
+  grpcMessage?: string;
+  grpcStatus?: string;
+  kind: "net.xhr.done";
+  method: string;
+  reqBytes: number;
+  respBytes: number;
+  status: number;
+  url: string;
+}
+  | {
+  durMs: number;
+  error: string;
+  kind: "net.xhr.error";
+  method: string;
+  url: string;
+}
+  | {
+  kind: "net.fetch.open";
+  method: string;
+  url: string;
+}
+  | {
+  durMs: number;
+  grpcMessage?: string;
+  grpcStatus?: string;
+  kind: "net.fetch.done";
+  method: string;
+  reqBytes: number;
+  respBytes: number;
+  status: number;
+  url: string;
+}
+  | {
+  durMs: number;
+  error: string;
+  kind: "net.fetch.error";
+  method: string;
+  url: string;
+};
+```
+
+Defined in: [logging.ts:56](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/logging.ts#L56)
+
+All emitted log events. Closed discriminated union — switch on
+`event.kind` to narrow.
+
+## Remarks
+
+Variants pair on protocol (`xhr` vs `fetch`) and lifecycle stage
+(`open` / `done` / `error`). `done` events carry `reqBytes` /
+`respBytes` (sizes only — never content) and an optional `grpcStatus` /
+`grpcMessage` for gRPC-Web responses.
+
+## See
+
+ - [Logger](Logger.mdx)
+ - [defaultTextLogger](../variables/defaultTextLogger.mdx)

@@ -1,35 +1,44 @@
 /**
  * Bundle-driven auth orchestration.
  *
- * Tier-2 api file: composes the manager getters from `../bundle/register.ts`
- * (the "registry of Snap managers") into a coherent end-user surface
- * (`authenticate`, `logout`, `refreshAuthToken`, …). Stateless — every
- * exported function takes a `ClientContext` first arg.
+ * Tier-2 api file: composes the manager getters from
+ * `../bundle/register.ts` (the "registry of Snap managers") into a
+ * coherent end-user surface (`authenticate`, `logout`,
+ * `refreshAuthToken`, …). Stateless — every exported function takes a
+ * `ClientContext` first arg.
  *
+ * @remarks
  * Architecture:
- *   `authenticate(ctx, {username, password})` is the single entry point.
- *   It composes four steps:
- *     1. `bringUp(ctx)` — load accounts + chat bundles (idempotent).
- *     2. `tryMintFromExistingCookies(ctx)` — warm path: if the jar holds
- *        a non-expired `__Host-sc-a-auth-session`, GET /accounts/sso to
- *        extract a fresh ticket and call `initializeAuth(...)`. Returns
- *        true on success; false otherwise (no cookies, or server rejected).
- *     3. `fullLogin(ctx, opts)` — cold path: drive the bundle's own
- *        2-step `WebLogin` (the same flow as
- *        `scripts/test-bundle-login.ts`).
- *     4. `mintAndInitialize(ctx)` — after fullLogin lands the auth-session
- *        cookies, mint a ticket via `mintBearer` (SDK-side
- *        redirect-follower role) and write the bearer into Zustand via
- *        `initializeAuth`.
+ *
+ * `authenticate(ctx, {username, password})` is the single entry point.
+ * It composes four steps:
+ *
+ *   1. `bringUp(ctx)` — load accounts + chat bundles (idempotent).
+ *   2. `tryMintFromExistingCookies(ctx)` — warm path: if the jar holds
+ *      a non-expired `__Host-sc-a-auth-session`, GET `/accounts/sso` to
+ *      extract a fresh ticket and call `initializeAuth(...)`. Returns
+ *      true on success; false otherwise (no cookies, or server
+ *      rejected).
+ *   3. `fullLogin(ctx, opts)` — cold path: drive the bundle's own
+ *      2-step `WebLogin` (the same flow as
+ *      `scripts/test-bundle-login.ts`).
+ *   4. `mintAndInitialize(ctx)` — after `fullLogin` lands the
+ *      auth-session cookies, mint a ticket via `mintBearer` (SDK-side
+ *      redirect-follower role) and write the bearer into Zustand via
+ *      `initializeAuth`.
  *
  * Auth state reads (`isAuthenticated`, `getAuthToken`, …) are direct
  * Zustand-slice peeks — no caching, the slice is the source of truth.
  *
  * Architectural roles (per `project_architecture_pivot.md`):
- *   - The SDK plays "the browser": follows the SSO 303 redirect, extracts
- *     the ticket from the URL hash, hands it back to the bundle.
- *   - The bundle owns state + protocol: Zustand auth slice, refresh logic,
- *     logout.
+ *
+ *   - The SDK plays "the browser": follows the SSO 303 redirect,
+ *     extracts the ticket from the URL hash, hands it back to the
+ *     bundle.
+ *   - The bundle owns state + protocol: Zustand auth slice, refresh
+ *     logic, logout.
+ *
+ * @internal
  */
 import { CookieJar } from "tough-cookie";
 import { ensureChatBundle } from "../bundle/chat-loader.ts";
@@ -46,7 +55,13 @@ export type { ClientContext } from "./_context.ts";
 
 /**
  * `state.auth.authState` enum.
- *   0 = LoggedOut, 1 = LoggedIn, 2 = Processing, 3 = MoreChallengesRequired.
+ *
+ *   - `0` = LoggedOut
+ *   - `1` = LoggedIn
+ *   - `2` = Processing
+ *   - `3` = MoreChallengesRequired
+ *
+ * @internal
  */
 export type AuthState = 0 | 1 | 2 | 3;
 
@@ -65,10 +80,17 @@ const SSO_URL =
  * (existing cookies → mint a fresh bearer), and falls back to a full
  * 2-step WebLogin if no cookies are present or the warm path fails.
  *
- * Throws on cold-path failure (bad creds, network error, server reject)
- * — the warm path's failure is silent (returns false → we proceed to
- * cold). Consumer-visible state lives in the Zustand auth slice; read
- * via `isAuthenticated(ctx)` / `getAuthToken(ctx)` after this resolves.
+ * @param ctx - Per-instance client context.
+ * @param opts - Login credentials.
+ * @throws On cold-path failure (bad creds, network error, server reject).
+ * The warm path's failure is silent (returns false → we proceed to
+ * cold).
+ *
+ * @remarks
+ * Consumer-visible state lives in the Zustand auth slice; read via
+ * {@link isAuthenticated} / {@link getAuthToken} after this resolves.
+ *
+ * @internal
  */
 export async function authenticate(
   ctx: ClientContext,
@@ -81,13 +103,22 @@ export async function authenticate(
 }
 
 /**
- * Tear down the bundle-side auth state. Calls Snap's own
- * `state.auth.logout(force)` thunk — this clears Zustand, fires any
- * subscribed teardown hooks, and (best-effort) revokes server-side.
+ * Tear down the bundle-side auth state.
  *
+ * Calls Snap's own `state.auth.logout(force)` thunk — clears Zustand,
+ * fires any subscribed teardown hooks, and (best-effort) revokes
+ * server-side.
+ *
+ * @param ctx - Per-instance client context.
+ * @param force - If `true`, force the logout even if server-side revoke
+ * fails.
+ *
+ * @remarks
  * Does NOT delete cookie-jar entries from the DataStore; consumers who
  * want a "wipe everything" flow should also call
- * `client.dataStore.delete("cookie_jar")` (or equivalent).
+ * `dataStore.delete("cookie_jar")` (or equivalent).
+ *
+ * @internal
  */
 export async function logout(ctx: ClientContext, force?: boolean): Promise<void> {
   await authSlice(ctx.sandbox).logout(force);
@@ -96,9 +127,17 @@ export async function logout(ctx: ClientContext, force?: boolean): Promise<void>
 /**
  * Refresh the bearer in-place via Snap's own `state.auth.refreshToken`.
  *
+ * @param ctx - Per-instance client context.
+ * @param username - Active identifier the kameleon attestation will be
+ * bound to (must match the username the slice's existing bearer was
+ * minted for).
+ * @param reason - Refresh reason label; defaults to `"page_load"`.
+ *
+ * @remarks
  * The bundle's refresh path requires:
+ *
  *   - An existing bearer in the auth slice (chicken-and-egg with first
- *     mint — call `authenticate` first).
+ *     mint — call {@link authenticate} first).
  *   - A fresh kameleon attestation (per `test-bundle-refresh.ts`
  *     findings — the slice's `refreshToken(reason, attestation)` second
  *     arg expects a token bound to the current username).
@@ -106,8 +145,9 @@ export async function logout(ctx: ClientContext, force?: boolean): Promise<void>
  * The username binding for the attestation comes from the slice's
  * already-populated `authToken` payload — the SDK needs to know the
  * username at refresh time. Surfaced as the second arg here so callers
- * who track the username out-of-band (e.g. via `SnapcapClient.creds`)
- * can pass it in directly.
+ * who track the username out-of-band can pass it in directly.
+ *
+ * @internal
  */
 export async function refreshAuthToken(
   ctx: ClientContext,
@@ -119,20 +159,29 @@ export async function refreshAuthToken(
   await authSlice(ctx.sandbox).refreshToken(reason, attestation);
 }
 
-/** Live read: current SSO bearer string from the Zustand auth slice. */
+/**
+ * Live read: current SSO bearer string from the Zustand auth slice.
+ *
+ * @internal
+ */
 export function getAuthToken(ctx: ClientContext): string {
   return (authSlice(ctx.sandbox) as unknown as AuthSliceLive).authToken.token;
 }
 
 /**
- * Live read: current AuthState enum (0=LoggedOut, 1=LoggedIn,
- * 2=Processing, 3=MoreChallengesRequired).
+ * Live read: current {@link AuthState} enum value.
+ *
+ * @internal
  */
 export function getAuthState(ctx: ClientContext): AuthState {
   return (authSlice(ctx.sandbox) as unknown as AuthSliceLive).authState;
 }
 
-/** Convenience: true iff the auth slice currently reports `LoggedIn`. */
+/**
+ * Convenience: `true` iff the auth slice currently reports `LoggedIn`.
+ *
+ * @internal
+ */
 export function isAuthenticated(ctx: ClientContext): boolean {
   try {
     return (authSlice(ctx.sandbox) as unknown as AuthSliceLive).authState === 1;
@@ -143,9 +192,13 @@ export function isAuthenticated(ctx: ClientContext): boolean {
 }
 
 /**
- * Convenience: true iff the user has logged in at any point in this
- * realm's lifetime (survives logout). Useful for distinguishing a fresh
- * install from a signed-out returning user.
+ * Convenience: `true` iff the user has logged in at any point in this
+ * realm's lifetime (survives logout).
+ *
+ * Useful for distinguishing a fresh install from a signed-out returning
+ * user.
+ *
+ * @internal
  */
 export function hasEverLoggedIn(ctx: ClientContext): boolean {
   try {
@@ -460,6 +513,13 @@ type MintTicketResult = {
  * Hit `accounts.snapchat.com/accounts/sso?...` with the current cookies
  * and pull the bearer ticket out of the 303 redirect's `Location` header.
  *
+ * @param opts - SSO ticket-mint options.
+ * @returns The bearer plus the final landing URL (useful as referer for
+ * later calls).
+ * @throws If neither GET nor POST against the SSO endpoint produces a
+ * `Location` header containing `ticket=`.
+ *
+ * @remarks
  * Architectural role: the SDK plays "the browser" here — the bundle's
  * `state.auth.initialize(loc)` expects a URL hash containing
  * `?ticket=<bearer>`, normally landed there by Snap's own SSO 303
@@ -472,6 +532,8 @@ type MintTicketResult = {
  * retry on tier-2 sends). Exported so the legacy chain can reach it
  * without re-pulling the helper into a separate module — the underscore
  * prefix flags this as an SDK-internal export, not a consumer surface.
+ *
+ * @internal
  */
 export async function _mintTicketFromSSO(opts: MintTicketOpts): Promise<MintTicketResult> {
   const jarFetch = makeJarFetch(opts.jar, opts.userAgent);
@@ -530,13 +592,18 @@ function extractTicket(location: string): string | null {
 // ─── Construction helper ──────────────────────────────────────────────────
 
 /**
- * Build a `ClientContext` from the shape `SnapcapClient` constructs at
- * boot. Centralized here so `client.ts` doesn't have to know the layout
- * of the context.
+ * Build a `ClientContext` from the shape {@link SnapcapClient}
+ * constructs at boot.
  *
+ * Centralized here so `client.ts` doesn't have to know the layout of the
+ * context.
+ *
+ * @remarks
  * The sandbox is required to be already installed (via `installShims`)
  * before this is called — `client.ts` does that eagerly in its
  * constructor.
+ *
+ * @internal
  */
 export async function makeContext(opts: {
   sandbox: Sandbox;

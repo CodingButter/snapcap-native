@@ -26,6 +26,11 @@ import { Sandbox } from "../shims/sandbox.ts";
 import { installWebpackCapture } from "../shims/webpack-capture.ts";
 import { ensureChatBundle } from "./chat-loader.ts";
 
+/**
+ * Options for {@link bootChatWasm}.
+ *
+ * @internal Bundle-layer config; consumers don't construct this.
+ */
 export type ChatWasmBootOpts = {
   /** Defaults to vendor/snap-bundle relative to this file. */
   bundleDir?: string;
@@ -40,6 +45,14 @@ export type ChatWasmBootOpts = {
  * 86818 lives inside this sandbox's vm.Context, and the resulting
  * moduleEnv contains sandbox-realm Embind classes that callers will
  * use through this same sandbox.
+ *
+ * @internal Bundle-layer loader; called from `auth/*` during messaging
+ * session bring-up. Public consumers should not invoke directly.
+ * @param sandbox - the per-instance {@link Sandbox} that will host the WASM instance
+ * @param opts - optional bundle directory override
+ * @returns the Emscripten `moduleEnv` containing the registered Embind classes
+ * @throws when chat-bundle module 86818 doesn't yield a factory, when
+ *   the WASM aborts, or when init exceeds the 30s timeout
  */
 export async function bootChatWasm(
   sandbox: Sandbox,

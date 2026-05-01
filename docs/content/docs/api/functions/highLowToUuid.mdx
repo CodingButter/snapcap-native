@@ -1,0 +1,31 @@
+---
+title: highLowToUuid
+---
+
+# Function: highLowToUuid()
+
+```ts
+function highLowToUuid(high: string | bigint, low: string | bigint): string;
+```
+
+Defined in: [api/\_helpers.ts:107](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/_helpers.ts#L107)
+
+Inverse of [uuidToHighLow](uuidToHighLow.mdx): assemble a UUID string from the
+`{high, low}` pair.
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `high` | `string` \| `bigint` | Upper 64 bits as `bigint` or decimal-string. |
+| `low` | `string` \| `bigint` | Lower 64 bits as `bigint` or decimal-string. |
+
+## Returns
+
+`string`
+
+Hyphenated UUID string.
+
+## See
+
+[uuidToHighLow](uuidToHighLow.mdx)

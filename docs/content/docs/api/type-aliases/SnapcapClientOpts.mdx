@@ -1,0 +1,49 @@
+---
+title: SnapcapClientOpts
+---
+
+# Type Alias: SnapcapClientOpts
+
+```ts
+type SnapcapClientOpts = {
+  browser: BrowserContext;
+  credentials?: Credentials;
+  dataStore: DataStore;
+  throttle?:   | ThrottleConfig
+     | ThrottleGate;
+};
+```
+
+Defined in: [client.ts:87](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L87)
+
+Public constructor options for [SnapcapClient](../classes/SnapcapClient.mdx).
+
+## Remarks
+
+Four top-level concerns:
+
+  - `dataStore` — persistence backbone (cookies, bearer, sandbox storage).
+  - `credentials` — login identity (username|email|phone + password).
+    Optional for warm-start scenarios.
+  - `browser` — browser-context fingerprint (UA required, others optional).
+  - `throttle` — opt-in HTTP rate limiting (off by default).
+
+Credentials are NOT persisted to the DataStore — pass them again on
+subsequent process boots if you want to be able to recover from a
+session expiry.
+
+## See
+
+ - [SnapcapClient](../classes/SnapcapClient.mdx)
+ - [DataStore](../interfaces/DataStore.mdx)
+ - [Credentials](Credentials.mdx)
+ - [BrowserContext](BrowserContext.mdx)
+
+## Properties
+
+| Property | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ |
+| <a id="browser"></a> `browser` | [`BrowserContext`](BrowserContext.mdx) | Browser-context fingerprint. REQUIRED — `userAgent` inside is the key field. **See** [BrowserContext](BrowserContext.mdx) for the full shape and the fingerprint-hygiene rationale. | [client.ts:110](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L110) |
+| <a id="credentials"></a> `credentials?` | [`Credentials`](Credentials.mdx) | Login credentials. Optional — warm-start with cached cookies works without credentials, but cold-login (no cookies) requires them. **See** [Credentials](Credentials.mdx) for shape (username | email | phone + password). | [client.ts:102](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L102) |
+| <a id="datastore"></a> `dataStore` | [`DataStore`](../interfaces/DataStore.mdx) | Persistence backbone. Cookies, bearer, sandbox storage (`local_*` / `session_*` / `indexdb_*`), and SDK-side blobs all land in this store under stable keys. **See** [DataStore](../interfaces/DataStore.mdx) | [client.ts:95](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L95) |
+| <a id="throttle"></a> `throttle?` | \| [`ThrottleConfig`](ThrottleConfig.mdx) \| [`ThrottleGate`](ThrottleGate.mdx) | Optional opt-in HTTP throttling. Default: no throttle (browser-cadence, zero overhead). Two valid shapes: 1. [ThrottleConfig](ThrottleConfig.mdx) — per-instance. Each `SnapcapClient` builds its own gate from this config. Fine for single-tenant or N=1-2 clients. Aggregate rate scales with N (each client throttles independently). 2. [ThrottleGate](ThrottleGate.mdx) — shared across instances. Build via `createSharedThrottle(config)` once, pass the same gate into every client. All clients coordinate, aggregate rate stays constant in N. Recommended for multi-tenant runners (N > 2). See `transport/throttle.ts` for the full picture, trade-offs, and recommended rule sets (`RECOMMENDED_THROTTLE_RULES`). **Examples** `new SnapcapClient({ dataStore, browser, throttle: { rules: RECOMMENDED_THROTTLE_RULES }, });` `const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES }); // pass `throttle: gate` into every SnapcapClient new SnapcapClient({ dataStore, browser, throttle: gate });` | [client.ts:143](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.ts#L143) |

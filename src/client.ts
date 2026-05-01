@@ -1,5 +1,5 @@
 /**
- * SnapcapClient — main entry point.
+ * `SnapcapClient` — main entry point for the SDK.
  *
  * Constructed with a `DataStore` (required) plus optional cold-start
  * credentials. The DataStore is the canonical persistence backbone:
@@ -8,22 +8,30 @@
  * keys. Fidelius identity bootstrap is owned by the bundle, which
  * persists wrapped keys at `local_uds_uds.e2eeIdentityKey.shared`.
  *
- *   const client = new SnapcapClient({ dataStore, username, password });
- *   await client.authenticate();
- *   const friends = await client.friends.list();   // (Phase 1A: throws)
- *
+ * @remarks
  * `authenticate()` brings up the chat + accounts bundles and runs a
  * warm-or-cold WebLogin via Snap's own bundle code; on success the
  * Zustand auth slice holds the bearer (`getAuthToken()`) and the cookie
  * jar holds the long-lived `__Host-sc-a-auth-session`. Subsequent boots
  * with restored cookies short-circuit through the warm path.
  *
- * Surface is auth verbs + per-domain managers (`friends`, `messaging`,
- * `presence`, `stories`, `inbox`, `media`). Only `friends` carries a
- * Phase-1A stub; the other five are EMPTY placeholder classes — calling
+ * Surface is auth verbs + per-domain managers ({@link Friends},
+ * {@link Messaging}, {@link Presence}, {@link Stories}, {@link Inbox},
+ * {@link Media}). Only {@link Friends} carries a Phase-1A stub; the
+ * other five are EMPTY placeholder classes — calling
  * `client.messaging.send(...)` is a TypeScript compile error today, not
  * a runtime one. Per-domain interfaces get designed when each migration
  * starts (per `feedback_registry_pattern.md`).
+ *
+ * @example
+ * ```ts
+ * const client = new SnapcapClient({ dataStore, browser, credentials });
+ * await client.authenticate();
+ * const friends = await client.friends.list();
+ * ```
+ *
+ * @see {@link ISnapcapClient}
+ * @see {@link SnapcapClientOpts}
  */
 import type { ISnapcapClient } from "./client.interface.ts";
 import type { ClientContext } from "./api/_context.ts";
@@ -56,68 +64,115 @@ export { activeIdentifier, type Credentials, type BrowserContext } from "./types
 import { activeIdentifier, type Credentials, type BrowserContext } from "./types.ts";
 
 /**
- * Public constructor options for `SnapcapClient`.
+ * Public constructor options for {@link SnapcapClient}.
  *
+ * @remarks
  * Four top-level concerns:
- *   - `dataStore`     — persistence backbone (cookies, bearer, sandbox storage).
- *   - `credentials`   — login identity (username|email|phone + password).
- *                       Optional for warm-start scenarios.
- *   - `browser`       — browser-context fingerprint (UA required, others optional).
- *   - `throttle`      — opt-in HTTP rate limiting (off by default).
+ *
+ *   - `dataStore` — persistence backbone (cookies, bearer, sandbox storage).
+ *   - `credentials` — login identity (username|email|phone + password).
+ *     Optional for warm-start scenarios.
+ *   - `browser` — browser-context fingerprint (UA required, others optional).
+ *   - `throttle` — opt-in HTTP rate limiting (off by default).
  *
  * Credentials are NOT persisted to the DataStore — pass them again on
  * subsequent process boots if you want to be able to recover from a
  * session expiry.
+ *
+ * @see {@link SnapcapClient}
+ * @see {@link DataStore}
+ * @see {@link Credentials}
+ * @see {@link BrowserContext}
  */
 export type SnapcapClientOpts = {
+  /**
+   * Persistence backbone. Cookies, bearer, sandbox storage (`local_*` /
+   * `session_*` / `indexdb_*`), and SDK-side blobs all land in this
+   * store under stable keys.
+   *
+   * @see {@link DataStore}
+   */
   dataStore: DataStore;
   /**
    * Login credentials. Optional — warm-start with cached cookies works
    * without credentials, but cold-login (no cookies) requires them.
-   * See `Credentials` type for shape (username | email | phone + password).
+   *
+   * @see {@link Credentials} for shape (username | email | phone + password).
    */
   credentials?: Credentials;
   /**
    * Browser-context fingerprint. REQUIRED — `userAgent` inside is the
-   * key field. See `BrowserContext` for the full shape and the
+   * key field.
+   *
+   * @see {@link BrowserContext} for the full shape and the
    * fingerprint-hygiene rationale.
    */
   browser: BrowserContext;
   /**
-   * Optional opt-in HTTP throttling. Default: no throttle (browser-cadence,
-   * zero overhead). Two valid shapes:
+   * Optional opt-in HTTP throttling. Default: no throttle
+   * (browser-cadence, zero overhead). Two valid shapes:
    *
-   *   1. `ThrottleConfig` — per-instance. Each `SnapcapClient` builds its
-   *      own gate from this config. Fine for single-tenant or N=1-2 clients.
-   *      Aggregate rate scales with N (each client throttles independently).
+   *   1. {@link ThrottleConfig} — per-instance. Each `SnapcapClient`
+   *      builds its own gate from this config. Fine for single-tenant
+   *      or N=1-2 clients. Aggregate rate scales with N (each client
+   *      throttles independently).
    *
-   *   2. `ThrottleGate` — shared across instances. Build via
-   *      `createSharedThrottle(config)` once, pass the same gate into every
-   *      client. All clients coordinate, aggregate rate stays constant in N.
-   *      Recommended for multi-tenant runners (N > 2).
+   *   2. {@link ThrottleGate} — shared across instances. Build via
+   *      `createSharedThrottle(config)` once, pass the same gate into
+   *      every client. All clients coordinate, aggregate rate stays
+   *      constant in N. Recommended for multi-tenant runners (N > 2).
    *
    * See `transport/throttle.ts` for the full picture, trade-offs, and
    * recommended rule sets (`RECOMMENDED_THROTTLE_RULES`).
    *
    * @example Per-instance:
-   *   throttle: { rules: RECOMMENDED_THROTTLE_RULES }
+   * ```ts
+   * new SnapcapClient({
+   *   dataStore, browser,
+   *   throttle: { rules: RECOMMENDED_THROTTLE_RULES },
+   * });
+   * ```
+   *
    * @example Shared across instances:
-   *   const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES });
-   *   // pass `throttle: gate` into every SnapcapClient
+   * ```ts
+   * const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES });
+   * // pass `throttle: gate` into every SnapcapClient
+   * new SnapcapClient({ dataStore, browser, throttle: gate });
+   * ```
    */
   throttle?: ThrottleConfig | ThrottleGate;
 };
 
+/**
+ * Concrete {@link ISnapcapClient} implementation — main SDK entry point.
+ *
+ * Each instance owns its own isolated `vm.Context` sandbox, Zustand
+ * state, bearer token, and webpack runtime cache, so multiple clients
+ * can coexist in one process without leaking state across tenants.
+ *
+ * Method-level documentation (auth verbs, manager fields) lives on
+ * {@link ISnapcapClient}. The constructor and constructor options are
+ * documented here.
+ *
+ * @see {@link ISnapcapClient}
+ * @see {@link SnapcapClientOpts}
+ */
 export class SnapcapClient implements ISnapcapClient {
   private readonly opts: SnapcapClientOpts;
   private readonly userAgent: string;
   private _ctxPromise?: Promise<ClientContext>;
 
+  /** {@inheritDoc ISnapcapClient.friends} */
   readonly friends: Friends;
+  /** {@inheritDoc ISnapcapClient.messaging} */
   readonly messaging: Messaging;
+  /** {@inheritDoc ISnapcapClient.presence} */
   readonly presence: Presence;
+  /** {@inheritDoc ISnapcapClient.stories} */
   readonly stories: Stories;
+  /** {@inheritDoc ISnapcapClient.inbox} */
   readonly inbox: Inbox;
+  /** {@inheritDoc ISnapcapClient.media} */
   readonly media: Media;
 
   /**
@@ -131,6 +186,14 @@ export class SnapcapClient implements ISnapcapClient {
    */
   private readonly sandbox: Sandbox;
 
+  /**
+   * Construct a new client.
+   *
+   * @param opts - Client options. See {@link SnapcapClientOpts}.
+   * @throws If `opts.browser.userAgent` is missing — every consumer
+   * defaulting to the same UA would itself become a snapcap fingerprint
+   * signature.
+   */
   constructor(opts: SnapcapClientOpts) {
     if (!opts.browser?.userAgent) {
       throw new Error(
@@ -168,7 +231,10 @@ export class SnapcapClient implements ISnapcapClient {
     this.media = new Media(getCtx);
   }
 
-  /** Lazy-built `ClientContext` — shared across every api call on this client. */
+  /**
+   * Lazy-built `ClientContext` — shared across every api call on this
+   * client.
+   */
   private async _getCtx(): Promise<ClientContext> {
     if (!this._ctxPromise) {
       this._ctxPromise = (async () => {
@@ -186,6 +252,7 @@ export class SnapcapClient implements ISnapcapClient {
 
   // ── Auth surface ────────────────────────────────────────────────────
 
+  /** {@inheritDoc ISnapcapClient.authenticate} */
   async authenticate(): Promise<void> {
     if (!this.opts.credentials) {
       throw new Error(
@@ -197,6 +264,7 @@ export class SnapcapClient implements ISnapcapClient {
     return authBundle(ctx, { credentials: this.opts.credentials });
   }
 
+  /** {@inheritDoc ISnapcapClient.logout} */
   async logout(force?: boolean): Promise<void> {
     if (this._ctxPromise) {
       try {
@@ -209,6 +277,7 @@ export class SnapcapClient implements ISnapcapClient {
     await this.opts.dataStore.delete("cookie_jar");
   }
 
+  /** {@inheritDoc ISnapcapClient.refreshAuthToken} */
   async refreshAuthToken(): Promise<void> {
     if (!this.opts.credentials) {
       throw new Error("refreshAuthToken requires the client to be constructed with credentials");
@@ -218,7 +287,7 @@ export class SnapcapClient implements ISnapcapClient {
     return refreshAuthTokenBundle(ctx, id.value);
   }
 
-  /** Live read: true iff the Zustand auth slice currently reports `LoggedIn`. */
+  /** {@inheritDoc ISnapcapClient.isAuthenticated} */
   isAuthenticated(): boolean {
     // No async — the slice is in-process state. Fall back to false if the
     // ctx hasn't been set up yet (which means `authenticate` was never
@@ -227,17 +296,17 @@ export class SnapcapClient implements ISnapcapClient {
     return isAuthenticatedBundle({ sandbox: this.sandbox } as ClientContext);
   }
 
-  /** Live read: current SSO bearer string from the Zustand auth slice. */
+  /** {@inheritDoc ISnapcapClient.getAuthToken} */
   getAuthToken(): string {
     return getAuthTokenBundle({ sandbox: this.sandbox } as ClientContext);
   }
 
-  /** Live read: AuthState enum (0=LoggedOut, 1=LoggedIn, 2=Processing, 3=MoreChallengesRequired). */
+  /** {@inheritDoc ISnapcapClient.getAuthState} */
   getAuthState(): number {
     return getAuthStateBundle({ sandbox: this.sandbox } as ClientContext);
   }
 
-  /** Live read: hasEverLoggedIn marker. Survives logout. */
+  /** {@inheritDoc ISnapcapClient.hasEverLoggedIn} */
   hasEverLoggedIn(): boolean {
     return hasEverLoggedInBundle({ sandbox: this.sandbox } as ClientContext);
   }

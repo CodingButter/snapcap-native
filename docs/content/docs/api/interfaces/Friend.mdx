@@ -1,0 +1,28 @@
+---
+title: Friend
+---
+
+# Interface: Friend
+
+Defined in: [api/friends.ts:139](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L139)
+
+A friend in the logged-in user's social graph.
+
+Superset of [User](FriendsUser.mdx) with friend-link metadata and (when surfaced
+by the server) timestamps.
+
+## Extends
+
+- [`FriendsUser`](FriendsUser.mdx)
+
+## Properties
+
+| Property | Type | Description | Inherited from | Defined in |
+| ------ | ------ | ------ | ------ | ------ |
+| <a id="addedat"></a> `addedAt?` | [`Date`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Date) | When the friend was added (server-side ms timestamp surfaced as a Date). | - | [api/friends.ts:143](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L143) |
+| <a id="displayname"></a> `displayName?` | `string` | Display name shown in the Snap UI. Optional — not always set. | [`FriendsUser`](FriendsUser.mdx).[`displayName`](FriendsUser.mdx#displayname) | [api/friends.ts:130](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L130) |
+| <a id="friendtype"></a> `friendType` | [`FriendLinkType`](../type-aliases/FriendLinkType.mdx) | Link state — `"mutual"` for entries returned by [IFriendsManager.list](IFriendsManager.mdx#list). | - | [api/friends.ts:141](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L141) |
+| <a id="isplussubscriber"></a> `isPlusSubscriber?` | `boolean` | `true` if the friend's account has Snapchat+. | - | [api/friends.ts:147](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L147) |
+| <a id="isstorymuted"></a> `isStoryMuted?` | `boolean` | `true` if the logged-in user has muted this friend's story. | - | [api/friends.ts:145](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L145) |
+| <a id="userid"></a> `userId` | `string` | Hyphenated UUID. | [`FriendsUser`](FriendsUser.mdx).[`userId`](FriendsUser.mdx#userid) | [api/friends.ts:126](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L126) |
+| <a id="username"></a> `username` | `string` | Snap username (handle). May be empty during initial sync. | [`FriendsUser`](FriendsUser.mdx).[`username`](FriendsUser.mdx#username) | [api/friends.ts:128](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L128) |

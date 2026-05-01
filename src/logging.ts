@@ -1,32 +1,58 @@
 /**
  * Central logger module — structured network observability for the SDK.
  *
- * Why this exists:
- *   Up to now the shims (`shims/xml-http-request.ts`, `shims/fetch.ts`) and
- *   the host-realm transport (`transport/native-fetch.ts`) were silent. Every
- *   "the SDK called X" claim was inference, not observation. This module gives
- *   the shims a single, opt-in, no-allocation-when-disabled log channel.
+ * @remarks
+ * The shims (`shims/xml-http-request.ts`, `shims/fetch.ts`) and the host-realm
+ * transport (`transport/native-fetch.ts`) emit {@link LogEvent} values
+ * through this module so consumers can observe every request the SDK and the
+ * bundle issue. The channel is opt-in:
  *
- * Design:
- *   - `LogEvent` is a closed discriminated union; emit sites construct one
- *     plain object literal per event (no per-event class instances).
- *   - `setLogger(fn)` installs / replaces / clears the active handler.
- *   - `log(event)` is the internal entry point; when no handler is installed,
- *     it returns immediately (a single null check, no event-object allocation
- *     by the logger itself — the caller must still build the event, but the
- *     hot path early-outs before any handler work).
- *   - `defaultTextLogger` is a built-in one-line-per-event formatter
- *     consumers can opt into (or that the env-var bootstrap installs).
+ * - Set `process.env.SNAP_NETLOG === "1"` at module load to install the
+ *   built-in {@link defaultTextLogger}.
+ * - OR call {@link setLogger} with your own handler at any point.
+ * - Otherwise the channel is silent and the internal emit point early-outs
+ *   on a single null-check (zero per-event handler work).
  *
- * Default behaviour:
- *   - If `process.env.SNAP_NETLOG === "1"` at module load, install
- *     `defaultTextLogger`. Otherwise the channel is silent.
+ * **Body bytes are NEVER logged — only sizes.** The SDK's traffic carries
+ * bearer tokens and message content; sizes are safe.
  *
- * Body bytes are NEVER logged — only sizes. The SDK's traffic carries
- * bearer tokens, message content, etc.; sizes are safe.
+ * @example
+ * Install a custom JSON-line logger:
+ *
+ * ```ts
+ * import { setLogger } from "@snapcap/native";
+ *
+ * setLogger((event) => {
+ *   process.stdout.write(JSON.stringify({ ts: Date.now(), ...event }) + "\n");
+ * });
+ * ```
+ *
+ * @example
+ * Use the built-in text formatter explicitly:
+ *
+ * ```ts
+ * import { setLogger, defaultTextLogger } from "@snapcap/native";
+ * setLogger(defaultTextLogger);
+ * ```
+ *
+ * @see {@link Logger}
+ * @see {@link LogEvent}
+ * @see {@link defaultTextLogger}
  */
 
-/** All emitted log events. Add new variants as needed. */
+/**
+ * All emitted log events. Closed discriminated union — switch on
+ * `event.kind` to narrow.
+ *
+ * @remarks
+ * Variants pair on protocol (`xhr` vs `fetch`) and lifecycle stage
+ * (`open` / `done` / `error`). `done` events carry `reqBytes` /
+ * `respBytes` (sizes only — never content) and an optional `grpcStatus` /
+ * `grpcMessage` for gRPC-Web responses.
+ *
+ * @see {@link Logger}
+ * @see {@link defaultTextLogger}
+ */
 export type LogEvent =
   | { kind: "net.xhr.open"; method: string; url: string }
   | {
@@ -67,14 +93,41 @@ export type LogEvent =
       durMs: number;
     };
 
+/**
+ * Handler signature passed to {@link setLogger}.
+ *
+ * @param event - One emitted {@link LogEvent}. Switch on `event.kind` to
+ *   narrow to a specific variant.
+ *
+ * @remarks
+ * Handlers should return synchronously and avoid throwing — exceptions
+ * thrown from a handler are swallowed by the internal emit point so a bad
+ * logger can never break the network path, but they will be silently
+ * dropped.
+ */
 export type Logger = (event: LogEvent) => void;
 
 /** Active handler. `undefined` means logging is off and `log()` is a no-op. */
 let activeLogger: Logger | undefined;
 
 /**
- * Install (or clear) the active logger. Pass `undefined` to disable logging
- * entirely — `log()` becomes a one-instruction null check after that.
+ * Install (or clear) the active logger.
+ *
+ * @param fn - The handler to install, or `undefined` to disable logging
+ *   entirely (in which case the internal emit point becomes a
+ *   one-instruction null check).
+ *
+ * @example
+ * ```ts
+ * import { setLogger, defaultTextLogger } from "@snapcap/native";
+ *
+ * setLogger(defaultTextLogger);   // built-in text formatter
+ * setLogger((ev) => myJsonLogger.log(ev));   // custom handler
+ * setLogger(undefined);   // disable
+ * ```
+ *
+ * @see {@link Logger}
+ * @see {@link defaultTextLogger}
  */
 export function setLogger(fn: Logger | undefined): void {
   activeLogger = fn;
@@ -84,6 +137,8 @@ export function setLogger(fn: Logger | undefined): void {
  * Internal emit point — shims and transport call this. When no logger is
  * installed, this returns immediately. Handler crashes are swallowed so a
  * bad logger can never break the network path.
+ *
+ * @internal
  */
 export function log(event: LogEvent): void {
   const fn = activeLogger;
@@ -107,13 +162,29 @@ function fmtBytes(n: number): string {
 
 /**
  * Built-in human-readable formatter. One line per event, no embedded
- * newlines. Tag column is fixed-width (13 chars incl. brackets) so the
- * output aligns regardless of which event variant is being logged.
+ * newlines. Tag column is fixed-width (15 chars) so the output aligns
+ * regardless of which event variant is being logged.
  *
- * Examples:
- *   [net.xhr.open ] POST https://web.snapchat.com/.../AddFriends
- *   [net.xhr.done ] POST https://web.snapchat.com/.../AddFriends -> 200 (req 87B / resp 0B / 437ms / grpc-status:0)
- *   [net.xhr.error] POST https://web.snapchat.com/.../SyncFriendData -> "Network error" (1203ms)
+ * @remarks
+ * Pass to {@link setLogger} to enable, or set `SNAP_NETLOG=1` in the
+ * environment to install at module load.
+ *
+ * Sample output:
+ *
+ * ```text
+ * [net.xhr.open  ] POST https://web.snapchat.com/.../AddFriends
+ * [net.xhr.done  ] POST https://web.snapchat.com/.../AddFriends -> 200 (req 87B / resp 0B / 437ms / grpc-status:0)
+ * [net.xhr.error ] POST https://web.snapchat.com/.../SyncFriendData -> "Network error" (1203ms)
+ * ```
+ *
+ * @example
+ * ```ts
+ * import { setLogger, defaultTextLogger } from "@snapcap/native";
+ * setLogger(defaultTextLogger);
+ * ```
+ *
+ * @see {@link setLogger}
+ * @see {@link Logger}
  */
 export const defaultTextLogger: Logger = (event) => {
   // Pad the kind so all tags are the same width: longest kind is

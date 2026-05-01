@@ -327,12 +327,23 @@ class IDBDatabaseShim {
  * IDBFactory shim — entry point for `indexedDB.open(name, version)`.
  * Tracks per-database versions in memory for the duration of the
  * sandbox's life so upgradeneeded fires once per name.
+ *
+ * @internal
  */
 export class IDBFactoryShim {
   private versions = new Map<string, number>();
 
   constructor(private store: DataStore) {}
 
+  /**
+   * `IDBFactory.open` — return an open-request that resolves to a
+   * synthetic database. Fires `upgradeneeded` on the next microtask if
+   * `version` is higher than the previously seen version for `name`.
+   *
+   * @internal
+   * @param name - database name
+   * @param version - schema version (defaults to 1)
+   */
   open(name: string, version: number = 1): IDBOpenDBRequestShim {
     const req = new IDBOpenDBRequestShim();
     const prevVersion = this.versions.get(name) ?? 0;
@@ -360,6 +371,13 @@ export class IDBFactoryShim {
     return req;
   }
 
+  /**
+   * `IDBFactory.deleteDatabase` — drops every key under `indexdb_<name>__`.
+   * No-op when the underlying DataStore does not expose `keys`.
+   *
+   * @internal
+   * @param name - database name to remove
+   */
   deleteDatabase(name: string): IDBOpenDBRequestShim {
     const req = new IDBOpenDBRequestShim();
     const listable = this.store as Listable;
@@ -379,13 +397,23 @@ export class IDBFactoryShim {
     return req;
   }
 
-  /** Spec method we don't need; return [] so feature-detection paths work. */
+  /**
+   * Spec method we don't need; returns the in-memory version registry so
+   * feature-detection paths work.
+   *
+   * @internal
+   */
   databases(): Promise<{ name: string; version: number }[]> {
     return Promise.resolve(
       [...this.versions.entries()].map(([name, version]) => ({ name, version })),
     );
   }
 
+  /**
+   * `IDBFactory.cmp` — sort comparison for IDB keys.
+   *
+   * @internal
+   */
   cmp(a: IDBValidKey, b: IDBValidKey): number {
     if (a < b) return -1;
     if (a > b) return 1;
@@ -394,12 +422,16 @@ export class IDBFactoryShim {
 }
 
 /**
- * `Shim`-shaped wrapper that installs `IDBFactoryShim` as the sandbox's
+ * `Shim`-shaped wrapper that installs {@link IDBFactoryShim} as the sandbox's
  * `indexedDB` global. Independent of the cookie pipeline — order against
  * cookie shims is irrelevant.
+ *
+ * @internal
  */
 export class IndexedDbShim extends Shim {
+  /** @internal */
   readonly name = "indexed-db";
+  /** @internal */
   install(sandbox: Sandbox, ctx: ShimContext): void {
     sandbox.window.indexedDB = new IDBFactoryShim(ctx.dataStore);
   }

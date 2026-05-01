@@ -1,13 +1,38 @@
+/**
+ * Cookie-jar-aware `fetch` wrapper used by the SDK's host-realm transport.
+ *
+ * @remarks
+ * Builds a function with the same shape as `fetch`, but every request
+ * automatically reads cookies from a tough-cookie `CookieJar` (or a
+ * `CookieJarStore` wrapper) and persists Set-Cookie headers from the
+ * response back into that jar.
+ *
+ * @internal
+ */
 import { CookieJar } from "tough-cookie";
 import { nativeFetch } from "./native-fetch.ts";
 
+/**
+ * `fetch` init options accepted by {@link makeJarFetch}-built wrappers.
+ *
+ * Identical to `RequestInit`; aliased for clarity at call sites.
+ *
+ * @internal
+ */
 export type JarFetchOpts = RequestInit;
 
 /**
  * Anything we can pull a tough-cookie `CookieJar` out of and (optionally)
- * persist on every Set-Cookie. Lets `makeJarFetch` accept either a raw
- * `CookieJar` (no persistence) or a DataStore-backed `CookieJarStore`
- * wrapper without leaking the storage layer into transport code.
+ * persist on every Set-Cookie.
+ *
+ * @remarks
+ * Lets {@link makeJarFetch} accept either a raw `CookieJar` (no persistence)
+ * or a DataStore-backed `CookieJarStore` wrapper without leaking the storage
+ * layer into transport code. The `flush` callback is invoked once per
+ * response that wrote at least one cookie, so the underlying DataStore
+ * survives a process restart.
+ *
+ * @internal
  */
 export type JarLike = CookieJar | { jar: CookieJar; flush?: () => Promise<void> };
 
@@ -23,17 +48,28 @@ function pickFlush(j: JarLike): (() => Promise<void>) | undefined {
 }
 
 /**
- * Cookie-jar-aware fetch wrapper.
+ * Build a cookie-jar-aware `fetch` wrapper.
  *
+ * @remarks
+ * The returned function:
  * - Pulls matching cookies out of the jar and sets the `Cookie` header.
- * - Sets a default User-Agent when one isn't supplied.
- * - After the response lands, reads every Set-Cookie line and persists it
+ * - Sets a default `User-Agent` when one isn't supplied.
+ * - After the response lands, reads every `Set-Cookie` line and persists it
  *   back into the jar (via `Headers.getSetCookie()`, which is the only way
  *   to access multiple Set-Cookies in fetch — `headers.get('set-cookie')`
  *   merges them on a single line and corrupts attributes).
  * - If passed a `CookieJarStore`-style wrapper (anything with a `flush()`
  *   method), flushes the underlying DataStore once per response so cookies
  *   survive process restarts.
+ *
+ * @param jarOrStore - A tough-cookie `CookieJar` OR a wrapper exposing
+ *   `{ jar, flush? }` (e.g. `CookieJarStore`).
+ * @param userAgent - Default `User-Agent` header to use when callers don't
+ *   override it.
+ * @returns A `(url, init?) => Promise<Response>` function that transparently
+ *   threads cookies through every call.
+ *
+ * @internal
  */
 export function makeJarFetch(
   jarOrStore: JarLike,

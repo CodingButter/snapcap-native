@@ -1,0 +1,16 @@
+{
+  "title": "Classes",
+  "pages": [
+    "SnapcapClient",
+    "Friends",
+    "Messaging",
+    "Inbox",
+    "Stories",
+    "Media",
+    "Presence",
+    "FileDataStore",
+    "MemoryDataStore",
+    "StorageShim",
+    "CookieJarStore"
+  ]
+}

@@ -76,7 +76,7 @@ function makeShimmedWreq(real: ChatWreq): ChatWreq {
 // ─── primeModule10409 ────────────────────────────────────────────────────
 //
 // Several closure-private symbols inside module 10409 are exposed to
-// `globalThis` by the chat-bundle source-patch (see `auth/chat-bundle.ts`):
+// `globalThis` by the chat-bundle source-patch (see `./chat-loader.ts`):
 //
 //   - `__SNAPCAP_HY` — `SearchRequest` ts-proto codec (used by search)
 //   - `__SNAPCAP_JY` — `SearchResponse` ts-proto codec (used by search)
@@ -108,11 +108,14 @@ function isModule10409Primed(sandbox: Sandbox): boolean {
  * `__SNAPCAP_HY` / `__SNAPCAP_JY` / `__SNAPCAP_JZ` lands. Idempotent —
  * if any are already present, returns immediately.
  *
- * 20 attempts is generous; in practice the globals land on the first
- * or second try once the shimmed wreq is in place. Each attempt yields
- * to the event loop so any pending sandbox-side microtasks (module
- * eval continuations, Promise resolutions in sibling modules) get a
- * chance to run.
+ * @remarks 20 attempts is generous; in practice the globals land on the
+ * first or second try once the shimmed wreq is in place. Each attempt
+ * yields to the event loop so any pending sandbox-side microtasks
+ * (module eval continuations, Promise resolutions in sibling modules)
+ * get a chance to run.
+ *
+ * @internal Bundle-plumbing helper called from {@link ensureChatBundle}.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
  */
 export async function primeModule10409(sandbox: Sandbox): Promise<void> {
   if (isModule10409Primed(sandbox)) return;
@@ -150,9 +153,13 @@ export async function primeModule10409(sandbox: Sandbox): Promise<void> {
 // until `M.getState` is callable.
 
 /**
- * Re-run module 94704's factory through a shimmed wreq that bypasses the
- * webpack cache for 94704 + 33488. Same mechanism as `primeModule10409`.
- * Idempotent — bails out as soon as `M.getState` is callable.
+ * Re-run module 94704's factory through a shimmed wreq that bypasses
+ * the webpack cache for 94704 + 33488. Same mechanism as
+ * {@link primeModule10409}. Idempotent — bails out as soon as
+ * `M.getState` is callable.
+ *
+ * @internal Bundle-plumbing helper called from {@link ensureChatBundle}.
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
  */
 export async function primeAuthStoreModule(sandbox: Sandbox): Promise<void> {
   const wreq = chatWreq(sandbox);

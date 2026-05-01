@@ -30,7 +30,9 @@ import { Shim } from "./types.ts";
 
 /**
  * Single source of truth for which shims the Sandbox installs and in
- * what order. Iterated by `Sandbox` in its constructor.
+ * what order. Iterated by {@link Sandbox} in its constructor.
+ *
+ * @internal
  */
 export const SDK_SHIMS: readonly Shim[] = [
   // Cookie pipeline — must come first; later shims read ctx.jar.

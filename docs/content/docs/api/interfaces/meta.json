@@ -1,0 +1,13 @@
+{
+  "title": "Interfaces",
+  "pages": [
+    "ISnapcapClient",
+    "IFriendsManager",
+    "DataStore",
+    "Friend",
+    "FriendsUser",
+    "FriendsSnapshot",
+    "FriendRequest",
+    "OutgoingRequest"
+  ]
+}

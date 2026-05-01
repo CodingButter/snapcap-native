@@ -23,6 +23,12 @@ import { join } from "node:path";
 import { Sandbox } from "../shims/sandbox.ts";
 import { primeModule10409, primeAuthStoreModule } from "./prime.ts";
 
+/**
+ * Options for {@link ensureChatBundle} / {@link bootChatWasm}-style
+ * loaders.
+ *
+ * @internal Bundle-layer config; consumers don't construct this.
+ */
 export type ChatBundleOpts = {
   /** Defaults to vendor/snap-bundle relative to this file. */
   bundleDir?: string;
@@ -34,16 +40,24 @@ export type ChatBundleOpts = {
  * `M.getState`, etc.) are reachable via `register.ts` getters.
  *
  * Idempotent — eval'd-state lives on `sandbox.chatBundleLoaded` so a
- * fresh Sandbox boots its own copy of the chat bundle. Two `SnapcapClient`
- * instances each get their own chat bundle eval (and hence their own
- * Zustand store, webpack runtime, Embind classes, etc.).
+ * fresh Sandbox boots its own copy of the chat bundle. Two
+ * `SnapcapClient` instances each get their own chat bundle eval (and
+ * hence their own Zustand store, webpack runtime, Embind classes, etc.).
  *
- * Includes priming as part of bring-up: priming was previously called
- * separately from the api layer (a layer violation — api/* gates through
- * register.ts only). Baked in here because primeModule10409 +
- * primeAuthStoreModule are ALWAYS needed after a chat-bundle load (no
- * use case for "load but don't prime"); coupling them eliminates the
- * chance of forgetting and gives api consumers a single-call surface.
+ * @remarks Includes priming as part of bring-up: priming was previously
+ * called separately from the api layer (a layer violation — `api/*`
+ * gates through `register.ts` only). Baked in here because
+ * `primeModule10409` + `primeAuthStoreModule` are ALWAYS needed after a
+ * chat-bundle load (no use case for "load but don't prime"); coupling
+ * them eliminates the chance of forgetting and gives api consumers a
+ * single-call surface.
+ *
+ * @internal Bundle-layer loader; called from `auth/*` during
+ * authentication bring-up. Public consumers should not invoke directly.
+ * @param sandbox - the per-instance {@link Sandbox} that will host the bundle eval
+ * @param opts - optional bundle directory override
+ * @throws when any `__SNAPCAP_*` source-patch site is missing (Snap
+ *   bundle version drift)
  */
 export async function ensureChatBundle(sandbox: Sandbox, opts: ChatBundleOpts = {}): Promise<void> {
   if (sandbox.chatBundleLoaded) return;
@@ -233,6 +247,12 @@ export async function ensureChatBundle(sandbox: Sandbox, opts: ChatBundleOpts = 
  * (e.g. modules 74052 / 76877 / 94704 / 79752 / etc.) — never reach for
  * `__snapcap_p` for chat modules, that slot belongs to the accounts
  * runtime and the IDs do not match.
+ *
+ * @internal Bundle-layer accessor; api files reach the chat wreq via
+ * {@link chatWreq} in `./register.ts` (the architecture rule's gate point).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the chat-bundle webpack require with its `m` factory map
+ * @throws when {@link ensureChatBundle} hasn't run yet
  */
 export function getChatWreq(sandbox: Sandbox): { (id: string): unknown; m: Record<string, Function> } {
   const wreq = sandbox.getGlobal<{ (id: string): unknown; m: Record<string, Function> }>("__snapcap_chat_p");

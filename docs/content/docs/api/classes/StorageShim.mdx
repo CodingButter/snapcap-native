@@ -1,0 +1,214 @@
+---
+title: StorageShim
+---
+
+# Class: StorageShim
+
+Defined in: [storage/storage-shim.ts:49](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/storage-shim.ts#L49)
+
+Web Storage API (`localStorage` / `sessionStorage`) implementation backed
+by a [DataStore](../interfaces/DataStore.mdx).
+
+## Remarks
+
+Pass an instance into the sandbox via `installShims({ dataStore, … })` so
+the bundle's storage reads/writes route through your DataStore.
+
+## Example
+
+```ts
+import { StorageShim, FileDataStore } from "@snapcap/native";
+
+const store = new FileDataStore(".tmp/auth/auth.json");
+const local = new StorageShim(store, "local_");
+local.setItem("foo", "bar");
+local.getItem("foo"); // "bar"
+```
+
+## Implements
+
+- [`Storage`](https://developer.mozilla.org/docs/Web/API/Storage)
+
+## Constructors
+
+### Constructor
+
+```ts
+new StorageShim(store: DataStore, prefix: string): StorageShim;
+```
+
+Defined in: [storage/storage-shim.ts:62](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/storage-shim.ts#L62)
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `store` | [`DataStore`](../interfaces/DataStore.mdx) | Backing [DataStore](../interfaces/DataStore.mdx). Sync access (`getSync` / `setSync` / `keys`) is preferred so this shim can stay strictly synchronous; without it, async writes are fire-and-forget and reads serve from a pre-populated fallback cache. |
+| `prefix` | `string` | Per-instance key prefix. Two shims sharing a DataStore should use distinct prefixes (e.g. `"local_"` and `"session_"`) so keys don't collide. |
+
+#### Returns
+
+`StorageShim`
+
+## Accessors
+
+### length
+
+#### Get Signature
+
+```ts
+get length(): number;
+```
+
+Defined in: [storage/storage-shim.ts:82](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/storage-shim.ts#L82)
+
+Number of stored keys under this shim's prefix.
+
+##### Returns
+
+`number`
+
+#### Implementation of
+
+```ts
+Storage.length
+```
+
+## Methods
+
+### clear()
+
+```ts
+clear(): void;
+```
+
+Defined in: [storage/storage-shim.ts:150](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/storage-shim.ts#L150)
+
+Web Storage `clear()` — delete every entry under this shim's prefix.
+
+#### Returns
+
+`void`
+
+#### Implementation of
+
+```ts
+Storage.clear
+```
+
+***
+
+### getItem()
+
+```ts
+getItem(key: string): string | null;
+```
+
+Defined in: [storage/storage-shim.ts:112](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/storage-shim.ts#L112)
+
+Web Storage `getItem(key)` — read the string value at `key`.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `key` | `string` | The (un-prefixed) key. |
+
+#### Returns
+
+`string` \| `null`
+
+The decoded UTF-8 string, or `null` if the key is absent.
+
+#### Implementation of
+
+```ts
+Storage.getItem
+```
+
+***
+
+### key()
+
+```ts
+key(index: number): string | null;
+```
+
+Defined in: [storage/storage-shim.ts:95](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/storage-shim.ts#L95)
+
+Web Storage `key(index)` — return the Nth key under this shim's prefix.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `index` | `number` | Zero-based key index. |
+
+#### Returns
+
+`string` \| `null`
+
+The key (without the prefix) or `null` if `index` is out of range.
+
+#### Implementation of
+
+```ts
+Storage.key
+```
+
+***
+
+### removeItem()
+
+```ts
+removeItem(key: string): void;
+```
+
+Defined in: [storage/storage-shim.ts:143](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/storage-shim.ts#L143)
+
+Web Storage `removeItem(key)` — delete the entry at `key`.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `key` | `string` | The (un-prefixed) key to remove. |
+
+#### Returns
+
+`void`
+
+#### Implementation of
+
+```ts
+Storage.removeItem
+```
+
+***
+
+### setItem()
+
+```ts
+setItem(key: string, value: string): void;
+```
+
+Defined in: [storage/storage-shim.ts:127](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/storage-shim.ts#L127)
+
+Web Storage `setItem(key, value)` — UTF-8 encode and store.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `key` | `string` | The (un-prefixed) key. |
+| `value` | `string` | The string value to store. |
+
+#### Returns
+
+`void`
+
+#### Implementation of
+
+```ts
+Storage.setItem
+```

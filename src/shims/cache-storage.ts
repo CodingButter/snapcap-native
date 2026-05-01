@@ -357,12 +357,16 @@ class CacheStorageImpl {
 /**
  * `Shim`-shaped wrapper. Overwrites whatever `caches` is on the sandbox
  * global (the empty stub installed by `sandbox.ts` — kept as a fallback
- * for the no-DataStore configuration where `SDK_SHIMS` doesn't run) with
- * a real DataStore-backed `CacheStorage`.
+ * for the no-DataStore configuration where {@link SDK_SHIMS} doesn't run)
+ * with a real DataStore-backed `CacheStorage`.
+ *
+ * @internal
  */
 export class CacheStorageShim extends Shim {
+  /** @internal */
   readonly name = "cache-storage";
 
+  /** @internal */
   install(sandbox: Sandbox, ctx: ShimContext): void {
     const VmResponseCtor = sandbox.runInContext("Response") as typeof Response;
     const VmRequestCtor = sandbox.runInContext("Request") as typeof Request;

@@ -1,0 +1,27 @@
+---
+title: FriendsSnapshot
+---
+
+# Interface: FriendsSnapshot
+
+Defined in: [api/friends.ts:198](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L198)
+
+A point-in-time view of the entire friend graph — mutuals + pending
+requests in both directions.
+
+## Remarks
+
+Returned by [IFriendsManager.snapshot](IFriendsManager.mdx#snapshot) (canonical) and the
+underlying source for [IFriendsManager.list](IFriendsManager.mdx#list),
+[IFriendsManager.incomingRequests](IFriendsManager.mdx#incomingrequests), and
+[IFriendsManager.outgoingRequests](IFriendsManager.mdx#outgoingrequests). The same object shape is
+delivered to [IFriendsManager.onChange](IFriendsManager.mdx#onchange) subscribers whenever any
+of the three slots mutates.
+
+## Properties
+
+| Property | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ |
+| <a id="incoming"></a> `incoming` | [`FriendRequest`](FriendRequest.mdx)[] | Pending inbound friend requests (others adding the logged-in user). | [api/friends.ts:202](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L202) |
+| <a id="mutuals"></a> `mutuals` | [`Friend`](Friend.mdx)[] | All mutually-confirmed friends. | [api/friends.ts:200](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L200) |
+| <a id="outgoing"></a> `outgoing` | [`OutgoingRequest`](OutgoingRequest.mdx)[] | Pending outbound friend requests (the logged-in user's adds). | [api/friends.ts:204](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L204) |

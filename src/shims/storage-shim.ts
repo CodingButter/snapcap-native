@@ -18,17 +18,29 @@ import { StorageShim as WebStorageShim } from "../storage/storage-shim.ts";
 import { Shim, type ShimContext } from "./types.ts";
 import type { Sandbox } from "./sandbox.ts";
 
-/** Installs `localStorage` over `local_*` keys in the DataStore. */
+/**
+ * Installs `localStorage` over `local_*` keys in the DataStore.
+ *
+ * @internal
+ */
 export class LocalStorageShim extends Shim {
+  /** @internal */
   readonly name = "local-storage";
+  /** @internal */
   install(sandbox: Sandbox, ctx: ShimContext): void {
     sandbox.window.localStorage = new WebStorageShim(ctx.dataStore, "local_");
   }
 }
 
-/** Installs `sessionStorage` over `session_*` keys in the DataStore. */
+/**
+ * Installs `sessionStorage` over `session_*` keys in the DataStore.
+ *
+ * @internal
+ */
 export class SessionStorageShim extends Shim {
+  /** @internal */
   readonly name = "session-storage";
+  /** @internal */
   install(sandbox: Sandbox, ctx: ShimContext): void {
     sandbox.window.sessionStorage = new WebStorageShim(ctx.dataStore, "session_");
   }

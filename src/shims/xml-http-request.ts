@@ -553,12 +553,16 @@ function createNativeFetchXhr(opts: {
  * — which `BROWSER_PROJECTED_KEYS` populated with happy-dom's broken
  * implementation — with a streaming-binary-capable XHR backed by Node's
  * native fetch. Last-write-wins ordering: this runs after the projection
- * loop in `Sandbox`'s constructor, so happy-dom's XHR is silently replaced
- * before any bundle code runs.
+ * loop in {@link Sandbox}'s constructor, so happy-dom's XHR is silently
+ * replaced before any bundle code runs.
+ *
+ * @internal
  */
 export class XmlHttpRequestShim extends Shim {
+  /** @internal */
   readonly name = "xml-http-request";
 
+  /** @internal */
   install(sandbox: Sandbox, ctx: ShimContext): void {
     sandbox.window.XMLHttpRequest = createNativeFetchXhr({
       jar: ctx.jar,

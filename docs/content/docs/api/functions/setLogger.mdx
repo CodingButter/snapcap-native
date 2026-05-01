@@ -1,0 +1,38 @@
+---
+title: setLogger
+---
+
+# Function: setLogger()
+
+```ts
+function setLogger(fn: Logger | undefined): void;
+```
+
+Defined in: [logging.ts:132](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/logging.ts#L132)
+
+Install (or clear) the active logger.
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `fn` | [`Logger`](../type-aliases/Logger.mdx) \| `undefined` | The handler to install, or `undefined` to disable logging entirely (in which case the internal emit point becomes a one-instruction null check). |
+
+## Returns
+
+`void`
+
+## Example
+
+```ts
+import { setLogger, defaultTextLogger } from "@snapcap/native";
+
+setLogger(defaultTextLogger);   // built-in text formatter
+setLogger((ev) => myJsonLogger.log(ev));   // custom handler
+setLogger(undefined);   // disable
+```
+
+## See
+
+ - [Logger](../type-aliases/Logger.mdx)
+ - [defaultTextLogger](../variables/defaultTextLogger.mdx)

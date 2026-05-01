@@ -1,0 +1,47 @@
+---
+title: idbGet
+---
+
+# Function: idbGet()
+
+```ts
+function idbGet<T>(
+   dbName: string, 
+   storeName: string, 
+key: string): Promise<T | undefined>;
+```
+
+Defined in: [storage/idb-utils.ts:163](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/idb-utils.ts#L163)
+
+Read a value from the sandbox's IndexedDB at `(dbName, storeName, key)`.
+
+## Type Parameters
+
+| Type Parameter | Default type | Description |
+| ------ | ------ | ------ |
+| `T` | `unknown` | The value type stored at this key. |
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `dbName` | `string` | IndexedDB database name. |
+| `storeName` | `string` | Object store name within the database. Created on first use if absent. |
+| `key` | `string` | Record key within the object store. |
+
+## Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`T` \| `undefined`\>
+
+The stored value, or `undefined` if absent.
+
+## Example
+
+```ts
+const identity = await idbGet<{ pub: Uint8Array }>("snapcap", "fidelius", "identity");
+```
+
+## See
+
+ - [idbPut](idbPut.mdx)
+ - [idbDelete](idbDelete.mdx)

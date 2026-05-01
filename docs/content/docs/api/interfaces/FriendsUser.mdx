@@ -1,0 +1,29 @@
+---
+title: FriendsUser
+---
+
+# Interface: FriendsUser
+
+Defined in: [api/friends.ts:124](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L124)
+
+A user surfaced from search / lookup. Carries no friend-graph metadata
+(use [Friend](Friend.mdx) for that).
+
+## Remarks
+
+`username` may be empty when the SDK has the userId but hasn't yet
+back-filled the `state.user.publicUsers` cache for it (e.g.
+immediately after `syncFriends()` returns ids before public-info is
+fetched). In that case callers can still match by `userId`.
+
+## Extended by
+
+- [`Friend`](Friend.mdx)
+
+## Properties
+
+| Property | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ |
+| <a id="displayname"></a> `displayName?` | `string` | Display name shown in the Snap UI. Optional — not always set. | [api/friends.ts:130](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L130) |
+| <a id="userid"></a> `userId` | `string` | Hyphenated UUID. | [api/friends.ts:126](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L126) |
+| <a id="username"></a> `username` | `string` | Snap username (handle). May be empty during initial sync. | [api/friends.ts:128](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/friends.ts#L128) |

@@ -18,6 +18,11 @@ import { Sandbox } from "../shims/sandbox.ts";
 import { installWebpackCapture } from "../shims/webpack-capture.ts";
 import { ensureBundle } from "./download.ts";
 
+/**
+ * Options for {@link getKameleon} / {@link bootKameleon}.
+ *
+ * @internal Bundle-layer config; consumers don't construct this.
+ */
 export type KameleonOpts = {
   /** Root of vendor/snap-bundle (defaults to packages/native/vendor/snap-bundle). */
   bundleDir?: string;
@@ -27,27 +32,28 @@ export type KameleonOpts = {
   trace?: boolean;
 };
 
+/**
+ * The minted-attestation surface returned by {@link bootKameleon}.
+ *
+ * @internal Bundle-layer type; the public surface is `SnapcapClient.authenticate()`.
+ */
 export type KameleonContext = {
   /** Generate an attestation token bound to `identifier` (username/email/phone). */
   finalize(identifier: string): Promise<string>;
 };
 
 /**
- * Boot the kameleon Module once and return a finalize() function.
+ * Cached boot result for a single Sandbox — pairs the {@link KameleonContext}
+ * with the captured webpack require so `auth/sso.ts` can reach accounts
+ * modules without re-running the full bundle eval.
  *
- * The first call costs ~1–2s and ~5MB of JS eval + an 814KB WASM
- * instantiate. We cache that work in a process-wide singleton: subsequent
- * calls (including from different SnapcapClient instances) reuse the same
- * Module + the same captured webpack require.
- *
- * Multi-account is fine: AttestationSession.instance() is a Module-level
- * singleton, but `finalize(identifier)` rebinds the username on each call —
- * different accounts get different tokens through the same Module.
+ * @internal
  */
 type BootedKameleon = {
   ctx: KameleonContext;
   wreq: { (id: string): unknown; m: Record<string, Function> };
 };
+
 /**
  * Per-Sandbox kameleon boot. Cached on the Sandbox instance — a fresh
  * Sandbox boots its own kameleon Module so two `SnapcapClient` instances
@@ -56,6 +62,20 @@ type BootedKameleon = {
  * `sandbox` is required: the kameleon WASM is instantiated INTO this
  * sandbox's vm.Context, and the cache lives on the sandbox so each
  * client gets its own Module + finalize() context.
+ *
+ * @remarks The first call costs ~1–2s and ~5MB of JS eval + an 814 KB
+ * WASM instantiate. Subsequent calls reuse the cached `BootedKameleon`.
+ *
+ * Multi-account is fine: `AttestationSession.instance()` is a
+ * Module-level singleton, but `finalize(identifier)` rebinds the
+ * username on each call — different accounts get different tokens
+ * through the same Module.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach attestation
+ * via `SnapcapClient.authenticate()` (see `src/auth/login.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} that will host the WASM instance
+ * @param opts - optional bundle directory / page / trace overrides
+ * @returns the cached {@link BootedKameleon} for this sandbox
  */
 export async function getKameleon(sandbox: Sandbox, opts: KameleonOpts = {}): Promise<BootedKameleon> {
   if (!sandbox.kameleonBoot) {
@@ -64,6 +84,15 @@ export async function getKameleon(sandbox: Sandbox, opts: KameleonOpts = {}): Pr
   return sandbox.kameleonBoot as Promise<BootedKameleon>;
 }
 
+/**
+ * Convenience wrapper around {@link getKameleon} that returns just the
+ * {@link KameleonContext} (drops the captured wreq).
+ *
+ * @internal Bundle-layer accessor.
+ * @param sandbox - the per-instance {@link Sandbox} that will host the WASM instance
+ * @param opts - optional bundle directory / page / trace overrides
+ * @returns the {@link KameleonContext} with `finalize(identifier)`
+ */
 export async function bootKameleon(sandbox: Sandbox, opts: KameleonOpts = {}): Promise<KameleonContext> {
   const { ctx } = await getKameleon(sandbox, opts);
   return ctx;

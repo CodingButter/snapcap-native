@@ -1,0 +1,198 @@
+---
+title: ISnapcapClient
+---
+
+# Interface: ISnapcapClient
+
+Defined in: [client.interface.ts:34](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L34)
+
+The public contract that [SnapcapClient](../classes/SnapcapClient.mdx) implements.
+
+Auth verbs + six per-domain managers. Consumers should code against
+`ISnapcapClient` rather than the concrete class when writing tests,
+mocks, or library code that accepts a client.
+
+## See
+
+ - [SnapcapClient](../classes/SnapcapClient.mdx)
+ - [IFriendsManager](IFriendsManager.mdx)
+
+## Properties
+
+| Property | Modifier | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ | ------ |
+| <a id="friends"></a> `friends` | `readonly` | [`Friends`](../classes/Friends.mdx) | Friend-graph manager — see [IFriendsManager](IFriendsManager.mdx) for the full surface (mutations, reads, search, subscriptions). | [client.interface.ts:126](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L126) |
+| <a id="inbox"></a> `inbox` | `readonly` | [`Inbox`](../classes/Inbox.mdx) | Placeholder for the future Inbox manager. No methods today. | [client.interface.ts:147](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L147) |
+| <a id="media"></a> `media` | `readonly` | [`Media`](../classes/Media.mdx) | Placeholder for the future Media manager. No methods today. | [client.interface.ts:152](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L152) |
+| <a id="messaging"></a> `messaging` | `readonly` | [`Messaging`](../classes/Messaging.mdx) | Placeholder for the future Messaging manager. No methods today — `client.messaging.send(...)` is a compile-time error. | [client.interface.ts:132](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L132) |
+| <a id="presence"></a> `presence` | `readonly` | [`Presence`](../classes/Presence.mdx) | Placeholder for the future Presence manager. No methods today. | [client.interface.ts:137](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L137) |
+| <a id="stories"></a> `stories` | `readonly` | [`Stories`](../classes/Stories.mdx) | Placeholder for the future Stories manager. No methods today. | [client.interface.ts:142](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L142) |
+
+## Methods
+
+### authenticate()
+
+```ts
+authenticate(): Promise<void>;
+```
+
+Defined in: [client.interface.ts:57](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L57)
+
+Bring up the bundles, run warm-or-cold WebLogin, and populate the
+Zustand auth slice.
+
+The first call does the heavy lifting (loads the accounts and chat
+bundles, runs kameleon attestation, drives `WebLoginService` if no
+cookies are cached); subsequent process boots with restored cookies
+short-circuit through the warm SSO path (~1 redirect, ~100ms).
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+Resolves when the auth slice reports `LoggedIn`.
+
+#### Throws
+
+If credentials are missing on cold-start (no cached cookies),
+or if the server rejects the login attempt.
+
+#### Example
+
+```ts
+const client = new SnapcapClient({ dataStore, browser, credentials });
+await client.authenticate();
+console.log(client.isAuthenticated()); // true
+```
+
+***
+
+### getAuthState()
+
+```ts
+getAuthState(): number;
+```
+
+Defined in: [client.interface.ts:108](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L108)
+
+Live read: `state.auth.authState` enum value.
+
+#### Returns
+
+`number`
+
+`0` = LoggedOut, `1` = LoggedIn, `2` = Processing,
+`3` = MoreChallengesRequired.
+
+***
+
+### getAuthToken()
+
+```ts
+getAuthToken(): string;
+```
+
+Defined in: [client.interface.ts:100](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L100)
+
+Live read: current SSO bearer string from the Zustand auth slice.
+
+#### Returns
+
+`string`
+
+The bearer token (suitable for use as `Authorization: Bearer ...`).
+
+***
+
+### hasEverLoggedIn()
+
+```ts
+hasEverLoggedIn(): boolean;
+```
+
+Defined in: [client.interface.ts:116](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L116)
+
+Live read: the `hasEverLoggedIn` marker.
+
+Survives logout — useful for distinguishing a fresh install from a
+signed-out returning user.
+
+#### Returns
+
+`boolean`
+
+***
+
+### isAuthenticated()
+
+```ts
+isAuthenticated(): boolean;
+```
+
+Defined in: [client.interface.ts:93](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L93)
+
+Live read: `true` iff the Zustand auth slice currently reports
+`LoggedIn`.
+
+Synchronous — backed by in-process state. Returns `false` before the
+bundle is brought up (i.e. before [ISnapcapClient.authenticate](#authenticate)
+has been called).
+
+#### Returns
+
+`boolean`
+
+***
+
+### logout()
+
+```ts
+logout(force?: boolean): Promise<void>;
+```
+
+Defined in: [client.interface.ts:70](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L70)
+
+Tear down the bundle-side auth state.
+
+Calls Snap's own `state.auth.logout` thunk — clears Zustand, fires
+any subscribed teardown hooks, and (best-effort) revokes server-side.
+Also deletes the persisted cookie jar entry from the DataStore.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `force?` | `boolean` | If `true`, force the logout even if the server-side revoke call fails. Defaults to `false`. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+Resolves when local auth state has been cleared.
+
+***
+
+### refreshAuthToken()
+
+```ts
+refreshAuthToken(): Promise<void>;
+```
+
+Defined in: [client.interface.ts:83](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/client.interface.ts#L83)
+
+Refresh the bearer in-place via Snap's own `state.auth.refreshToken`.
+
+Requires the client to have been constructed with credentials — the
+bundle's refresh path mints a fresh kameleon attestation bound to
+the active identifier.
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+Resolves once the new bearer has been written back into the
+Zustand auth slice.
+
+#### Throws
+
+If the client was constructed without credentials.

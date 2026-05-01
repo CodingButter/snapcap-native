@@ -1,0 +1,37 @@
+---
+title: ThrottleRule
+---
+
+# Type Alias: ThrottleRule
+
+```ts
+type ThrottleRule = {
+  burst?: number;
+  match:   | string
+     | RegExp;
+  minIntervalMs: number;
+};
+```
+
+Defined in: [transport/throttle.ts:107](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/transport/throttle.ts#L107)
+
+One throttle rule. Matches outbound URLs and gates them at a minimum
+inter-call interval, with optional burst headroom.
+
+## Remarks
+
+First-match wins inside a [ThrottleConfig.rules](ThrottleConfig.mdx#rules) array — order
+rules from most-specific to least-specific.
+
+## See
+
+ - [RECOMMENDED\_THROTTLE\_RULES](../variables/RECOMMENDED_THROTTLE_RULES.mdx)
+ - [ThrottleConfig](ThrottleConfig.mdx)
+
+## Properties
+
+| Property | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ |
+| <a id="burst"></a> `burst?` | `number` | Optional burst capacity — N requests can fire freely before the floor kicks in. Useful for batched fetches (e.g. `publicInfo` lookups). Defaults to `0` (every request enforces the floor). | [transport/throttle.ts:117](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/transport/throttle.ts#L117) |
+| <a id="match"></a> `match` | \| `string` \| [`RegExp`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/RegExp) | URL substring or regex. Substring match is case-sensitive. | [transport/throttle.ts:109](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/transport/throttle.ts#L109) |
+| <a id="minintervalms"></a> `minIntervalMs` | `number` | Floor between consecutive matching requests, in milliseconds. | [transport/throttle.ts:111](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/transport/throttle.ts#L111) |

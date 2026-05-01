@@ -1,0 +1,37 @@
+---
+title: ThrottleGate
+---
+
+# Type Alias: ThrottleGate
+
+```ts
+type ThrottleGate = (url: string) => Promise<void>;
+```
+
+Defined in: [transport/throttle.ts:94](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/transport/throttle.ts#L94)
+
+Function shape that throttles outbound requests. Awaited once per wire
+request, immediately before the SDK calls into the underlying fetch /
+XHR layer.
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `url` | `string` | The destination URL of the imminent request. Used to match [ThrottleRule.match](ThrottleRule.mdx#match) patterns. Implementations should resolve immediately for unmatched URLs. |
+
+## Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+A promise that resolves once the request is allowed to proceed.
+
+## Remarks
+
+Pass a [ThrottleConfig](ThrottleConfig.mdx) to a `SnapcapClient` for per-instance
+pacing, OR build a shared gate via [createSharedThrottle](../functions/createSharedThrottle.mdx) and pass
+it to every client when coordinating across many tenants in one process.
+
+## See
+
+[createSharedThrottle](../functions/createSharedThrottle.mdx)

@@ -1,10 +1,71 @@
 /**
- * @snapcap/native — browser-free Snap client.
+ * `@snapcap/native` — browser-free Snapchat client for Node.
  *
- * Loads Snap's web JavaScript bundle and WASM modules directly in Node,
- * with shimmed Chrome APIs so the bundle "thinks" it's still running in
- * Chromium. Runs many accounts on a fraction of the resources Playwright
- * would require.
+ * Loads Snap's web JavaScript bundle and 814 KB of WASM directly inside an
+ * isolated Node `vm.Context`, with shimmed Chrome APIs so the bundle "thinks"
+ * it's still running in Chromium. No Playwright, no emulator, no rooted phone
+ * — many accounts run on a fraction of the resources a browser harness would
+ * require.
+ *
+ * @packageDocumentation
+ *
+ * @remarks
+ * The package is the public surface for the Snap automation runner — a thin
+ * facade over Snap's own bundle plus an opt-in observability + throttling
+ * layer. Authentication, friends, messaging, stories, presence, and inbox are
+ * surfaced via the {@link SnapcapClient} entry point; persistence plugs in via
+ * the {@link DataStore} interface.
+ *
+ * @example
+ * Quick start:
+ *
+ * ```ts
+ * import { SnapcapClient, FileDataStore } from "@snapcap/native";
+ *
+ * const dataStore = new FileDataStore(".tmp/auth/auth.json");
+ * const client = new SnapcapClient({
+ *   dataStore,
+ *   username: "...",
+ *   password: "...",
+ *   browser: {
+ *     userAgent:
+ *       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+ *   },
+ * });
+ *
+ * await client.isAuthorized();        // restore-or-login, idempotent
+ * const friends = await client.listFriends();
+ * ```
+ *
+ * @example
+ * Multi-tenant runners should share one throttle gate across clients —
+ * see {@link createSharedThrottle} and {@link RECOMMENDED_THROTTLE_RULES}:
+ *
+ * ```ts
+ * import {
+ *   SnapcapClient,
+ *   createSharedThrottle,
+ *   RECOMMENDED_THROTTLE_RULES,
+ * } from "@snapcap/native";
+ *
+ * const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES });
+ * const clients = tenants.map(t => new SnapcapClient({ ...t, throttle: gate }));
+ * ```
+ *
+ * @example
+ * Opt into structured network observability with {@link setLogger} (or set
+ * `SNAP_NETLOG=1` in the environment for the built-in text formatter):
+ *
+ * ```ts
+ * import { setLogger, defaultTextLogger } from "@snapcap/native";
+ * setLogger(defaultTextLogger);
+ * ```
+ *
+ * @see {@link SnapcapClient} — the main entry point
+ * @see {@link Friends} — friends domain manager
+ * @see {@link DataStore} — persistence interface
+ * @see {@link ThrottleConfig} — opt-in HTTP throttling
+ * @see {@link Logger} — structured network observability
  */
 export { SnapcapClient, type SnapcapClientOpts } from "./client.ts";
 export type { ISnapcapClient } from "./client.interface.ts";
@@ -27,6 +88,7 @@ export {
   type FriendsSnapshot,
   type FriendLinkType,
   type UserId,
+  type Unsubscribe,
   type User as FriendsUser,
 } from "./api/friends.ts";
 export { Messaging } from "./api/messaging.ts";

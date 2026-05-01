@@ -1,0 +1,40 @@
+---
+title: defaultTextLogger
+---
+
+# Variable: defaultTextLogger
+
+```ts
+const defaultTextLogger: Logger;
+```
+
+Defined in: [logging.ts:189](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/logging.ts#L189)
+
+Built-in human-readable formatter. One line per event, no embedded
+newlines. Tag column is fixed-width (15 chars) so the output aligns
+regardless of which event variant is being logged.
+
+## Remarks
+
+Pass to [setLogger](../functions/setLogger.mdx) to enable, or set `SNAP_NETLOG=1` in the
+environment to install at module load.
+
+Sample output:
+
+```text
+[net.xhr.open  ] POST https://web.snapchat.com/.../AddFriends
+[net.xhr.done  ] POST https://web.snapchat.com/.../AddFriends -> 200 (req 87B / resp 0B / 437ms / grpc-status:0)
+[net.xhr.error ] POST https://web.snapchat.com/.../SyncFriendData -> "Network error" (1203ms)
+```
+
+## Example
+
+```ts
+import { setLogger, defaultTextLogger } from "@snapcap/native";
+setLogger(defaultTextLogger);
+```
+
+## See
+
+ - [setLogger](../functions/setLogger.mdx)
+ - [Logger](../type-aliases/Logger.mdx)

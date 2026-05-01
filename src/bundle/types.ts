@@ -50,6 +50,8 @@
  * descriptor — every api file that builds one is producing input the
  * bundle's transport accepts. The runtime helper that consumes it
  * (`callRpc`) still lives in `transport/grpc-web.ts`.
+ *
+ * @internal Bundle wire-format type tied to Snap's protos.
  */
 export type GrpcMethodDesc<Req, Resp> = {
   methodName: string;
@@ -64,6 +66,8 @@ export type GrpcMethodDesc<Req, Resp> = {
  * UUID encoded as a 64-bit high/low bigint pair — the convention used by
  * Snap's friending protos. The bundle's ts-proto codecs accept both
  * stringified and `bigint` inputs at `fromPartial` time.
+ *
+ * @internal Bundle wire-format type.
  */
 export type Uuid64Pair = { highBits: bigint | string; lowBits: bigint | string };
 
@@ -72,6 +76,8 @@ export type Uuid64Pair = { highBits: bigint | string; lowBits: bigint | string }
  * `Ni.rpc.unary` and `LoginClient`'s constructor argument. Re-exported
  * here so consumers passing a custom transport into `submitLogin` etc.
  * have a public type to satisfy.
+ *
+ * @internal Bundle wire-format type.
  */
 export type UnaryFn = <TReq, TResp>(
   desc: GrpcMethodDesc<TReq, TResp>,
@@ -84,6 +90,8 @@ export type UnaryFn = <TReq, TResp>(
  * `{id: bytes16, str: hyphenated-uuid}`. The api layer builds these via
  * `makeConversationRef` (in `../api/_helpers.ts`); the registry exports
  * accept this shape directly without doing any UUID parsing themselves.
+ *
+ * @internal Bundle wire-format type.
  */
 export type ConversationRef = { id: Uint8Array; str: string };
 
@@ -94,6 +102,8 @@ export type ConversationRef = { id: Uint8Array; str: string };
  * and consumed by `sendSnap`. `conversations` are `ConversationRef`s
  * (bytes16-wrapped); `stories` / `phoneNumbers` / `massSnaps` are
  * bundle-internal struct shapes the SDK passes through opaquely.
+ *
+ * @internal Bundle wire-format type.
  */
 export type SnapDestinations = {
   conversations: ConversationRef[];
@@ -102,7 +112,11 @@ export type SnapDestinations = {
   massSnaps: unknown[];
 };
 
-/** Captured-media payload accepted by the bundle's `sendSnap` entry. */
+/**
+ * Captured-media payload accepted by the bundle's `sendSnap` entry.
+ *
+ * @internal Bundle wire-format type.
+ */
 export type CapturedSnap = {
   mediaType: number;
   media: unknown;
@@ -116,20 +130,34 @@ export type CapturedSnap = {
 
 // ─── Friend graph mutation requests ─────────────────────────────────────
 
-/** One entry of an `AddFriends` request. */
+/**
+ * One entry of an `AddFriends` request.
+ *
+ * @internal Bundle wire-format type.
+ */
 export type AddFriendParams = {
   friendId: Uuid64Pair;
   /** `FriendSource` enum value — see `api/friends.ts#FriendSource`. */
   source: number;
 };
 
+/**
+ * `AddFriends` request envelope accepted by the `jz` FriendAction client.
+ *
+ * @internal Bundle wire-format type.
+ */
 export type AddFriendsRequest = {
   /** Origin label — Snap surfaces the source so analytics can attribute. */
   page?: string;
   params: AddFriendParams[];
 };
 
-/** All other friend-mutation methods accept the same envelope. */
+/**
+ * Friend-mutation request envelope shared by `RemoveFriends`,
+ * `BlockFriends`, `UnblockFriends`, `IgnoreFriends`, and friends.
+ *
+ * @internal Bundle wire-format type.
+ */
 export type FriendMutationRequest = {
   page?: string;
   params: Array<{ friendId: Uuid64Pair }>;
@@ -139,34 +167,54 @@ export type FriendMutationRequest = {
  * `TransferInvites` request. Captured shape unconfirmed — placeholder
  * until a recon HAR lands.
  *
- * TODO: refine — search `methodName:"TransferInvites"` in the chat main
- * bundle and trace the codec (`hz` from the FriendAction declaration site
- * around byte 1430000) to fill in the slot list.
+ * @remarks TODO — refine: search `methodName:"TransferInvites"` in the
+ * chat main bundle and trace the codec (`hz` from the FriendAction
+ * declaration site around byte 1430000) to fill in the slot list.
+ *
+ * @internal Bundle wire-format type.
  */
 export type TransferInvitesRequest = {
   page?: string;
   [k: string]: unknown;
 };
 
-/** `InviteFriends` request. Same TODO posture as `TransferInvitesRequest`. */
+/**
+ * `InviteFriends` request. Same TODO posture as
+ * {@link TransferInvitesRequest}.
+ *
+ * @internal Bundle wire-format type.
+ */
 export type InviteFriendsRequest = {
   page?: string;
   params: Array<{ friendId?: Uuid64Pair; phoneNumber?: string }>;
 };
 
-/** `InviteOrAddFriendsByPhone` request. Same TODO posture. */
+/**
+ * `InviteOrAddFriendsByPhone` request. Same TODO posture.
+ *
+ * @internal Bundle wire-format type.
+ */
 export type InviteOrAddFriendsByPhoneRequest = {
   page?: string;
   phoneNumbers: string[];
 };
 
-/** `MuteStoryForFriends` / `UnmuteStoryForFriends` request. */
+/**
+ * `MuteStoryForFriends` / `UnmuteStoryForFriends` request.
+ *
+ * @internal Bundle wire-format type.
+ */
 export type MuteStoryForFriendsRequest = {
   page?: string;
   params: Array<{ friendId: Uuid64Pair }>;
 };
 
-/** `SetPostViewEmojiFoFriends` request — note the typo in the bundle's method name. */
+/**
+ * `SetPostViewEmojiFoFriends` request — note the typo in the bundle's
+ * method name.
+ *
+ * @internal Bundle wire-format type.
+ */
 export type SetPostViewEmojiForFriendsRequest = {
   page?: string;
   params: Array<{ friendId: Uuid64Pair; emoji?: string }>;
@@ -176,6 +224,8 @@ export type SetPostViewEmojiForFriendsRequest = {
  * `CheckActionEligibility` request — friend-graph precondition probe.
  * The bundle accepts `{params: [{friendId}]}`, same `Uuid64Pair` shape as
  * the mutation envelopes.
+ *
+ * @internal Bundle wire-format type.
  */
 export type CheckActionEligibilityRequest = {
   params: Array<{ friendId: Uuid64Pair }>;
@@ -188,6 +238,8 @@ export type CheckActionEligibilityRequest = {
  * full surface the bundle declares — declaration site at byte 1432651
  * in chat main, beginning `new class{rpc;constructor(e){this.rpc=e,
  * this.TransferInvites=this.TransferInvites.bind(this)...}`.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface JzFriendAction {
   TransferInvites(req: TransferInvitesRequest): Promise<unknown>;
@@ -209,6 +261,8 @@ export interface JzFriendAction {
  * `N` FriendRequests client (chat main byte ~6939950). Closure-private
  * inside the chat bundle; needs a source-patch to surface — see the
  * `G_FRIEND_REQUESTS_CLIENT` TODO in register.ts.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface FriendRequestsClient {
   /**
@@ -223,13 +277,20 @@ export interface FriendRequestsClient {
 
 // ─── WASM messaging session shape ──────────────────────────────────────
 
-/** Bundle-realm WASM messaging session — keys are method names, values are Embind functions. */
+/**
+ * Bundle-realm WASM messaging session — keys are method names, values
+ * are Embind functions.
+ *
+ * @internal Bundle wire-format type.
+ */
 export type Session = Record<string, Function>;
 
 /**
  * Module 56639 sends/receives surface (chat main byte 4928786) — the
  * bundle-private letter pair exports for every send / fetch / lifecycle /
  * snap-interaction verb the SDK wraps.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface SendsModule {
   pn(s: Session, c: ConversationRef, t: string, q?: unknown, a?: unknown, b?: boolean): Promise<void>;
@@ -275,7 +336,11 @@ export interface SendsModule {
 
 // ─── Destinations + story descriptor modules ───────────────────────────
 
-/** Module 79028 — `Ju` builds a `SnapDestinations` envelope from a partial. */
+/**
+ * Module 79028 — `Ju` builds a `SnapDestinations` envelope from a partial.
+ *
+ * @internal Bundle wire-format type.
+ */
 export interface DestinationsModule {
   Ju(input: { conversations?: ConversationRef[]; stories?: unknown[]; massSnaps?: unknown[]; phoneNumbers?: unknown[] }): SnapDestinations;
 }
@@ -284,6 +349,8 @@ export interface DestinationsModule {
  * Module 74762 — `R9` returns the single-element MY_STORY descriptor
  * array; `ge` converts each descriptor to its server-side destination
  * shape.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface StoryDescModule {
   R9(friendsOnly?: boolean): unknown[];
@@ -298,6 +365,8 @@ export interface StoryDescModule {
  * distinction lives in the `contentType` field on the CreateContentMessage
  * envelope, not in the upload pipeline — there is no separate
  * `uploadSnapMedia`.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface FiUpload {
   uploadMedia: (ctx: unknown, blob: unknown, meta: unknown) => Promise<unknown>;
@@ -309,6 +378,8 @@ export interface FiUpload {
  * messaging-session bring-up so any AtlasGw / friending / etc. call can
  * route through the SDK's transport. Surfaced by the chat-bundle
  * source-patch as `__SNAPCAP_NI`.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface NiChatRpc {
   rpc: { unary: UnaryFn };
@@ -319,6 +390,8 @@ export interface NiChatRpc {
  * transport; instances expose `SyncFriendData`, `GetSnapchatterPublicInfo`,
  * etc. The natural closure-private instance `A` (chat main byte ~6940575)
  * is surfaced as `__SNAPCAP_ATLAS` — see `atlasClient()` in `register.ts`.
+ *
+ * @internal Bundle wire-format type.
  */
 export type AtlasGwClassCtor = new (rpc: { unary: UnaryFn }) => Record<string, Function>;
 
@@ -332,6 +405,8 @@ export type AtlasGwClassCtor = new (rpc: { unary: UnaryFn }) => Record<string, F
  * Methods are typed as `Function` until consumers wire concrete request /
  * response shapes; that's the same TODO posture as `JzFriendAction`'s
  * speculative envelopes — refine when the api layer actually calls them.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface AtlasGwClient {
   /** Pull/sync the friend graph; outgoing-side delta sync. */
@@ -360,6 +435,8 @@ export interface AtlasGwClient {
  * UserInfo / Self client — placeholder. No dedicated RPC has been
  * located yet; `GetSnapchatterPublicInfo` on AtlasGw is the leading
  * candidate for `getUserProfile`.
+ *
+ * @internal Bundle wire-format type (TODO).
  */
 export interface UserInfoClient {
   GetSelfUser?: () => Promise<unknown>;
@@ -370,6 +447,8 @@ export interface UserInfoClient {
  * StoryManager — placeholder. Lives on the WASM messaging session as
  * `getStoryManager()`. Needs an Embind trace plus a source-patch to
  * surface as `__SNAPCAP_STORY_MANAGER`.
+ *
+ * @internal Bundle wire-format type (TODO).
  */
 export interface StoryManager {
   getMyStorySnaps?: () => Promise<unknown>;
@@ -387,6 +466,8 @@ export interface StoryManager {
  *
  * `T` defaults to `ChatState` — the slice union the SDK currently reads.
  * Callers that need a slice not in `ChatState` can re-parameterize.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface ChatStore<T = ChatState> {
   getState(): T;
@@ -399,13 +480,19 @@ export interface ChatStore<T = ChatState> {
  * Slice union the SDK currently reads off the chat-bundle Zustand store.
  * Add slices here only when an api file actually needs them — speculative
  * keys hide schema drift.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface ChatState {
   auth: AuthSlice;
   user: UserSlice;
 }
 
-/** `state.auth` slice on the bundle's Zustand store — module 94704. */
+/**
+ * `state.auth` slice on the bundle's Zustand store — module 94704.
+ *
+ * @internal Bundle wire-format type.
+ */
 export interface AuthSlice {
   initialize(loc: { hash: string; search: string }): Promise<void>;
   logout(force?: boolean): Promise<void>;
@@ -418,6 +505,8 @@ export interface AuthSlice {
  * Snake-cased record stored in `state.user.publicUsers`. Populated by
  * `GetSnapchatterPublicInfo`; the bundle keeps the wire shape (snake-case)
  * so the api layer is responsible for camel-casing for consumer surfaces.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface PublicUserRecord {
   user_id?: string;
@@ -429,7 +518,9 @@ export interface PublicUserRecord {
 /**
  * Snake-cased record stored in `state.user.incomingFriendRequests`.
  * Populated by `IncomingFriendSync`. Same snake-case rationale as
- * `PublicUserRecord`.
+ * {@link PublicUserRecord}.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface IncomingFriendRequestRecord {
   user_id?: string;
@@ -453,6 +544,8 @@ export interface IncomingFriendRequestRecord {
  * Only the fields the SDK currently reads are typed; `[k: string]: unknown`
  * is intentionally omitted so a typo on the consumer side surfaces at
  * compile time rather than silently returning `undefined`.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface UserSlice {
   /** Hyphenated UUIDs of mutual friends (excludes self). */
@@ -472,6 +565,8 @@ export interface UserSlice {
 /**
  * `WebLoginServiceClientImpl` constructor — accounts module 13150.
  * Takes an `{unary}` rpc transport and exposes a `WebLogin` method.
+ *
+ * @internal Bundle wire-format type.
  */
 export type LoginClientCtor = new (rpc: { unary: UnaryFn }) => {
   WebLogin(req: WebLoginRequest): Promise<WebLoginResponse>;
@@ -479,7 +574,11 @@ export type LoginClientCtor = new (rpc: { unary: UnaryFn }) => {
 
 // ─── Host module (chat module 41359) ───────────────────────────────────
 
-/** Host constants module — `r5` is `https://web.snapchat.com`. */
+/**
+ * Host constants module — `r5` is `https://web.snapchat.com`.
+ *
+ * @internal Bundle wire-format type.
+ */
 export interface HostModule {
   /** `https://web.snapchat.com` — base for every same-origin POST. */
   r5: string;
@@ -495,6 +594,8 @@ export interface HostModule {
  * `default-authed-fetch` module — `s` is the bundle's same-origin POST
  * helper that attaches the bearer + cookies the way the SPA does.
  * Used by `Friends.search()` for the `/search/search` POST.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface DefaultAuthedFetchModule {
   s: (url: string, opts: unknown) => Promise<Response>;
@@ -507,6 +608,8 @@ export interface DefaultAuthedFetchModule {
  * Lives in chat module ~10409 alongside the FriendAction client. Source-
  * patched via `chat-loader.ts`. Produces the request envelope POSTed to
  * `/search/search`.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface SearchRequestCodec {
   fromPartial(p: Record<string, unknown>): unknown;
@@ -515,17 +618,22 @@ export interface SearchRequestCodec {
 
 /**
  * `__SNAPCAP_JY` — the bundle's `SearchResponse` ts-proto message codec.
- * Decodes the `/search/search` POST response into `DecodedSearchResponse`.
+ * Decodes the `/search/search` POST response into
+ * {@link DecodedSearchResponse}.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface SearchResponseCodec {
   decode(b: Uint8Array): DecodedSearchResponse;
 }
 
 /**
- * One result row inside a `DecodedSearchResponse` section. The bundle's
- * search codec emits `id` as a hyphenated UUID string but be tolerant of
- * `Uuid64Pair` and 16-byte buffer fallbacks too — earlier traces showed
- * both shapes depending on origin/sectionType.
+ * One result row inside a {@link DecodedSearchResponse} section. The
+ * bundle's search codec emits `id` as a hyphenated UUID string but be
+ * tolerant of {@link Uuid64Pair} and 16-byte buffer fallbacks too —
+ * earlier traces showed both shapes depending on origin/sectionType.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface DecodedSearchUserResult {
   id?: string | Uint8Array | { highBits?: bigint | string; lowBits?: bigint | string };
@@ -536,10 +644,12 @@ export interface DecodedSearchUserResult {
 }
 
 /**
- * Section envelope inside `DecodedSearchResponse`. `sectionType` mirrors
- * the bundle's `SearchSectionType` enum (2 = `SECTION_TYPE_ADD_FRIENDS`).
- * The user payload is a oneof — `result.$case === "user"` carries the
- * `DecodedSearchUserResult`.
+ * Section envelope inside {@link DecodedSearchResponse}. `sectionType`
+ * mirrors the bundle's `SearchSectionType` enum
+ * (2 = `SECTION_TYPE_ADD_FRIENDS`). The user payload is a oneof —
+ * `result.$case === "user"` carries the {@link DecodedSearchUserResult}.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface DecodedSearchSection {
   sectionType?: number;
@@ -551,9 +661,11 @@ export interface DecodedSearchSection {
 }
 
 /**
- * Decoded `/search/search` response — what `SearchResponseCodec.decode`
- * yields. Sections array is flat; consumers pick the section they care
- * about by `sectionType`.
+ * Decoded `/search/search` response — what
+ * {@link SearchResponseCodec}.decode yields. Sections array is flat;
+ * consumers pick the section they care about by `sectionType`.
+ *
+ * @internal Bundle wire-format type.
  */
 export interface DecodedSearchResponse {
   sections: DecodedSearchSection[];
@@ -574,6 +686,8 @@ export interface DecodedSearchResponse {
  * Result shape of `fetchConversationWithMessages` /
  * `fetchConversationWithMessagesPaginated`. Mirrors the bundle wrapper's
  * resolve shape (chat main byte ~4931600).
+ *
+ * @internal Bundle wire-format type.
  */
 export type FetchConversationWithMessagesResult = {
   /** Bundle-realm `Map<MessageId, MessageRecord>` of messages in the conversation. */
@@ -591,6 +705,8 @@ export type FetchConversationWithMessagesResult = {
  * `WebLoginRequest.fromPartial`. The two real call sites (login step 1 vs
  * step 2) populate disjoint subsets of the optional fields, so everything
  * past `webLoginHeaderBrowser` is `?`.
+ *
+ * @internal Bundle wire-format type.
  */
 export type WebLoginRequest = {
   webLoginHeaderBrowser: {
@@ -619,6 +735,8 @@ export type WebLoginRequest = {
 /**
  * `WebLoginResponse` decoded shape — only the fields the SDK reads on the
  * success / step-1-challenge paths are typed; the rest stays `unknown`.
+ *
+ * @internal Bundle wire-format type.
  */
 export type WebLoginResponse = {
   /** 1 = success on step 2; other values flag protocol-level failures. */

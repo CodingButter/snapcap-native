@@ -1,0 +1,45 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["./src/index.ts"],
+  "out": "./docs/content/docs/api",
+  "name": "@snapcap/native",
+  "readme": "none",
+  "includeVersion": true,
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "excludeProtected": false,
+  "excludeNotDocumented": false,
+  "categorizeByGroup": true,
+  "navigation": { "includeCategories": true, "includeGroups": true },
+  "sort": ["alphabetical"],
+  "plugin": [
+    "typedoc-plugin-markdown",
+    "typedoc-plugin-mdn-links",
+    "typedoc-plugin-frontmatter",
+    "./typedoc-frontmatter.mjs"
+  ],
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "notDocumented": false
+  },
+  "treatWarningsAsErrors": false,
+  "treatValidationWarningsAsErrors": false,
+  "skipErrorChecking": true,
+
+  // typedoc-plugin-markdown options — Fumadocs-friendly tuning.
+  // Hide elements Fumadocs renders itself (breadcrumbs, page header).
+  "hideBreadcrumbs": true,
+  "hidePageHeader": true,
+  "hideGroupHeadings": false,
+  "useCodeBlocks": true,
+  "expandObjects": true,
+  "expandParameters": true,
+  "parametersFormat": "table",
+  "propertiesFormat": "table",
+  "enumMembersFormat": "table",
+  "typeDeclarationFormat": "table",
+  "indexFormat": "table",
+  "fileExtension": ".mdx",
+  "entryFileName": "index.mdx"
+}

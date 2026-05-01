@@ -34,9 +34,18 @@ import { WebSocket as NodeWS } from "ws";
 import { Shim, type ShimContext } from "./types.ts";
 import type { Sandbox } from "./sandbox.ts";
 
+/**
+ * Sandbox `WebSocket` shim — see file header for empirical findings about
+ * happy-dom's bundled `WebSocket` and the cross-realm projection
+ * requirement on incoming binary messages.
+ *
+ * @internal
+ */
 export class WebSocketShim extends Shim {
+  /** @internal */
   readonly name = "websocket";
 
+  /** @internal */
   install(sandbox: Sandbox, ctx: ShimContext): void {
     // Resolve the sandbox realm's `Uint8Array` constructor once. Used to
     // project incoming binary messages so `e.data instanceof ArrayBuffer`

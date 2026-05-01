@@ -1,0 +1,80 @@
+---
+title: CookieJarStore
+---
+
+# Class: CookieJarStore
+
+Defined in: [storage/cookie-store.ts:36](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/cookie-store.ts#L36)
+
+DataStore-backed wrapper around a tough-cookie `CookieJar`.
+
+## Remarks
+
+Construct via the static [CookieJarStore.create](#create) factory — the ctor
+is private so a fully-rehydrated jar is guaranteed before first use.
+
+## Example
+
+```ts
+import { CookieJarStore, FileDataStore } from "@snapcap/native";
+
+const store = new FileDataStore(".tmp/auth/auth.json");
+const jarStore = await CookieJarStore.create(store);
+// jarStore.jar is a tough-cookie CookieJar; pass to your fetch wrapper.
+await jarStore.flush();
+```
+
+## Properties
+
+| Property | Modifier | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ | ------ |
+| <a id="jar"></a> `jar` | `readonly` | `CookieJar` | The underlying tough-cookie `CookieJar`. | [storage/cookie-store.ts:38](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/cookie-store.ts#L38) |
+
+## Methods
+
+### create()
+
+```ts
+static create(store: DataStore, key?: string): Promise<CookieJarStore>;
+```
+
+Defined in: [storage/cookie-store.ts:54](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/cookie-store.ts#L54)
+
+Build a new `CookieJarStore`, rehydrating the jar from the
+[DataStore](../interfaces/DataStore.mdx) if a prior serialization exists at `key`.
+
+#### Parameters
+
+| Parameter | Type | Default value | Description |
+| ------ | ------ | ------ | ------ |
+| `store` | [`DataStore`](../interfaces/DataStore.mdx) | `undefined` | The [DataStore](../interfaces/DataStore.mdx) backing the persisted cookie state. |
+| `key` | `string` | `"cookie_jar"` | Storage key under which the serialized jar lives. Defaults to `"cookie_jar"`. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`CookieJarStore`\>
+
+A ready-to-use `CookieJarStore` whose `.jar` is fully populated
+  from prior state (if any).
+
+***
+
+### flush()
+
+```ts
+flush(): Promise<void>;
+```
+
+Defined in: [storage/cookie-store.ts:74](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/cookie-store.ts#L74)
+
+Persist the jar's current state back to the [DataStore](../interfaces/DataStore.mdx).
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Remarks
+
+Called automatically by `makeJarFetch` after any response that yielded a
+Set-Cookie. Call directly if you mutate the jar by other means
+(`jar.setCookie()` from your own code).

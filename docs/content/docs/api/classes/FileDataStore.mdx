@@ -1,0 +1,212 @@
+---
+title: FileDataStore
+---
+
+# Class: FileDataStore
+
+Defined in: [storage/data-store.ts:97](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L97)
+
+File-backed [DataStore](../interfaces/DataStore.mdx) implementation.
+
+## Remarks
+
+A single JSON file holds all entries; loaded into memory at construction;
+eager flush on every `set` / `delete`.
+
+Also exposes synchronous [FileDataStore.getSync](#getsync) /
+[FileDataStore.setSync](#setsync) / [FileDataStore.keys](#keys) for the Web
+Storage shims, which implement the synchronous Web Storage API.
+
+## Example
+
+```ts
+import { SnapcapClient, FileDataStore } from "@snapcap/native";
+const dataStore = new FileDataStore(".tmp/auth/auth.json");
+const client = new SnapcapClient({ dataStore, username, password });
+```
+
+## Implements
+
+- [`DataStore`](../interfaces/DataStore.mdx)
+
+## Constructors
+
+### Constructor
+
+```ts
+new FileDataStore(filePath: string): FileDataStore;
+```
+
+Defined in: [storage/data-store.ts:105](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L105)
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `filePath` | `string` | Absolute or working-directory-relative path to the JSON file backing this store. Parent directories are created on first flush; the file may be absent at construction time. |
+
+#### Returns
+
+`FileDataStore`
+
+## Methods
+
+### delete()
+
+```ts
+delete(key: string): Promise<void>;
+```
+
+Defined in: [storage/data-store.ts:167](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L167)
+
+Delete the entry at `key`. No-op if the key is absent.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `key` | `string` | The storage key to remove. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Implementation of
+
+[`DataStore`](../interfaces/DataStore.mdx).[`delete`](../interfaces/DataStore.mdx#delete)
+
+***
+
+### get()
+
+```ts
+get(key: string): Promise<
+  | Uint8Array<ArrayBufferLike>
+| undefined>;
+```
+
+Defined in: [storage/data-store.ts:156](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L156)
+
+Read the value at `key`.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `key` | `string` | The storage key. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<
+  \| [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)\<`ArrayBufferLike`\>
+  \| `undefined`\>
+
+The stored bytes, or `undefined` if the key is absent.
+
+#### Implementation of
+
+[`DataStore`](../interfaces/DataStore.mdx).[`get`](../interfaces/DataStore.mdx#get)
+
+***
+
+### getSync()
+
+```ts
+getSync(key: string): 
+  | Uint8Array<ArrayBufferLike>
+  | undefined;
+```
+
+Defined in: [storage/data-store.ts:138](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L138)
+
+Synchronous read — for Web Storage shims that can't await.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `key` | `string` | The storage key. |
+
+#### Returns
+
+  \| [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)\<`ArrayBufferLike`\>
+  \| `undefined`
+
+The stored bytes, or `undefined` if absent.
+
+***
+
+### keys()
+
+```ts
+keys(prefix?: string): string[];
+```
+
+Defined in: [storage/data-store.ts:178](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L178)
+
+Iterate cached keys, optionally filtered by prefix.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `prefix?` | `string` | Optional prefix; only keys starting with this string are returned. When omitted, every key in the cache is returned. |
+
+#### Returns
+
+`string`[]
+
+A snapshot array of matching keys.
+
+***
+
+### set()
+
+```ts
+set(key: string, value: Uint8Array): Promise<void>;
+```
+
+Defined in: [storage/data-store.ts:161](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L161)
+
+Write `value` to `key`, overwriting any prior entry. Implementations
+SHOULD make this durable before resolving.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `key` | `string` | The storage key. |
+| `value` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | The bytes to store. Treat as immutable; the SDK never mutates the supplied buffer after passing it. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Implementation of
+
+[`DataStore`](../interfaces/DataStore.mdx).[`set`](../interfaces/DataStore.mdx#set)
+
+***
+
+### setSync()
+
+```ts
+setSync(key: string, value: Uint8Array): void;
+```
+
+Defined in: [storage/data-store.ts:150](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/data-store.ts#L150)
+
+Synchronous variant of [FileDataStore.set](#set) — fire-and-forget
+flush. The in-memory cache update is immediate; the file write happens
+asynchronously.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `key` | `string` | The storage key. |
+| `value` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | The bytes to store. |
+
+#### Returns
+
+`void`

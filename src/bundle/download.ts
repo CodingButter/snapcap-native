@@ -23,6 +23,22 @@ import { fileURLToPath } from "node:url";
 
 let ensured = false;
 
+/**
+ * Idempotent bundle bootstrap — ensure `vendor/snap-bundle/` is
+ * populated before kameleon (or any chat-bundle loader) tries to load
+ * it.
+ *
+ * Cheap fast path: if `hasUsableBundle(bundleDir)` returns `true`, sets
+ * the process-wide `ensured` flag and returns. Otherwise shells out to
+ * `scripts/download-bundle.sh` once (~30s, one-time per install) and
+ * verifies the result.
+ *
+ * @internal Bundle-layer bootstrap. Public consumers don't call this
+ * directly — it's invoked from `bootKameleon` / chat-bundle loaders.
+ * @param bundleDir - destination root, typically `vendor/snap-bundle`
+ * @throws when the download script can't be located, exits non-zero, or
+ *   leaves the bundle still incomplete after running
+ */
 export async function ensureBundle(bundleDir: string): Promise<void> {
   if (ensured) return;
   if (hasUsableBundle(bundleDir)) {

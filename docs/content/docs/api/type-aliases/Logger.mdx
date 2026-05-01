@@ -1,0 +1,30 @@
+---
+title: Logger
+---
+
+# Type Alias: Logger
+
+```ts
+type Logger = (event: LogEvent) => void;
+```
+
+Defined in: [logging.ts:108](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/logging.ts#L108)
+
+Handler signature passed to [setLogger](../functions/setLogger.mdx).
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `event` | [`LogEvent`](LogEvent.mdx) | One emitted [LogEvent](LogEvent.mdx). Switch on `event.kind` to narrow to a specific variant. |
+
+## Returns
+
+`void`
+
+## Remarks
+
+Handlers should return synchronously and avoid throwing — exceptions
+thrown from a handler are swallowed by the internal emit point so a bad
+logger can never break the network path, but they will be silently
+dropped.

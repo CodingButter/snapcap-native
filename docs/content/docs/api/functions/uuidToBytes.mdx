@@ -1,0 +1,47 @@
+---
+title: uuidToBytes
+---
+
+# Function: uuidToBytes()
+
+```ts
+function uuidToBytes(uuid: string): Uint8Array;
+```
+
+Defined in: [api/\_helpers.ts:52](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/_helpers.ts#L52)
+
+Convert a hyphenated UUID string into its 16-byte representation.
+
+Snap uses these for `conversationId`, `userId`, and other identity
+fields embedded in messaging RPCs. Most of Snap's gRPC schemas wrap
+the bytes in a single-field message (`{ id: bytes }`) — call sites
+typically need the raw 16 bytes here and let the bundle add the
+wrapper.
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `uuid` | `string` | Hyphenated UUID string (e.g. `"527be2ff-aaec-4622-9c68-79d200b8bdc1"`). |
+
+## Returns
+
+[`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)
+
+16-byte big-endian buffer.
+
+## Throws
+
+If `uuid` isn't a valid hyphenated UUID (32 hex chars after
+hyphens are stripped).
+
+## Example
+
+```ts
+uuidToBytes("527be2ff-aaec-4622-9c68-79d200b8bdc1");
+// → Uint8Array(16) [0x52, 0x7b, 0xe2, 0xff, ...]
+```
+
+## See
+
+[bytesToUuid](bytesToUuid.mdx)

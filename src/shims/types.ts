@@ -14,17 +14,31 @@ import type { CookieJar } from "tough-cookie";
 import type { DataStore } from "../storage/data-store.ts";
 import type { Sandbox } from "./sandbox.ts";
 
-/** Per-sandbox state passed to every shim's `install`. */
+/**
+ * Per-sandbox state passed to every shim's `install`.
+ *
+ * @internal
+ */
 export interface ShimContext {
-  /** Persistent backing for storage shims; absent ⇒ skip install. */
+  /**
+   * Persistent backing for storage shims; absent implies skip install.
+   *
+   * @internal
+   */
   dataStore: DataStore;
-  /** UA string the WebSocket/fetch shims attach to outgoing requests. */
+  /**
+   * UA string the WebSocket/fetch shims attach to outgoing requests.
+   *
+   * @internal
+   */
   userAgent: string;
   /**
    * Shared tough-cookie jar — populated synchronously by
-   * `cookie-jar.ts:getOrCreateJar(dataStore)` and consumed by the
-   * `DocumentCookieShim`, `CookieContainerShim`, and `WebSocketShim`.
-   * Cached per-DataStore so all three shims observe each other's writes.
+   * {@link getOrCreateJar} and consumed by the {@link DocumentCookieShim},
+   * {@link CookieContainerShim}, and {@link WebSocketShim}. Cached per-DataStore
+   * so all three shims observe each other's writes.
+   *
+   * @internal
    */
   jar: CookieJar;
 }
@@ -33,14 +47,24 @@ export interface ShimContext {
  * Single sandbox shim. Each subclass owns one I/O-boundary override
  * (cookies, WebSocket, Web Storage, IndexedDB, …) and is responsible for
  * its own idempotency.
+ *
+ * @internal
  */
 export abstract class Shim {
-  /** Short human-readable id, used for trace logging. */
+  /**
+   * Short human-readable id, used for trace logging.
+   *
+   * @internal
+   */
   abstract readonly name: string;
   /**
    * Install this shim onto the given sandbox. Must be synchronous —
    * pre-bind any async-resolved state into closures inside the install,
    * not as await points. The Sandbox constructor cannot await.
+   *
+   * @internal
+   * @param sandbox - target {@link Sandbox} whose realm receives the shim
+   * @param ctx - shared per-sandbox install state
    */
   abstract install(sandbox: Sandbox, ctx: ShimContext): void;
 }

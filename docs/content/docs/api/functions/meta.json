@@ -1,0 +1,15 @@
+{
+  "title": "Functions",
+  "pages": [
+    "setLogger",
+    "createSharedThrottle",
+    "activeIdentifier",
+    "bytesToUuid",
+    "uuidToBytes",
+    "highLowToUuid",
+    "uuidToHighLow",
+    "idbGet",
+    "idbPut",
+    "idbDelete"
+  ]
+}

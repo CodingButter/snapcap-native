@@ -1,0 +1,33 @@
+---
+title: idbDelete
+---
+
+# Function: idbDelete()
+
+```ts
+function idbDelete(
+   dbName: string, 
+   storeName: string, 
+key: string): Promise<void>;
+```
+
+Defined in: [storage/idb-utils.ts:209](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/storage/idb-utils.ts#L209)
+
+Delete the entry at `(dbName, storeName, key)`. No-op if absent.
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `dbName` | `string` | IndexedDB database name. |
+| `storeName` | `string` | Object store name within the database. |
+| `key` | `string` | Record key within the object store. |
+
+## Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+## See
+
+ - [idbGet](idbGet.mdx)
+ - [idbPut](idbPut.mdx)

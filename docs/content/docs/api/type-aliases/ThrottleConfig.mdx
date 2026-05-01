@@ -1,0 +1,31 @@
+---
+title: ThrottleConfig
+---
+
+# Type Alias: ThrottleConfig
+
+```ts
+type ThrottleConfig = {
+  rules: ThrottleRule[];
+};
+```
+
+Defined in: [transport/throttle.ts:130](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/transport/throttle.ts#L130)
+
+Throttle configuration accepted by `SnapcapClient`'s `throttle` option.
+
+## Remarks
+
+Pass directly for per-instance throttling, or wrap with
+[createSharedThrottle](../functions/createSharedThrottle.mdx) for cross-instance coordination.
+
+## See
+
+ - [RECOMMENDED\_THROTTLE\_RULES](../variables/RECOMMENDED_THROTTLE_RULES.mdx) — curated starter rules
+ - [createSharedThrottle](../functions/createSharedThrottle.mdx)
+
+## Properties
+
+| Property | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ |
+| <a id="rules"></a> `rules` | [`ThrottleRule`](ThrottleRule.mdx)[] | Ordered list of rules. First-match wins per outbound URL — order specific rules before general ones. | [transport/throttle.ts:135](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/transport/throttle.ts#L135) |

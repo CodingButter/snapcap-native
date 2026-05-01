@@ -1,0 +1,44 @@
+---
+title: uuidToHighLow
+---
+
+# Function: uuidToHighLow()
+
+```ts
+function uuidToHighLow(uuid: string): {
+  high: bigint;
+  low: bigint;
+};
+```
+
+Defined in: [api/\_helpers.ts:91](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/_helpers.ts#L91)
+
+Split a UUID into the `{high, low}` fixed64 pair Snap uses in some RPCs
+(e.g. `FriendAction.AddFriends`) instead of the bytes16 wrapper.
+
+## Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `uuid` | `string` | Hyphenated UUID string. |
+
+## Returns
+
+```ts
+{
+  high: bigint;
+  low: bigint;
+}
+```
+
+`{ high, low }` — `high` is the big-endian uint64 of UUID
+bytes 0..7, `low` is the big-endian uint64 of bytes 8..15.
+
+| Name | Type | Defined in |
+| ------ | ------ | ------ |
+| `high` | `bigint` | [api/\_helpers.ts:91](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/_helpers.ts#L91) |
+| `low` | `bigint` | [api/\_helpers.ts:91](https://github.com/CodingButter/snapcap-native/blob/3189675f17f92b8303422ec60867fb61b844da17/src/api/_helpers.ts#L91) |
+
+## See
+
+[highLowToUuid](highLowToUuid.mdx)

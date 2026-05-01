@@ -1,5 +1,12 @@
 {
   "title": "API Reference",
   "defaultOpen": true,
-  "pages": ["index", "snapcap-client", "conversation", "user", "messages", "storage", "sandbox"]
+  "pages": [
+    "index",
+    "classes",
+    "interfaces",
+    "functions",
+    "type-aliases",
+    "variables"
+  ]
 }

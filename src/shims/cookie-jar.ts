@@ -28,6 +28,13 @@ type SyncCapable = DataStore & {
   setSync(key: string, value: Uint8Array): void;
 };
 
+/**
+ * DataStore key under which the serialized {@link CookieJar} JSON lives.
+ * Shared with the host-realm fetch layer in `transport/cookies.ts` so both
+ * realms read/write the same persisted state.
+ *
+ * @internal
+ */
 export const COOKIE_JAR_KEY = "cookie_jar";
 
 function isSyncStore(s: DataStore): s is SyncCapable {
@@ -55,10 +62,14 @@ function loadJar(store: DataStore): CookieJar {
 }
 
 /**
- * Return the canonical `CookieJar` bound to this DataStore. Hydrates from
- * the store on first call; subsequent calls for the same store return the
- * exact same instance so multiple shims observe each other's writes
+ * Return the canonical {@link CookieJar} bound to this DataStore. Hydrates
+ * from the store on first call; subsequent calls for the same store return
+ * the exact same instance so multiple shims observe each other's writes
  * without going through serialization.
+ *
+ * @internal
+ * @param store - persistent backing for the jar
+ * @returns shared {@link CookieJar} instance for `store`
  */
 export function getOrCreateJar(store: DataStore): CookieJar {
   let jar = JAR_CACHE.get(store);
@@ -74,6 +85,10 @@ export function getOrCreateJar(store: DataStore): CookieJar {
  * this after any `setCookieSync` so other realms (host fetch, next process
  * boot) see the update. Silently no-ops on serialize failure — better to
  * keep running with an in-memory jar than to crash the sandbox.
+ *
+ * @internal
+ * @param jar - jar whose current state should be flushed
+ * @param store - destination DataStore (sync write preferred)
  */
 export function persistJar(jar: CookieJar, store: DataStore): void {
   let bytes: Uint8Array;
