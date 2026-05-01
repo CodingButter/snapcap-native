@@ -25,16 +25,15 @@
  * const dataStore = new FileDataStore(".tmp/auth/auth.json");
  * const client = new SnapcapClient({
  *   dataStore,
- *   username: "...",
- *   password: "...",
+ *   credentials: { username: "...", password: "..." },
  *   browser: {
  *     userAgent:
  *       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
  *   },
  * });
  *
- * await client.isAuthorized();        // restore-or-login, idempotent
- * const friends = await client.listFriends();
+ * await client.authenticate();        // warm-or-cold login, idempotent
+ * const friends = await client.friends.list();
  * ```
  *
  * @example

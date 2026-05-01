@@ -12,6 +12,12 @@
   "categorizeByGroup": true,
   "navigation": { "includeCategories": true, "includeGroups": true },
   "sort": ["alphabetical"],
+  // Use the branch name (not HEAD SHA) for "Defined in" source links so
+  // they survive rebase/amend and always point at the latest line numbers
+  // on main. Trade-off: links don't preserve point-in-time accuracy.
+  // Right call for this project — docs regenerate on every push to main,
+  // so there's no "old docs version" to keep links pinned to.
+  "gitRevision": "main",
   "plugin": [
     "typedoc-plugin-markdown",
     "typedoc-plugin-mdn-links",

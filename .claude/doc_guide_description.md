@@ -26,21 +26,33 @@ docs/content/docs/
     variables/
     index.mdx
     meta.json
-  guides/                ← HAND-WRITTEN — your scope
-    quickstart.mdx
+  guide/                 ← HAND-WRITTEN — your scope
+    auth.mdx
+    persistence.mdx
+    logging.mdx
     multi-tenant.mdx
-    ...
-  architecture/          ← HAND-WRITTEN — your scope
-    sandbox.mdx
     throttle.mdx
     ...
-  recipes/               ← HAND-WRITTEN — your scope
+  internals/             ← HAND-WRITTEN — your scope (architecture deep-dives)
+    architecture.mdx
+    kameleon.mdx
+    sso-flow.mdx
+    fidelius.mdx
     ...
   index.mdx              ← top-level landing — your scope
+docs/app/(home)/page.tsx ← marketing landing page — also your scope when
+                            consumer-facing claims need refreshing
+
+src/*.ts                 ← TSDoc comments here drive the auto-generated
+                            api/ reference. You MAY edit these if a
+                            TSDoc improvement materially helps consumers
+                            (e.g. updating @example blocks to current API).
+                            Treat as docs-adjacent, not as "source code".
 ```
 
-If `guides/`, `architecture/`, or `recipes/` directories don't exist yet,
-that's fine — they'll be created on the first meaningful documentation run.
+Inspect what actually exists with `ls docs/content/docs/` before assuming
+a path. If a sub-directory doesn't exist yet, you may create it as part
+of a meaningful update.
 
 ## Your task
 

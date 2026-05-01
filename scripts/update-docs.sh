@@ -34,18 +34,30 @@ echo "[docs] Regenerating API reference..."
 bun run docs:api
 
 # 2. Run Claude headless to review diff + update hand-written guides.
+#    Don't `set -e` bail on a non-zero exit — claude may have hit max-turns
+#    after making partial progress. We still want to capture whatever it
+#    wrote in the commit step below.
 echo "[docs] Running Claude doc-update agent..."
+set +e
 claude -p "$(cat "$PROMPT_FILE")" \
   --dangerously-skip-permissions \
-  --max-turns 30
+  --max-turns 60
+claude_exit=$?
+set -e
+if [ $claude_exit -ne 0 ]; then
+  echo "[docs] ⚠ Claude exited with code $claude_exit (likely hit --max-turns)."
+  echo "[docs]   Will still commit any partial work. Re-run if more updates needed."
+fi
 
-# 3. Commit if anything changed under docs/.
-if git diff --quiet docs/ && git diff --cached --quiet docs/; then
+# 3. Commit if anything changed under docs/ OR src/ (claude may have edited
+#    TSDoc comments in src/ that drive auto-generated reference docs — those
+#    are part of the same documentation update).
+if git diff --quiet docs/ src/ && git diff --cached --quiet docs/ src/; then
   echo "[docs] No doc changes."
   exit 0
 fi
 
 echo "[docs] Doc changes detected — committing."
-git add docs/
+git add docs/ src/
 git commit -m "docs: auto-update via claude $(date +%Y-%m-%d)"
 echo "[docs] ✓ Doc commit added. Will be included in the push."
