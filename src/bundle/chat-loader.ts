@@ -20,24 +20,38 @@
 import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getSandbox } from "../shims/runtime.ts";
-
-let chatBundleLoaded = false;
-let chatRuntimeLoaded = false;
+import { Sandbox } from "../shims/sandbox.ts";
+import { primeModule10409, primeAuthStoreModule } from "./prime.ts";
 
 export type ChatBundleOpts = {
   /** Defaults to vendor/snap-bundle relative to this file. */
   bundleDir?: string;
 };
 
-export function ensureChatBundle(opts: ChatBundleOpts = {}): void {
-  if (chatBundleLoaded) return;
+/**
+ * Load + prime the chat bundle in `sandbox`. After this resolves, the
+ * bundle's exports (`HY`/`JY`/`JZ` codecs, Zustand `chatStore` with
+ * `M.getState`, etc.) are reachable via `register.ts` getters.
+ *
+ * Idempotent — eval'd-state lives on `sandbox.chatBundleLoaded` so a
+ * fresh Sandbox boots its own copy of the chat bundle. Two `SnapcapClient`
+ * instances each get their own chat bundle eval (and hence their own
+ * Zustand store, webpack runtime, Embind classes, etc.).
+ *
+ * Includes priming as part of bring-up: priming was previously called
+ * separately from the api layer (a layer violation — api/* gates through
+ * register.ts only). Baked in here because primeModule10409 +
+ * primeAuthStoreModule are ALWAYS needed after a chat-bundle load (no
+ * use case for "load but don't prime"); coupling them eliminates the
+ * chance of forgetting and gives api consumers a single-call surface.
+ */
+export async function ensureChatBundle(sandbox: Sandbox, opts: ChatBundleOpts = {}): Promise<void> {
+  if (sandbox.chatBundleLoaded) return;
 
-  const sandbox = getSandbox();
   const bundleDir = opts.bundleDir ?? defaultBundleDir();
   const chatDw = join(bundleDir, "cf-st.sc-cdn.net", "dw");
 
-  ensureChatRuntime(chatDw);
+  ensureChatRuntime(sandbox, chatDw);
 
   // Pre-stage real Buffer + fs onto the sandbox Window so the patched
   // stub modules can hand them out when invoked from main's top-level.
@@ -194,21 +208,33 @@ export function ensureChatBundle(opts: ChatBundleOpts = {}): void {
     }
   }
 
-  chatBundleLoaded = true;
+  sandbox.chatBundleLoaded = true;
+
+  // Priming: force-eval module 10409 (HY/JY/JZ codecs + friend-action
+  // client) through a shimmed wreq, then force-eval module 94704 so the
+  // Zustand chat-store's `M.getState` is callable. Both are required for
+  // any subsequent register.ts getter to succeed; coupled here so api
+  // callers don't have to know about them.
+  try {
+    await primeModule10409(sandbox);
+  } catch {
+    // Best-effort — friending/search degrade gracefully if HY/JY/JZ
+    // didn't land, but auth doesn't depend on these.
+  }
+  await primeAuthStoreModule(sandbox);
 }
 
 /**
  * Convenience accessor for the chat-bundle webpack require. Returns
- * `globalThis.__snapcap_chat_p` from the sandbox; throws if the chat
- * runtime hasn't been installed yet.
+ * `globalThis.__snapcap_chat_p` from the given sandbox; throws if the
+ * chat runtime hasn't been installed yet.
  *
  * Use this anywhere a chat-bundle module needs to be addressed by ID
  * (e.g. modules 74052 / 76877 / 94704 / 79752 / etc.) — never reach for
  * `__snapcap_p` for chat modules, that slot belongs to the accounts
  * runtime and the IDs do not match.
  */
-export function getChatWreq(): { (id: string): unknown; m: Record<string, Function> } {
-  const sandbox = getSandbox();
+export function getChatWreq(sandbox: Sandbox): { (id: string): unknown; m: Record<string, Function> } {
   const wreq = sandbox.getGlobal<{ (id: string): unknown; m: Record<string, Function> }>("__snapcap_chat_p");
   if (!wreq) {
     throw new Error("chat-bundle webpack runtime missing — ensureChatBundle() must run first");
@@ -216,9 +242,8 @@ export function getChatWreq(): { (id: string): unknown; m: Record<string, Functi
   return wreq;
 }
 
-function ensureChatRuntime(chatDw: string): void {
-  if (chatRuntimeLoaded) return;
-  const sandbox = getSandbox();
+function ensureChatRuntime(sandbox: Sandbox, chatDw: string): void {
+  if (sandbox.chatRuntimeLoaded) return;
   // ALWAYS install the chat runtime as `__snapcap_chat_p`, regardless of
   // whether the accounts runtime (`__snapcap_p`) is already present. The
   // two bundles' module IDs collide (id 33488 in accounts is Next.js
@@ -251,7 +276,7 @@ function ensureChatRuntime(chatDw: string): void {
       // Expected — chat runtime does top-level browser init.
     }
   }
-  chatRuntimeLoaded = true;
+  sandbox.chatRuntimeLoaded = true;
 }
 
 function defaultBundleDir(): string {

@@ -21,7 +21,7 @@
  * touch raw webpack ids or `wreq.m`.
  */
 import { chatWreq } from "./register.ts";
-import { getSandbox } from "../shims/runtime.ts";
+import { Sandbox } from "../shims/sandbox.ts";
 
 // ─── Module IDs in the priming graph ─────────────────────────────────────
 // These IDs are not "state lookup" references (those belong in
@@ -96,11 +96,10 @@ function makeShimmedWreq(real: ChatWreq): ChatWreq {
  * `__SNAPCAP_JZ` is the most reliable presence check on its own, but in
  * practice we want the helper to be cheap to call from any code path.
  */
-function isModule10409Primed(): boolean {
-  const sb = getSandbox();
-  if (sb.getGlobal("__SNAPCAP_JZ")) return true;
-  if (sb.getGlobal("__SNAPCAP_HY")) return true;
-  if (sb.getGlobal("__SNAPCAP_JY")) return true;
+function isModule10409Primed(sandbox: Sandbox): boolean {
+  if (sandbox.getGlobal("__SNAPCAP_JZ")) return true;
+  if (sandbox.getGlobal("__SNAPCAP_HY")) return true;
+  if (sandbox.getGlobal("__SNAPCAP_JY")) return true;
   return false;
 }
 
@@ -115,10 +114,10 @@ function isModule10409Primed(): boolean {
  * eval continuations, Promise resolutions in sibling modules) get a
  * chance to run.
  */
-export async function primeModule10409(): Promise<void> {
-  if (isModule10409Primed()) return;
+export async function primeModule10409(sandbox: Sandbox): Promise<void> {
+  if (isModule10409Primed(sandbox)) return;
 
-  const wreq = chatWreq();
+  const wreq = chatWreq(sandbox);
   const shimmed = makeShimmedWreq(wreq);
   // Pre-rewire 94704 + 33488 to fresh factories now so 10409's first
   // attempt sees them via the shim.
@@ -126,7 +125,7 @@ export async function primeModule10409(): Promise<void> {
   try { shimmed(MOD_CHAT_STORE); } catch { /* tolerated */ }
 
   const factory = wreq.m?.[MOD_SPA_TOPLEVEL];
-  for (let i = 0; i < 20 && !isModule10409Primed(); i++) {
+  for (let i = 0; i < 20 && !isModule10409Primed(sandbox); i++) {
     if (typeof factory === "function") {
       const fakeModule = { exports: {} as Record<string, unknown> };
       try {
@@ -137,7 +136,7 @@ export async function primeModule10409(): Promise<void> {
     } else {
       try { wreq(MOD_SPA_TOPLEVEL); } catch { /* tolerated */ }
     }
-    if (isModule10409Primed()) break;
+    if (isModule10409Primed(sandbox)) break;
     await new Promise<void>((r) => setTimeout(r, 10));
   }
 }
@@ -155,8 +154,8 @@ export async function primeModule10409(): Promise<void> {
  * webpack cache for 94704 + 33488. Same mechanism as `primeModule10409`.
  * Idempotent — bails out as soon as `M.getState` is callable.
  */
-export async function primeAuthStoreModule(): Promise<void> {
-  const wreq = chatWreq();
+export async function primeAuthStoreModule(sandbox: Sandbox): Promise<void> {
+  const wreq = chatWreq(sandbox);
   // Cheap probe first.
   try {
     const m = wreq(MOD_CHAT_STORE) as { M?: { getState?: Function } };

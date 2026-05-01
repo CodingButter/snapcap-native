@@ -35,10 +35,9 @@ import { CookieJar } from "tough-cookie";
 import { ensureChatBundle } from "../bundle/chat-loader.ts";
 import { getKameleon } from "../bundle/accounts-loader.ts";
 import { makeJarFetch, type JarLike } from "../transport/cookies.ts";
-import { getSandbox } from "../shims/runtime.ts";
+import type { Sandbox } from "../shims/sandbox.ts";
 import { getOrCreateJar } from "../shims/cookie-jar.ts";
 import { authSlice, chatWreq, loginClient } from "../bundle/register.ts";
-import { primeAuthStoreModule, primeModule10409 } from "../bundle/prime.ts";
 import type { UnaryFn, WebLoginRequest, WebLoginResponse } from "../bundle/types.ts";
 import type { ClientContext } from "./_context.ts";
 
@@ -89,8 +88,8 @@ export async function authenticate(
  * want a "wipe everything" flow should also call
  * `client.dataStore.delete("cookie_jar")` (or equivalent).
  */
-export async function logout(_ctx: ClientContext, force?: boolean): Promise<void> {
-  await authSlice().logout(force);
+export async function logout(ctx: ClientContext, force?: boolean): Promise<void> {
+  await authSlice(ctx.sandbox).logout(force);
 }
 
 /**
@@ -110,32 +109,32 @@ export async function logout(_ctx: ClientContext, force?: boolean): Promise<void
  * can pass it in directly.
  */
 export async function refreshAuthToken(
-  _ctx: ClientContext,
+  ctx: ClientContext,
   username: string,
   reason: string = "page_load",
 ): Promise<void> {
-  const { ctx: kameleon } = await getKameleon();
+  const { ctx: kameleon } = await getKameleon(ctx.sandbox);
   const attestation = await kameleon.finalize(username);
-  await authSlice().refreshToken(reason, attestation);
+  await authSlice(ctx.sandbox).refreshToken(reason, attestation);
 }
 
 /** Live read: current SSO bearer string from the Zustand auth slice. */
-export function getAuthToken(_ctx: ClientContext): string {
-  return (authSlice() as unknown as AuthSliceLive).authToken.token;
+export function getAuthToken(ctx: ClientContext): string {
+  return (authSlice(ctx.sandbox) as unknown as AuthSliceLive).authToken.token;
 }
 
 /**
  * Live read: current AuthState enum (0=LoggedOut, 1=LoggedIn,
  * 2=Processing, 3=MoreChallengesRequired).
  */
-export function getAuthState(_ctx: ClientContext): AuthState {
-  return (authSlice() as unknown as AuthSliceLive).authState;
+export function getAuthState(ctx: ClientContext): AuthState {
+  return (authSlice(ctx.sandbox) as unknown as AuthSliceLive).authState;
 }
 
 /** Convenience: true iff the auth slice currently reports `LoggedIn`. */
-export function isAuthenticated(_ctx: ClientContext): boolean {
+export function isAuthenticated(ctx: ClientContext): boolean {
   try {
-    return (authSlice() as unknown as AuthSliceLive).authState === 1;
+    return (authSlice(ctx.sandbox) as unknown as AuthSliceLive).authState === 1;
   } catch {
     // Bundle not yet brought up → definitely not authenticated.
     return false;
@@ -147,9 +146,9 @@ export function isAuthenticated(_ctx: ClientContext): boolean {
  * realm's lifetime (survives logout). Useful for distinguishing a fresh
  * install from a signed-out returning user.
  */
-export function hasEverLoggedIn(_ctx: ClientContext): boolean {
+export function hasEverLoggedIn(ctx: ClientContext): boolean {
   try {
-    return (authSlice() as unknown as AuthSliceLive).hasEverLoggedIn;
+    return (authSlice(ctx.sandbox) as unknown as AuthSliceLive).hasEverLoggedIn;
   } catch {
     return false;
   }
@@ -158,7 +157,7 @@ export function hasEverLoggedIn(_ctx: ClientContext): boolean {
 // ─── Internal helpers ─────────────────────────────────────────────────────
 
 /**
- * Live shape of the auth slice as exposed by `authSlice()`. The `AuthSlice`
+ * Live shape of the auth slice as exposed by `authSlice(ctx.sandbox)`. The `AuthSlice`
  * type in `bundle/types.ts` only declares the methods (initialize, logout,
  * refreshToken, fetchToken); the live slice also carries these reactive
  * fields that we peek for the public-surface getters above.
@@ -184,45 +183,27 @@ async function bringUp(ctx: ClientContext): Promise<void> {
 
   // 1. Boot kameleon — this loads the accounts bundle and runs the
   //    `__SNAPCAP_LOGIN_CLIENT_IMPL` source-patch as a side-effect.
-  await getKameleon({
-    page: "www_login",
-    shimOpts: {
-      dataStore: ctx.dataStore,
-      url: "https://accounts.snapchat.com/v2/login",
-      userAgent: ctx.userAgent,
-    },
-  });
+  //    Sandbox is owned by SnapcapClient; ctx.sandbox provides isolation
+  //    per-instance (kameleon Module is cached on the sandbox itself).
+  await getKameleon(ctx.sandbox, { page: "www_login" });
 
   // 2. Patch sandbox `self.location.pathname` → "/web" so the chat
   //    bundle's module 13094 pathname guard ("Base path is not in the
   //    beginning of the pathname") doesn't throw at top-level eval.
   patchSandboxLocationToWeb(ctx);
 
-  // 3. Load chat bundle — registers Zustand auth store (94704) +
-  //    everything `register.ts` reaches into.
+  // 3. Load + prime chat bundle. `ensureChatBundle` includes priming of
+  //    module 10409 (HY/JY/JZ codecs) and module 94704 (Zustand store
+  //    M.getState) — both required for any register.ts getter to work.
   try {
-    ensureChatBundle();
+    await ensureChatBundle(ctx.sandbox);
   } catch {
     // Chat bundle's main top-level may throw on browser-only init paths
     // (window.location reads, missing #__NEXT_DATA__, etc.). Module
-    // factories are still registered before the throw, which is all we
-    // need for the bundle/prime helpers to address them by id.
+    // factories are still registered before the throw — priming inside
+    // ensureChatBundle handles the cyclic-dep rewire that makes them
+    // callable through register.ts getters.
   }
-
-  // 4. Prime module 10409 so its closure-private codecs/clients
-  //    (HY/JY/JZ) land on globalThis. Same shim mechanism used by the
-  //    test scripts and api/messaging.ts.
-  try {
-    await primeModule10409();
-  } catch {
-    // Best-effort — friending/search may degrade but auth doesn't depend
-    // on these.
-  }
-
-  // 5. Force the Zustand chat-store module to expose its `M`/`getState`
-  //    so the auth-slice peek functions can reach it. Same cyclic-dep
-  //    rewire dance as primeModule10409 (lives in bundle/prime.ts).
-  await primeAuthStoreModule();
 
   ctx._bundlesLoaded = true;
 }
@@ -307,14 +288,7 @@ async function fullLogin(
   ctx: ClientContext,
   opts: { username: string; password: string },
 ): Promise<void> {
-  const { ctx: kameleon, wreq } = await getKameleon({
-    page: "www_login",
-    shimOpts: {
-      dataStore: ctx.dataStore,
-      url: "https://accounts.snapchat.com/v2/login",
-      userAgent: ctx.userAgent,
-    },
-  });
+  const { ctx: kameleon, wreq } = await getKameleon(ctx.sandbox, { page: "www_login" });
 
   // Force-eval module 13150 to fire the WebLoginServiceClientImpl
   // source-patch (the patch runs as a top-level statement inside the
@@ -337,7 +311,7 @@ async function fullLogin(
 
   // Construct the bundle's `WebLoginServiceClientImpl` once and reuse
   // for both 2-step calls.
-  const LoginCtor = loginClient();
+  const LoginCtor = loginClient(ctx.sandbox);
   const login = new LoginCtor({ unary });
   const submitLogin = (req: WebLoginRequest): Promise<WebLoginResponse> => login.WebLogin(req);
 
@@ -441,7 +415,7 @@ async function mintAndInitialize(ctx: ClientContext): Promise<void> {
   // `new URLSearchParams(...).get("ticket")` — slice(1) drops the leading
   // "#", so hash MUST start with "#" and the inner content must be
   // `ticket=<value>`.
-  await authSlice().initialize({
+  await authSlice(ctx.sandbox).initialize({
     hash: `#ticket=${encodeURIComponent(bearer)}`,
     search: "",
   });
@@ -554,12 +528,13 @@ function extractTicket(location: string): string | null {
  * constructor.
  */
 export async function makeContext(opts: {
+  sandbox: Sandbox;
   dataStore: ClientContext["dataStore"];
   jar: ClientContext["jar"];
   userAgent: string;
 }): Promise<ClientContext> {
   return {
-    sandbox: getSandbox(),
+    sandbox: opts.sandbox,
     jar: opts.jar,
     dataStore: opts.dataStore,
     userAgent: opts.userAgent,
@@ -573,5 +548,5 @@ void CookieJar;
 // Same for `MOD_WEB_LOGIN_PROTO` — declared above for documentation
 // alignment with the legacy `src/auth/login.ts`; not currently
 // referenced because the bundle's `WebLoginServiceClientImpl` ctor
-// (returned by `loginClient()`) owns the codec internally.
+// (returned by `loginClient(ctx.sandbox)`) owns the codec internally.
 void MOD_WEB_LOGIN_PROTO;

@@ -259,6 +259,7 @@ const FRIEND_ACTION_PAGE: Partial<Record<FriendActionVerb, string>> = {
 };
 
 async function friendActionMutation(
+  ctx: ClientContext,
   verb: FriendActionVerb,
   ids: UserId[],
   source?: number,
@@ -268,7 +269,7 @@ async function friendActionMutation(
   // for every `${verb}Friends` form, hence the cast. The compile-time
   // surface is constrained by the `FriendActionVerb` union, and the
   // bundle's `JzFriendAction` interface lists every matching method.
-  const client = friendActionClient() as unknown as Record<
+  const client = friendActionClient(ctx.sandbox) as unknown as Record<
     string,
     (req: { params: unknown; page?: string }) => Promise<unknown>
   >;
@@ -415,28 +416,28 @@ export class Friends implements IFriendsManager {
   // ── Mutations ───────────────────────────────────────────────────────
 
   async add(userId: UserId, source: FriendSource = FriendSource.ADDED_BY_USERNAME): Promise<void> {
-    await this._getCtx();
-    return friendActionMutation("Add", [userId], source);
+    const ctx = await this._getCtx();
+    return friendActionMutation(ctx, "Add", [userId], source);
   }
 
   async remove(userId: UserId): Promise<void> {
-    await this._getCtx();
-    return friendActionMutation("Remove", [userId]);
+    const ctx = await this._getCtx();
+    return friendActionMutation(ctx, "Remove", [userId]);
   }
 
   async block(userId: UserId): Promise<void> {
-    await this._getCtx();
-    return friendActionMutation("Block", [userId]);
+    const ctx = await this._getCtx();
+    return friendActionMutation(ctx, "Block", [userId]);
   }
 
   async unblock(userId: UserId): Promise<void> {
-    await this._getCtx();
-    return friendActionMutation("Unblock", [userId]);
+    const ctx = await this._getCtx();
+    return friendActionMutation(ctx, "Unblock", [userId]);
   }
 
   async ignore(userId: UserId): Promise<void> {
-    await this._getCtx();
-    return friendActionMutation("Ignore", [userId]);
+    const ctx = await this._getCtx();
+    return friendActionMutation(ctx, "Ignore", [userId]);
   }
 
   async acceptRequest(_userId: UserId): Promise<void> {
@@ -467,15 +468,15 @@ export class Friends implements IFriendsManager {
    * implementation — the read-sync gap is a separate debug task.
    */
   async #ensureSynced(): Promise<UserSlice> {
-    await this._getCtx();
-    let user = userSlice();
+    const ctx = await this._getCtx();
+    let user = userSlice(ctx.sandbox);
     if (
       typeof user.syncFriends === "function" &&
       (!Array.isArray(user.mutuallyConfirmedFriendIds) || user.mutuallyConfirmedFriendIds.length === 0)
     ) {
       try { await user.syncFriends(); }
       catch { /* best-effort — readers can still return whatever's in state */ }
-      user = userSlice();
+      user = userSlice(ctx.sandbox);
     }
     return user;
   }
@@ -497,12 +498,12 @@ export class Friends implements IFriendsManager {
   }
 
   async search(query: string): Promise<User[]> {
-    await this._getCtx();
+    const ctx = await this._getCtx();
     if (!query) return [];
     // SECTION_TYPE_ADD_FRIENDS = 2 (verified against bundle/9846…js at
     // offsets 1304870/1435000). `searchUsers` defaults to that section.
     const SECTION_TYPE_ADD_FRIENDS = 2;
-    const decoded = await searchUsers(query);
+    const decoded = await searchUsers(ctx.sandbox, query);
     const section = decoded.sections?.find((s) => s.sectionType === SECTION_TYPE_ADD_FRIENDS);
     const results = section?.results ?? [];
     const out: User[] = [];
@@ -535,27 +536,43 @@ export class Friends implements IFriendsManager {
       i: Map<string, IncomingFriendRequestRecord> | undefined;
       o: string[] | undefined;
     };
-    return subscribeUserSlice<Composite>(
-      (u: UserSlice) => ({
-        m: u.mutuallyConfirmedFriendIds,
-        i: u.incomingFriendRequests,
-        o: u.outgoingFriendRequestIds,
-      }),
-      (a, b) => {
-        // Equal iff every slot is reference-identical AND size-identical.
-        // Immer mutates in-place, so size catches additions/removals; a
-        // reference flip implies a fresh slice replacement (also a change).
-        if (a.m !== b.m) return false;
-        if (a.i !== b.i) return false;
-        if (a.o !== b.o) return false;
-        if ((a.m?.length ?? 0) !== (b.m?.length ?? 0)) return false;
-        if ((a.i?.size ?? 0) !== (b.i?.size ?? 0)) return false;
-        if ((a.o?.length ?? 0) !== (b.o?.length ?? 0)) return false;
-        return true;
-      },
-      (_curr, _prev, state: ChatState) => {
-        cb(buildSnapshot(userSliceFrom(state)));
-      },
-    );
+
+    // `_getCtx()` is async (sandbox may not be ready until authenticate
+    // resolves), but the onChange contract is sync. Defer the actual
+    // subscribe until ctx lands; return an Unsubscribe that cancels both
+    // the in-flight wait and the eventual real subscription.
+    let realUnsub: Unsubscribe | null = null;
+    let cancelled = false;
+    void (async () => {
+      const ctx = await this._getCtx();
+      if (cancelled) return;
+      realUnsub = subscribeUserSlice<Composite>(
+        ctx.sandbox,
+        (u: UserSlice) => ({
+          m: u.mutuallyConfirmedFriendIds,
+          i: u.incomingFriendRequests,
+          o: u.outgoingFriendRequestIds,
+        }),
+        (a: Composite, b: Composite) => {
+          // Equal iff every slot is reference-identical AND size-identical.
+          // Immer mutates in-place, so size catches additions/removals; a
+          // reference flip implies a fresh slice replacement (also a change).
+          if (a.m !== b.m) return false;
+          if (a.i !== b.i) return false;
+          if (a.o !== b.o) return false;
+          if ((a.m?.length ?? 0) !== (b.m?.length ?? 0)) return false;
+          if ((a.i?.size ?? 0) !== (b.i?.size ?? 0)) return false;
+          if ((a.o?.length ?? 0) !== (b.o?.length ?? 0)) return false;
+          return true;
+        },
+        (_curr: Composite, _prev: Composite, state: ChatState) => {
+          cb(buildSnapshot(userSliceFrom(state)));
+        },
+      );
+    })();
+    return () => {
+      cancelled = true;
+      realUnsub?.();
+    };
   }
 }

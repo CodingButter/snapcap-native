@@ -43,9 +43,9 @@ import { Presence } from "./api/presence.ts";
 import { Stories } from "./api/stories.ts";
 import { Inbox } from "./api/inbox.ts";
 import { Media } from "./api/media.ts";
-import { installShims } from "./shims/runtime.ts";
+import { Sandbox } from "./shims/sandbox.ts";
 import type { DataStore } from "./storage/data-store.ts";
-import type { ThrottleConfig } from "./transport/throttle.ts";
+import type { ThrottleConfig, ThrottleGate } from "./transport/throttle.ts";
 import { CookieJarStore } from "./storage/cookie-store.ts";
 
 const DEFAULT_USER_AGENT =
@@ -71,10 +71,27 @@ export type SnapcapClientOpts = {
   userAgent?: string;
   /**
    * Optional opt-in HTTP throttling. Default: no throttle (browser-cadence,
-   * zero overhead). Pass `{ rules: RECOMMENDED_THROTTLE_RULES }` to enable
-   * the recommended starter set, or supply your own per-pattern rules.
+   * zero overhead). Two valid shapes:
+   *
+   *   1. `ThrottleConfig` — per-instance. Each `SnapcapClient` builds its
+   *      own gate from this config. Fine for single-tenant or N=1-2 clients.
+   *      Aggregate rate scales with N (each client throttles independently).
+   *
+   *   2. `ThrottleGate` — shared across instances. Build via
+   *      `createSharedThrottle(config)` once, pass the same gate into every
+   *      client. All clients coordinate, aggregate rate stays constant in N.
+   *      Recommended for multi-tenant runners (N > 2).
+   *
+   * See `transport/throttle.ts` for the full picture, trade-offs, and
+   * recommended rule sets (`RECOMMENDED_THROTTLE_RULES`).
+   *
+   * @example Per-instance:
+   *   throttle: { rules: RECOMMENDED_THROTTLE_RULES }
+   * @example Shared across instances:
+   *   const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES });
+   *   // pass `throttle: gate` into every SnapcapClient
    */
-  throttle?: ThrottleConfig;
+  throttle?: ThrottleConfig | ThrottleGate;
 };
 
 export class SnapcapClient implements ISnapcapClient {
@@ -89,16 +106,26 @@ export class SnapcapClient implements ISnapcapClient {
   readonly inbox: Inbox;
   readonly media: Media;
 
+  /**
+   * Per-instance Sandbox. Each `SnapcapClient` owns its own `vm.Context`,
+   * happy-dom Window, shimmed I/O layer, and per-Sandbox bring-up caches
+   * (kameleon boot, chat bundle eval, chat WASM Module, throttle gate).
+   *
+   * This is what makes multi-instance possible: two `SnapcapClient`s
+   * never share Zustand state, bearer tokens, or webpack runtime caches.
+   * They're isolated at the V8 vm.Context boundary.
+   */
+  private readonly sandbox: Sandbox;
+
   constructor(opts: SnapcapClientOpts) {
     this.opts = opts;
     this.userAgent = opts.userAgent ?? DEFAULT_USER_AGENT;
 
-    // Seed the shim singleton with the consumer's DataStore eagerly.
-    // `installShims` is first-call-wins — kameleon boot inside the
-    // login flow will otherwise win the race with no dataStore set,
-    // which means Snap-bundle local/session/indexdb writes go to
-    // happy-dom's in-memory defaults instead of our store.
-    installShims({
+    // Construct a per-instance Sandbox directly — no `installShims`
+    // singleton dance. The Sandbox owns the vm.Context + happy-dom
+    // Window + shim I/O layer + bring-up caches; another SnapcapClient
+    // gets its own fresh Sandbox with zero shared state.
+    this.sandbox = new Sandbox({
       url: "https://www.snapchat.com/web",
       dataStore: this.opts.dataStore,
       throttle: this.opts.throttle,
@@ -124,6 +151,7 @@ export class SnapcapClient implements ISnapcapClient {
       this._ctxPromise = (async () => {
         const jar = await CookieJarStore.create(this.opts.dataStore, "cookie_jar");
         return await makeContext({
+          sandbox: this.sandbox,
           dataStore: this.opts.dataStore,
           jar,
           userAgent: this.userAgent,
@@ -171,21 +199,21 @@ export class SnapcapClient implements ISnapcapClient {
     // ctx hasn't been set up yet (which means `authenticate` was never
     // called and the chat bundle isn't loaded).
     if (!this._ctxPromise) return false;
-    return isAuthenticatedBundle({} as ClientContext);
+    return isAuthenticatedBundle({ sandbox: this.sandbox } as ClientContext);
   }
 
   /** Live read: current SSO bearer string from the Zustand auth slice. */
   getAuthToken(): string {
-    return getAuthTokenBundle({} as ClientContext);
+    return getAuthTokenBundle({ sandbox: this.sandbox } as ClientContext);
   }
 
   /** Live read: AuthState enum (0=LoggedOut, 1=LoggedIn, 2=Processing, 3=MoreChallengesRequired). */
   getAuthState(): number {
-    return getAuthStateBundle({} as ClientContext);
+    return getAuthStateBundle({ sandbox: this.sandbox } as ClientContext);
   }
 
   /** Live read: hasEverLoggedIn marker. Survives logout. */
   hasEverLoggedIn(): boolean {
-    return hasEverLoggedInBundle({} as ClientContext);
+    return hasEverLoggedInBundle({ sandbox: this.sandbox } as ClientContext);
   }
 }

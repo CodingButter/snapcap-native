@@ -22,7 +22,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { installShims } from "../shims/runtime.ts";
+import { Sandbox } from "../shims/sandbox.ts";
 import { installWebpackCapture } from "../shims/webpack-capture.ts";
 import { ensureChatBundle } from "./chat-loader.ts";
 
@@ -31,35 +31,39 @@ export type ChatWasmBootOpts = {
   bundleDir?: string;
 };
 
-let cachedBootPromise: Promise<{ moduleEnv: Record<string, unknown> }> | null = null;
-
 /**
- * Boot the chat WASM once per process. Returns the populated
- * `moduleEnv` once `onRuntimeInitialized` has fired.
+ * Boot the chat WASM once per Sandbox. Cached on `sandbox.chatWasmBoot`
+ * so a fresh Sandbox instantiates its own messaging WASM (with its own
+ * Embind classes — `messaging_Session`, `e2ee_E2EEKeyManager`, etc.).
+ *
+ * `sandbox` is required: the Emscripten factory at chat-bundle module
+ * 86818 lives inside this sandbox's vm.Context, and the resulting
+ * moduleEnv contains sandbox-realm Embind classes that callers will
+ * use through this same sandbox.
  */
 export async function bootChatWasm(
+  sandbox: Sandbox,
   opts: ChatWasmBootOpts = {},
 ): Promise<{ moduleEnv: Record<string, unknown> }> {
-  if (cachedBootPromise) return cachedBootPromise;
-  cachedBootPromise = bootOnce(opts);
-  return cachedBootPromise;
+  if (sandbox.chatWasmBoot) {
+    return sandbox.chatWasmBoot as Promise<{ moduleEnv: Record<string, unknown> }>;
+  }
+  const promise = bootOnce(sandbox, opts);
+  sandbox.chatWasmBoot = promise;
+  return promise;
 }
 
 async function bootOnce(
+  sandbox: Sandbox,
   opts: ChatWasmBootOpts,
 ): Promise<{ moduleEnv: Record<string, unknown> }> {
   const bundleDir = opts.bundleDir ?? defaultBundleDir();
   const chatDw = join(bundleDir, "cf-st.sc-cdn.net", "dw");
   const wasmPath = join(chatDw, "e4fa90570c4c2d9e59c1.wasm");
 
-  // installShims is first-call-wins; the SnapcapClient ctor seeds the
-  // singleton with its DataStore, so opts here would be ignored anyway.
-  // Calling it for safety guarantees a sandbox exists if this function
-  // is invoked standalone (e.g. from a probe script).
-  const sandbox = installShims({});
-  installWebpackCapture();
+  installWebpackCapture(sandbox);
 
-  ensureChatBundle({ bundleDir });
+  ensureChatBundle(sandbox, { bundleDir });
 
   const wreq = sandbox.getGlobal<{ (id: string): unknown; m: Record<string, Function> }>("__snapcap_chat_p");
   if (!wreq) {

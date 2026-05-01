@@ -14,7 +14,7 @@
  *     here so multiple sandboxed bundles share the same accumulator
  *     without polluting the sandbox's namespace.
  */
-import { getSandbox } from "./runtime.ts";
+import { Sandbox } from "./sandbox.ts";
 
 const HINT_PATTERNS = [
   /CreateContentMessage|sendMessage|sendChat/i,
@@ -40,14 +40,13 @@ let installed: {
   hints: ModuleHint[];
 } | null = null;
 
-export function installWebpackCapture(): {
+export function installWebpackCapture(sandbox: Sandbox): {
   modules: CapturedModules;
   originals: OriginalFactories;
   hints: ModuleHint[];
 } {
   if (installed) return installed;
 
-  const sandbox = getSandbox();
   const w = sandbox.window as unknown as Record<string, unknown>;
 
   const modules: CapturedModules = new Map();

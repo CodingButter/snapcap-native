@@ -59,5 +59,12 @@ export type { Logger, LogEvent } from "./logging.ts";
 // Opt-in HTTP throttling — pass via `new SnapcapClient({ throttle: ... })`.
 // Off by default (no overhead). `RECOMMENDED_THROTTLE_RULES` is the curated
 // starter set tuned for Snap's anti-spam thresholds.
-export type { ThrottleConfig, ThrottleRule } from "./transport/throttle.ts";
-export { RECOMMENDED_THROTTLE_RULES } from "./transport/throttle.ts";
+//
+// Two modes — see `transport/throttle.ts` doc for the trade-offs:
+//   - Per-instance: pass a `ThrottleConfig` object; each client throttles
+//     independently. Aggregate rate = N × per-instance-rate.
+//   - Shared (multi-tenant): build a `ThrottleGate` via
+//     `createSharedThrottle(config)`, pass the SAME gate into every client.
+//     Aggregate rate stays constant in N. Recommended for N > 2.
+export type { ThrottleConfig, ThrottleRule, ThrottleGate } from "./transport/throttle.ts";
+export { RECOMMENDED_THROTTLE_RULES, createSharedThrottle } from "./transport/throttle.ts";

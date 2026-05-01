@@ -396,6 +396,10 @@ function createNativeFetchXhr(opts: {
       // realm accepts these; no conversion needed. AbortSignal from our
       // host-realm controller flows through unchanged.
       const headers = this.buildOutgoingHeaders();
+      // Per-Sandbox throttle gate. No-op when no throttle config was
+      // configured at Sandbox construction. Per-instance state means two
+      // SnapcapClients with different throttle configs don't collide.
+      await sandbox.throttleGate(this.url);
       let res: Response;
       try {
         res = await nativeFetch(this.url, {

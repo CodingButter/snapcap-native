@@ -366,6 +366,11 @@ function createNativeFetchShim(opts: {
     // AbortSignal bridge — sandbox-realm signal → host-realm controller.
     const hostCtrl = bridgeSignal(signal);
 
+    // Per-Sandbox throttle gate. No-op when no throttle config was
+    // configured at Sandbox construction. Per-instance state means two
+    // SnapcapClients with different throttle configs don't collide.
+    await sandbox.throttleGate(url);
+
     // Observability — emit open before issuing the request; record the
     // start time + outgoing body size so done/error events can compute
     // duration and req size without reaching back into init.

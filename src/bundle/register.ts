@@ -1,13 +1,20 @@
 /**
  * Bundle method registry — single source of truth for the Snap-bundle
  * managers and classes our SDK reaches. Each export is a late-bound
- * getter that returns the live Snap manager (or webpack module export);
- * api files (`../api/*.ts`) call methods on it directly.
+ * getter that takes a `Sandbox` and returns the live Snap manager (or
+ * webpack module export); api files (`../api/*.ts`) call methods on it
+ * directly.
  *
  * Pattern: one `reach()` (or `reachModule()`) helper, one constant
- * mapper per entity, one zero-argument getter per entity. The getter
- * returns the live class instance / module export — no shape work, no
- * UUID parsing, no compositions live here. The api layer owns those.
+ * mapper per entity, one zero-argument-after-sandbox getter per entity.
+ * The getter returns the live class instance / module export — no shape
+ * work, no UUID parsing, no compositions live here. The api layer owns
+ * those.
+ *
+ * Sandbox-explicit: every export takes `sandbox: Sandbox` as its first
+ * arg. This makes per-instance isolation possible — two `SnapcapClient`s
+ * each pass their own Sandbox in, and the registry has zero shared
+ * mutable state. The api layer threads `ctx.sandbox` through.
  *
  * If Snap renames a class, only one getter body changes; consumer api
  * code stays untouched.
@@ -28,7 +35,7 @@
  * with byte-offset evidence, leave the constant `undefined` and write
  * a TODO.
  */
-import { getSandbox } from "../shims/runtime.ts";
+import { Sandbox } from "../shims/sandbox.ts";
 import { getChatWreq } from "./chat-loader.ts";
 import type {
   AtlasGwClassCtor,
@@ -134,11 +141,11 @@ const MOD_DEFAULT_AUTHED_FETCH = "34010";
  * is still `undefined`) pass through untouched and produce a uniform
  * "not yet mapped" error at call time.
  */
-function reach<T>(globalKey: string | undefined, name: string): T {
+function reach<T>(sandbox: Sandbox, globalKey: string | undefined, name: string): T {
   if (!globalKey) {
     throw new Error(`${name}: bundle export not yet mapped — see TODO in register.ts`);
   }
-  const inst = getSandbox().getGlobal<T>(globalKey);
+  const inst = sandbox.getGlobal<T>(globalKey);
   if (!inst) {
     throw new Error(
       `${name}: bundle entity not available — did you call client.authenticate() first? ` +
@@ -149,9 +156,9 @@ function reach<T>(globalKey: string | undefined, name: string): T {
 }
 
 /** Reach a chat-bundle webpack module by id. */
-function reachModule<T>(moduleId: string, name: string): T {
+function reachModule<T>(sandbox: Sandbox, moduleId: string, name: string): T {
   try {
-    return getChatWreq()(moduleId) as T;
+    return getChatWreq(sandbox)(moduleId) as T;
   } catch (err) {
     throw new Error(
       `${name}: chat wreq lookup of module ${moduleId} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -166,13 +173,13 @@ function reachModule<T>(moduleId: string, name: string): T {
 // BlockFriends, UnblockFriends, RemoveFriends, IgnoreFriends,
 // ChangeDisplayNameForFriends, MuteStoryForFriends, UnmuteStoryForFriends,
 // SetPostViewEmojiFoFriends, CheckActionEligibility.
-export const friendActionClient = (): JzFriendAction =>
-  reach<JzFriendAction>(G_FRIEND_ACTION, "friendActionClient");
+export const friendActionClient = (sandbox: Sandbox): JzFriendAction =>
+  reach<JzFriendAction>(sandbox, G_FRIEND_ACTION, "friendActionClient");
 
 // Login — accounts module 13150 `WebLoginServiceClientImpl` ctor.
-// Construct with `new (loginClient())({ unary }).WebLogin(req)`.
-export const loginClient = (): LoginClientCtor =>
-  reach<LoginClientCtor>(G_LOGIN_CLIENT_IMPL, "loginClient");
+// Construct with `new (loginClient(sandbox))({ unary }).WebLogin(req)`.
+export const loginClient = (sandbox: Sandbox): LoginClientCtor =>
+  reach<LoginClientCtor>(sandbox, G_LOGIN_CLIENT_IMPL, "loginClient");
 
 // Raw chat-bundle Zustand store — exposes `subscribe`, `getState`,
 // `setState`. Chat module 94704. Use this when you need a live
@@ -180,13 +187,13 @@ export const loginClient = (): LoginClientCtor =>
 // at slices the registry does not yet expose a getter for. Per Phase 1B
 // empirical finding the bundle uses plain Zustand (no `subscribeWithSelector`
 // middleware) — `subscribe` is single-arg `(state, prev) => void`.
-export const chatStore = (): ChatStore =>
-  reachModule<{ M: ChatStore }>(MOD_CHAT_STORE, "chatStore").M;
+export const chatStore = (sandbox: Sandbox): ChatStore =>
+  reachModule<{ M: ChatStore }>(sandbox, MOD_CHAT_STORE, "chatStore").M;
 
 // Auth slice — Zustand store on chat module 94704; methods: initialize,
 // logout, refreshToken, fetchToken (PageLoad-time SPA only).
-export const authSlice = (): AuthSlice =>
-  (chatStore().getState() as ChatState).auth;
+export const authSlice = (sandbox: Sandbox): AuthSlice =>
+  (chatStore(sandbox).getState() as ChatState).auth;
 
 // User slice — Zustand store on chat module 94704; carries the friend
 // graph (`mutuallyConfirmedFriendIds`), pending requests
@@ -194,13 +201,13 @@ export const authSlice = (): AuthSlice =>
 // `publicUsers` cache populated by `GetSnapchatterPublicInfo`. Mutated
 // in place by Immer drafts; subscribers should use `chatStore().subscribe`
 // for delta detection.
-export const userSlice = (): UserSlice =>
-  (chatStore().getState() as ChatState).user;
+export const userSlice = (sandbox: Sandbox): UserSlice =>
+  (chatStore(sandbox).getState() as ChatState).user;
 
 // Generic chat-side gRPC escape hatch — `Ni.rpc.unary` for arbitrary
 // AtlasGw / friending / etc. calls bypassing the typed registry.
-export const chatRpc = (): NiChatRpc =>
-  reach<NiChatRpc>(G_CHAT_RPC, "chatRpc");
+export const chatRpc = (sandbox: Sandbox): NiChatRpc =>
+  reach<NiChatRpc>(sandbox, G_CHAT_RPC, "chatRpc");
 
 /**
  * Raw chat-bundle webpack require — escape hatch for code that needs to
@@ -213,42 +220,42 @@ export const chatRpc = (): NiChatRpc =>
  * Re-exported here so api files don't have to import `getChatWreq`
  * directly from `./chat-loader.ts` (the architecture rule's gate point).
  */
-export const chatWreq = (): ((id: string) => unknown) & { m: Record<string, Function> } =>
-  getChatWreq();
+export const chatWreq = (sandbox: Sandbox): ((id: string) => unknown) & { m: Record<string, Function> } =>
+  getChatWreq(sandbox);
 
 // Media upload delegate — `Fi` (chat module 76877). `uploadMedia` /
 // `uploadMediaReferences` for direct upload control; sends/snaps usually
 // drive uploads as a side-effect.
-export const uploadDelegate = (): FiUpload =>
-  reach<FiUpload>(G_FI_UPLOAD, "uploadDelegate");
+export const uploadDelegate = (sandbox: Sandbox): FiUpload =>
+  reach<FiUpload>(sandbox, G_FI_UPLOAD, "uploadDelegate");
 
 // Messaging sends + reads + lifecycle — chat module 56639. Exposes the
 // bundle-private letter pairs (pn, E$, HM, Sd, Mw, ON, etc.) that hang
 // off `getConversationManager()` / `getFeedManager()` / `getSnapManager()`
 // on the WASM session. See `SendsModule` interface in `./types.ts` for
 // the full export map.
-export const messagingSends = (): SendsModule =>
-  reachModule<SendsModule>(MOD_SENDS, "messagingSends");
+export const messagingSends = (sandbox: Sandbox): SendsModule =>
+  reachModule<SendsModule>(sandbox, MOD_SENDS, "messagingSends");
 
 // Destinations builder — chat module 79028 `Ju` builds a
 // `SnapDestinations` envelope from a partial.
-export const destinationsModule = (): DestinationsModule =>
-  reachModule<DestinationsModule>(MOD_DESTINATIONS, "destinationsModule");
+export const destinationsModule = (sandbox: Sandbox): DestinationsModule =>
+  reachModule<DestinationsModule>(sandbox, MOD_DESTINATIONS, "destinationsModule");
 
 // Story descriptor helpers — chat module 74762 (`R9` MY_STORY descriptor,
 // `ge` server-destination conversion).
-export const storyDescModule = (): StoryDescModule =>
-  reachModule<StoryDescModule>(MOD_STORY_DESC, "storyDescModule");
+export const storyDescModule = (sandbox: Sandbox): StoryDescModule =>
+  reachModule<StoryDescModule>(sandbox, MOD_STORY_DESC, "storyDescModule");
 
 // Host constants — chat module 41359 (`r5` is `https://web.snapchat.com`).
-export const hostModule = (): HostModule =>
-  reachModule<HostModule>(MOD_HOST, "hostModule");
+export const hostModule = (sandbox: Sandbox): HostModule =>
+  reachModule<HostModule>(sandbox, MOD_HOST, "hostModule");
 
 // Default-authed fetch helper — chat module 34010. `s(url, opts)` is the
 // bundle's same-origin POST helper with bearer + cookies attached the way
 // the SPA does. Friends.search routes the `/search/search` POST through it.
-export const defaultAuthedFetch = (): DefaultAuthedFetchModule => {
-  const mod = reachModule<Partial<DefaultAuthedFetchModule>>(MOD_DEFAULT_AUTHED_FETCH, "defaultAuthedFetch");
+export const defaultAuthedFetch = (sandbox: Sandbox): DefaultAuthedFetchModule => {
+  const mod = reachModule<Partial<DefaultAuthedFetchModule>>(sandbox, MOD_DEFAULT_AUTHED_FETCH, "defaultAuthedFetch");
   if (!mod || typeof mod.s !== "function") {
     throw new Error(`defaultAuthedFetch: chat module ${MOD_DEFAULT_AUTHED_FETCH} shape shifted`);
   }
@@ -259,8 +266,8 @@ export const defaultAuthedFetch = (): DefaultAuthedFetchModule => {
 // `{unary}` rpc transport. Walks the module's exports to find the class
 // whose prototype has `SyncFriendData`. Switch to the natural instance
 // once `__SNAPCAP_ATLAS` lands (see `atlasClient` below).
-export const atlasGwClass = (): AtlasGwClassCtor => {
-  const exp = reachModule<Record<string, unknown>>(MOD_ATLAS_CLASS, "atlasGwClass");
+export const atlasGwClass = (sandbox: Sandbox): AtlasGwClassCtor => {
+  const exp = reachModule<Record<string, unknown>>(sandbox, MOD_ATLAS_CLASS, "atlasGwClass");
   for (const k of Object.keys(exp)) {
     const v = exp[k];
     if (typeof v !== "function") continue;
@@ -276,18 +283,18 @@ export const atlasGwClass = (): AtlasGwClassCtor => {
 
 // TODO: FriendRequests `N` client — chat main byte ~6939950 (Process,
 // IncomingFriendSync). SDK currently routes around via api/friending.ts.
-export const friendRequestsClient = (): FriendRequestsClient =>
-  reach<FriendRequestsClient>(G_FRIEND_REQUESTS_CLIENT, "friendRequestsClient");
+export const friendRequestsClient = (sandbox: Sandbox): FriendRequestsClient =>
+  reach<FriendRequestsClient>(sandbox, G_FRIEND_REQUESTS_CLIENT, "friendRequestsClient");
 
 // TODO: UserInfo/Self client — no dedicated RPC located yet; investigate
 // AtlasGw `GetSnapchatterPublicInfo` and any `GetSelf` candidate.
-export const userInfoClient = (): UserInfoClient =>
-  reach<UserInfoClient>(G_USER_INFO_CLIENT, "userInfoClient");
+export const userInfoClient = (sandbox: Sandbox): UserInfoClient =>
+  reach<UserInfoClient>(sandbox, G_USER_INFO_CLIENT, "userInfoClient");
 
 // TODO: StoryManager — `getStoryManager()` on the WASM session; needs an
 // Embind trace + a source-patch to surface as `__SNAPCAP_STORY_MANAGER`.
-export const storyManager = (): StoryManager =>
-  reach<StoryManager>(G_STORY_MANAGER, "storyManager");
+export const storyManager = (sandbox: Sandbox): StoryManager =>
+  reach<StoryManager>(sandbox, G_STORY_MANAGER, "storyManager");
 
 // AtlasGw natural instance — chat main byte ~6940575 closure-private `A`,
 // source-patched as `__SNAPCAP_ATLAS`. Prefer this over `atlasGwClass()` —
@@ -299,8 +306,8 @@ export const storyManager = (): StoryManager =>
 // continues to use the closure-private `HY/jY` codecs + `defaultAuthedFetch`
 // because the bundle's own search path (`Yz`, byte ~1435000) is REST POST
 // to `/search/search`, not a gRPC call on AtlasGw.
-export const atlasClient = (): AtlasGwClient =>
-  reach<AtlasGwClient>(G_ATLAS_CLIENT, "atlasClient");
+export const atlasClient = (sandbox: Sandbox): AtlasGwClient =>
+  reach<AtlasGwClient>(sandbox, G_ATLAS_CLIENT, "atlasClient");
 
 // ─── 6. search codec getters + cross-realm helpers ──────────────────────
 
@@ -310,16 +317,16 @@ export const atlasClient = (): AtlasGwClient =>
  * `.encode(msg).finish()` to build the request body for the
  * `/search/search` POST.
  */
-export const searchRequestCodec = (): SearchRequestCodec =>
-  reach<SearchRequestCodec>(G_SEARCH_REQ_CODEC, "searchRequestCodec");
+export const searchRequestCodec = (sandbox: Sandbox): SearchRequestCodec =>
+  reach<SearchRequestCodec>(sandbox, G_SEARCH_REQ_CODEC, "searchRequestCodec");
 
 /**
  * Bundle's `SearchResponse` ts-proto codec — `JY` in chat module ~10409.
  * Returns the live codec object; consumers call `.decode(bytes)` to parse
  * the `/search/search` POST response.
  */
-export const searchResponseCodec = (): SearchResponseCodec =>
-  reach<SearchResponseCodec>(G_SEARCH_RESP_CODEC, "searchResponseCodec");
+export const searchResponseCodec = (sandbox: Sandbox): SearchResponseCodec =>
+  reach<SearchResponseCodec>(sandbox, G_SEARCH_RESP_CODEC, "searchResponseCodec");
 
 /**
  * Wrap a host-realm `Uint8Array` (or `ArrayBuffer`) with the SANDBOX
@@ -333,8 +340,8 @@ export const searchResponseCodec = (): SearchResponseCodec =>
  * resulting buffer will fail bundle decode, but that surfaces as a
  * cleaner error at call-site than throwing here.
  */
-export const toVmU8 = (src: Uint8Array | ArrayBuffer): Uint8Array => {
-  const SU8 = getSandbox().getGlobal<typeof Uint8Array>("Uint8Array") ?? Uint8Array;
+export const toVmU8 = (sandbox: Sandbox, src: Uint8Array | ArrayBuffer): Uint8Array => {
+  const SU8 = sandbox.getGlobal<typeof Uint8Array>("Uint8Array") ?? Uint8Array;
   return new SU8(src as ArrayBufferLike);
 };
 
@@ -344,8 +351,8 @@ export const toVmU8 = (src: Uint8Array | ArrayBuffer): Uint8Array => {
  * bundle's search request accepts an empty `sessionId` and a string
  * fallback keeps consumer types simple.
  */
-export const sandboxRandomUUID = (): string =>
-  getSandbox().getGlobal<{ randomUUID?: () => string }>("crypto")?.randomUUID?.() ?? "";
+export const sandboxRandomUUID = (sandbox: Sandbox): string =>
+  sandbox.getGlobal<{ randomUUID?: () => string }>("crypto")?.randomUUID?.() ?? "";
 
 /**
  * Compound search operation — encodes the request, POSTs through the
@@ -362,11 +369,12 @@ export const sandboxRandomUUID = (): string =>
  * matching what the SPA sends from its search-bar code path.
  */
 export const searchUsers = async (
+  sandbox: Sandbox,
   query: string,
   opts: { sectionType?: number; numToReturn?: number; origin?: number } = {},
 ): Promise<DecodedSearchResponse> => {
-  const HY = searchRequestCodec();
-  const JY = searchResponseCodec();
+  const HY = searchRequestCodec(sandbox);
+  const JY = searchResponseCodec(sandbox);
   const sectionType = opts.sectionType ?? 2; // SECTION_TYPE_ADD_FRIENDS
   const reqMsg = HY.fromPartial({
     queryString: query,
@@ -375,13 +383,13 @@ export const searchUsers = async (
       sectionsToReturn: [sectionType],
       numToReturn: opts.numToReturn ?? 20,
     },
-    sessionId: sandboxRandomUUID(),
+    sessionId: sandboxRandomUUID(sandbox),
   });
-  const body = toVmU8(HY.encode(reqMsg).finish());
-  const url = `${hostModule().r5}/search/search`;
-  const resp = await defaultAuthedFetch().s(url, { method: "POST", body });
+  const body = toVmU8(sandbox, HY.encode(reqMsg).finish());
+  const url = `${hostModule(sandbox).r5}/search/search`;
+  const resp = await defaultAuthedFetch(sandbox).s(url, { method: "POST", body });
   if (!resp.ok) return { sections: [] };
-  return JY.decode(toVmU8(await resp.arrayBuffer()));
+  return JY.decode(toVmU8(sandbox, await resp.arrayBuffer()));
 };
 
 // ─── 7. slice-from-state + subscription helpers ─────────────────────────
@@ -411,6 +419,7 @@ export const userSliceFrom = (state: ChatState): UserSlice => state.user;
  * doesn't tear down the subscription).
  */
 export const subscribeUserSlice = <T>(
+  sandbox: Sandbox,
   select: (u: UserSlice) => T,
   equals: (a: T, b: T) => boolean,
   cb: (curr: T, prev: T, fullState: ChatState) => void,
@@ -419,7 +428,7 @@ export const subscribeUserSlice = <T>(
   let cancelled = false;
   let unsub: (() => void) | undefined;
   try {
-    const store = chatStore();
+    const store = chatStore(sandbox);
     prev = select(userSliceFrom(store.getState() as ChatState));
     unsub = store.subscribe((state) => {
       const curr = select(userSliceFrom(state));

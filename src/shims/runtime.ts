@@ -11,7 +11,6 @@
  * `sandbox.runInContext(src)`.
  */
 import { Sandbox, type SandboxOpts } from "./sandbox.ts";
-import { setThrottle } from "../transport/native-fetch.ts";
 
 let installed: Sandbox | null = null;
 
@@ -22,10 +21,11 @@ export function installShims(opts: InstallShimOpts = {}): Sandbox {
     const e = new Error();
     process.stderr.write(`[shims] installShims(${opts.url ?? "default"}) installed=${!!installed}\n  ${e.stack?.split("\n").slice(2, 5).join("\n  ")}\n`);
   }
+  // NOTE: this still returns a process-singleton today; the multi-instance
+  // refactor (this branch) will replace this with a fresh Sandbox per call.
+  // Throttle config lives on the Sandbox itself now (see Sandbox#throttleGate),
+  // so installShims no longer needs to thread throttle anywhere.
   if (!installed) installed = new Sandbox(opts);
-  // Last-call-wins for throttle so a re-installShims() with different
-  // throttle config rebinds the gate. Safe with `undefined` (disables).
-  setThrottle(opts.throttle);
   return installed;
 }
 

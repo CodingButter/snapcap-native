@@ -96,3 +96,41 @@ These are easy to break and hard to debug — read these before touching the rel
 2. New file `src/api/<area>.ts`. Take an `rpc.unary`-shaped param. Call the method via the AtlasGw class (or whichever client class). Return typed result.
 3. Add a method on `SnapcapClient` that calls into your new file via `this.makeRpc()`.
 4. Document in `docs/api/`.
+
+## TODO — architectural cleanup (post multi-instance refactor)
+
+- `src/api/auth.ts` currently imports `primeModule10409` / `primeAuthStoreModule`
+  from `src/bundle/prime.ts`. That's a layer violation — api/* is supposed to
+  gate through `register.ts` only. Either:
+    A. Bake the priming into `ensureChatBundle` so callers never have to know
+       about it (preferred — simplest auth.ts surface)
+    B. Add an `ensureChatReady(sandbox)` to `register.ts` that orchestrates
+       ensureChatBundle + primeModule10409 + primeAuthStoreModule
+  Identified 2026-05-01.
+
+## TODO — bundle-remap script for resilience to Snap rebuilds
+
+When Snap rebuilds their bundle (re-minifies, re-numbers webpack module IDs,
+renames closure-private variables), our hardcoded `__SNAPCAP_*` constants
+and module IDs in `src/bundle/register.ts` break. Today, finding the new
+locations is a manual investigation per symbol — slow.
+
+**Proposal:** generate AND maintain a static fingerprint table that pairs
+each `__SNAPCAP_*` / module-ID constant with a STRUCTURAL fingerprint of
+its source (function body, value shape, etc.) with all variable names
+normalized to placeholders. Most logic survives a rebuild — only the
+variable names shift.
+
+A `scripts/remap-bundle.ts` script can:
+  1. Load the current vendor/snap-bundle.
+  2. Parse each module's factory body into a normalized form (e.g. via
+     a tiny AST walk that replaces all identifiers with `_$1`, `_$2`, …
+     in declaration order).
+  3. Fuzzy-match each fingerprint against current module bodies (e.g.
+     normalized Levenshtein, or a structural diff).
+  4. Print top-N candidates per broken constant, with similarity score
+     + byte offset, so Claude (or a human) just verifies the obvious
+     winner instead of grep-spelunking from scratch.
+
+Net effect: when Snap rebuilds, remapping our ~30 constants drops from
+hours of investigation to minutes of confirmation. Identified 2026-05-01.

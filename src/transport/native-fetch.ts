@@ -17,22 +17,16 @@
  * logger is installed `log()` is a no-op — zero perf cost.
  */
 import { log } from "../logging.ts";
-import { createThrottle, type ThrottleConfig } from "./throttle.ts";
-
-let throttleGate: (url: string) => Promise<void> = async () => {};
-
-/**
- * Install / replace the active throttle config. Called by `installShims()`
- * when the SDK consumer passes a `throttle` option. Idempotent — last call
- * wins. Pass `undefined` to disable throttling entirely.
- */
-export function setThrottle(config: ThrottleConfig | undefined): void {
-  throttleGate = createThrottle(config);
-}
 
 /**
  * Eager snapshot of the un-shimmed fetch. Kept around so the wrapper has a
  * stable reference even if a future shim hooks `globalThis.fetch`.
+ *
+ * Throttling is NOT applied here — it lives per-Sandbox at
+ * `Sandbox.throttleGate`, which the sandbox shims (`shims/fetch.ts`,
+ * `shims/xml-http-request.ts`) await before calling into this layer.
+ * Direct callers (e.g. login's SSO redirect dance) bypass throttling
+ * by design — login is per-account and not the multi-instance concern.
  */
 const snapshotFetch = globalThis.fetch.bind(globalThis);
 
@@ -83,7 +77,6 @@ async function loggingFetch(
   init?: RequestInit,
 ): Promise<Response> {
   const url = inputToUrl(input);
-  await throttleGate(url);
   const method = resolveMethod(input, init);
   const reqBytes = bodyByteLength(init?.body ?? null);
   const tStart = performance.now();

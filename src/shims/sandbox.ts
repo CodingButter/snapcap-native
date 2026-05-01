@@ -23,7 +23,7 @@
 import vm from "node:vm";
 import { Window } from "happy-dom";
 import type { DataStore } from "../storage/data-store.ts";
-import type { ThrottleConfig } from "../transport/throttle.ts";
+import { createThrottle, type ThrottleConfig, type ThrottleGate } from "../transport/throttle.ts";
 import { getOrCreateJar } from "./cookie-jar.ts";
 import { SDK_SHIMS, type ShimContext } from "./index.ts";
 
@@ -38,8 +38,16 @@ export type SandboxOpts = {
   viewportHeight?: number;
   /** Persistent backing for localStorage / sessionStorage shims. */
   dataStore?: DataStore;
-  /** Optional opt-in HTTP throttling. Default: no throttle (browser-cadence). */
-  throttle?: ThrottleConfig;
+  /**
+   * Optional opt-in HTTP throttling. Default: no throttle (browser-cadence).
+   *
+   * Accepts EITHER a `ThrottleConfig` (per-instance — Sandbox builds its
+   * own gate from the config) OR a pre-built `ThrottleGate` function
+   * (shared across instances — pass the same gate to multiple Sandboxes
+   * to coordinate their aggregate request rate). See
+   * `transport/throttle.ts` for the full picture.
+   */
+  throttle?: ThrottleConfig | ThrottleGate;
 };
 
 /** happy-dom Window properties we copy onto the sandbox global. */
@@ -67,6 +75,30 @@ const BROWSER_PROJECTED_KEYS = [
   "confirm", "prompt", "getComputedStyle",
 ];
 
+// Process-level counters for the "multi-instance with per-instance
+// throttle" foot-gun warning. Tracking is cheap (two integers) and the
+// warning fires at most once per process — opt-out via env var.
+let _sandboxesConstructed = 0;
+let _sandboxesUsingPerInstanceThrottle = 0;
+let _multiInstanceWarningEmitted = false;
+
+function maybeWarnMultiInstancePerInstanceThrottle(): void {
+  if (_multiInstanceWarningEmitted) return;
+  if (process.env.SNAPCAP_SUPPRESS_THROTTLE_WARNING === "1") return;
+  if (_sandboxesConstructed < 2) return;
+  if (_sandboxesUsingPerInstanceThrottle < 2) return;
+  _multiInstanceWarningEmitted = true;
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[snapcap/native] WARNING: detected multiple SnapcapClient instances each using a per-instance " +
+    "throttle config. Their aggregate request rate scales with N — N=5 with the default 1500ms " +
+    "AddFriends rule = 5 mutations per 1500ms aggregate, which Snap may flag as anti-spam. " +
+    "For multi-tenant deployments, build a single shared gate via `createSharedThrottle(config)` " +
+    "and pass the SAME gate into every client (`throttle: gate`). " +
+    "Suppress this warning with SNAPCAP_SUPPRESS_THROTTLE_WARNING=1 if intentional.",
+  );
+}
+
 export class Sandbox {
   /** Synthesized vm-realm global; this is what bundle code sees as `globalThis`. */
   readonly window: Record<string, unknown>;
@@ -74,7 +106,46 @@ export class Sandbox {
   /** happy-dom Window — kept for direct DOM access (e.g. injecting #root). */
   private readonly hdWindow: Window;
 
+  /**
+   * Per-instance throttle gate. Bundle-driven HTTP layers (`shims/fetch`,
+   * `shims/xml-http-request`) and host-realm `transport/native-fetch` all
+   * await `sandbox.throttleGate(url)` before issuing a wire request when
+   * given access to the sandbox. No-op by default; configured from
+   * `opts.throttle` in the constructor.
+   *
+   * Per-instance (not module-level) so two Sandboxes can coexist with
+   * independent throttle configs without stepping on each other.
+   */
+  readonly throttleGate: (url: string) => Promise<void>;
+
+  // ─── Per-instance bundle bring-up caches ─────────────────────────────
+  // These caches USED to live as module-level singletons in the loaders,
+  // making two Sandboxes impossible (the second would silently skip its
+  // bundle eval because the first set the flag). Moved here so each
+  // Sandbox owns its own bring-up state. Loaders own the type semantics;
+  // this class just provides typed storage slots.
+
+  /** Resolved kameleon Module + finalize() context (bundle/accounts-loader). */
+  kameleonBoot?: Promise<unknown>;
+  /** True once the chat bundle's main JS has been eval'd in this sandbox. */
+  chatBundleLoaded = false;
+  /** True once the chat bundle's webpack runtime has been eval'd in this sandbox. */
+  chatRuntimeLoaded = false;
+  /** Resolved chat-WASM moduleEnv with Embind classes (bundle/chat-wasm-boot). */
+  chatWasmBoot?: Promise<unknown>;
+
   constructor(opts: SandboxOpts = {}) {
+    // Accept either a pre-built gate (shared across instances) or a config
+    // (per-instance — build gate from config). Function = gate; object = config.
+    const isPerInstanceThrottle = opts.throttle !== undefined && typeof opts.throttle !== "function";
+    this.throttleGate = typeof opts.throttle === "function"
+      ? opts.throttle
+      : createThrottle(opts.throttle);
+
+    // Track for the multi-instance + per-instance-throttle foot-gun warning.
+    _sandboxesConstructed++;
+    if (isPerInstanceThrottle) _sandboxesUsingPerInstanceThrottle++;
+    maybeWarnMultiInstancePerInstanceThrottle();
     const url = opts.url ?? "https://www.snapchat.com/web";
     const userAgent =
       opts.userAgent ??

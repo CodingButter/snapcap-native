@@ -14,7 +14,7 @@
  */
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { installShims, type InstallShimOpts } from "../shims/runtime.ts";
+import { Sandbox } from "../shims/sandbox.ts";
 import { installWebpackCapture } from "../shims/webpack-capture.ts";
 import { ensureBundle } from "./download.ts";
 
@@ -25,8 +25,6 @@ export type KameleonOpts = {
   page?: string;
   /** Emit verbose tracing (logs every Embind glue call to stdout). */
   trace?: boolean;
-  /** Override default URL/UA shimmed globals — passed through to installShims. */
-  shimOpts?: InstallShimOpts;
 };
 
 export type KameleonContext = {
@@ -50,25 +48,31 @@ type BootedKameleon = {
   ctx: KameleonContext;
   wreq: { (id: string): unknown; m: Record<string, Function> };
 };
-let bootedSingleton: Promise<BootedKameleon> | null = null;
-
-export async function getKameleon(opts: KameleonOpts = {}): Promise<BootedKameleon> {
-  if (!bootedSingleton) {
-    bootedSingleton = bootKameleonOnce(opts);
+/**
+ * Per-Sandbox kameleon boot. Cached on the Sandbox instance — a fresh
+ * Sandbox boots its own kameleon Module so two `SnapcapClient` instances
+ * never share kameleon state.
+ *
+ * `sandbox` is required: the kameleon WASM is instantiated INTO this
+ * sandbox's vm.Context, and the cache lives on the sandbox so each
+ * client gets its own Module + finalize() context.
+ */
+export async function getKameleon(sandbox: Sandbox, opts: KameleonOpts = {}): Promise<BootedKameleon> {
+  if (!sandbox.kameleonBoot) {
+    sandbox.kameleonBoot = bootKameleonOnce(sandbox, opts);
   }
-  return bootedSingleton;
+  return sandbox.kameleonBoot as Promise<BootedKameleon>;
 }
 
-export async function bootKameleon(opts: KameleonOpts = {}): Promise<KameleonContext> {
-  const { ctx } = await getKameleon(opts);
+export async function bootKameleon(sandbox: Sandbox, opts: KameleonOpts = {}): Promise<KameleonContext> {
+  const { ctx } = await getKameleon(sandbox, opts);
   return ctx;
 }
 
-async function bootKameleonOnce(opts: KameleonOpts): Promise<BootedKameleon> {
+async function bootKameleonOnce(sandbox: Sandbox, opts: KameleonOpts): Promise<BootedKameleon> {
   const bundleDir = opts.bundleDir ?? defaultBundleDir();
   await ensureBundle(bundleDir);
-  const sandbox = installShims(opts.shimOpts ?? { url: "https://accounts.snapchat.com/" });
-  installWebpackCapture();
+  installWebpackCapture(sandbox);
 
   const accountsDir = join(
     bundleDir,
