@@ -96,8 +96,15 @@ const G_SEARCH_REQ_CODEC = "__SNAPCAP_HY";
  */
 const G_SEARCH_RESP_CODEC = "__SNAPCAP_JY";
 
-/** TODO: FriendRequests `N` client — chat main byte ~6940000, source-patch __SNAPCAP_FRIEND_REQUESTS */
-const G_FRIEND_REQUESTS_CLIENT: string | undefined = undefined;
+/**
+ * FriendRequests `N` client — chat main byte ~6940668. Methods: `Process`
+ * (accept/reject/cancel via a oneof action) and
+ * `IncomingFriendSync({syncToken?})` (paginated incoming-requests pull).
+ * Source-patched in `chat-loader.ts` from
+ * `N=new class{rpc;constructor(e){…}` →
+ * `N=globalThis.__SNAPCAP_FRIEND_REQUESTS=new class{rpc;constructor(e){…}`.
+ */
+const G_FRIEND_REQUESTS_CLIENT: string | undefined = "__SNAPCAP_FRIEND_REQUESTS";
 /** AtlasGw client instance `A` (chat main byte ~6940575). Methods on the
  * `Ie` class declared at chat main ~6263000 (SyncFriendData,
  * GetSnapchatterPublicInfo, GetUserIdByUsername, GetFollowers, etc.).
@@ -431,17 +438,17 @@ export const atlasGwClass = (sandbox: Sandbox): AtlasGwClassCtor => {
 // ─── 5. TODO getters — constant mappers undefined; throw at call time ───
 
 /**
- * FriendRequests `N` client — chat main byte ~6939950 (Process,
- * IncomingFriendSync). SDK currently routes around via api/friending.ts.
+ * FriendRequests `N` client — chat main byte ~6940668. Methods: `Process`
+ * (accept/reject/cancel via a oneof action) and `IncomingFriendSync`
+ * (paginated incoming-requests pull; populates
+ * `state.user.incomingFriendRequests`). Source-patched in `chat-loader.ts`
+ * as `__SNAPCAP_FRIEND_REQUESTS`.
  *
- * @remarks TODO — constant mapper is `undefined`; this getter throws
- * "not yet mapped" at call time. Source-patch as
- * `__SNAPCAP_FRIEND_REQUESTS` and wire `G_FRIEND_REQUESTS_CLIENT`.
- *
- * @internal Bundle-layer accessor (TODO).
+ * @internal Bundle-layer accessor. Public consumers reach this surface via
+ * `src/api/friends.ts` ({@link Friends.refresh} and the
+ * `request:received` event bridge).
  * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
- * @returns the live FriendRequests `N` client (when mapped)
- * @throws always, until the source-patch lands
+ * @returns the live FriendRequests `N` client instance
  */
 export const friendRequestsClient = (sandbox: Sandbox): FriendRequestsClient =>
   reach<FriendRequestsClient>(sandbox, G_FRIEND_REQUESTS_CLIENT, "friendRequestsClient");

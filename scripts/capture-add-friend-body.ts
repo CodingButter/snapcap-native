@@ -99,12 +99,12 @@ if (!client.isAuthenticated()) {
   process.exit(2);
 }
 
-console.log("[capture] calling friends.add (intercepted)...");
+console.log("[capture] calling friends.sendRequest (intercepted)...");
 try {
-  await client.friends.add("eabd1d89-239a-4f7b-bbcc-0ae3b26c5202");
-  console.log("[capture] friends.add resolved");
+  await client.friends.sendRequest("eabd1d89-239a-4f7b-bbcc-0ae3b26c5202");
+  console.log("[capture] friends.sendRequest resolved");
 } catch (e) {
-  console.error("[capture] friends.add threw:", e);
+  console.error("[capture] friends.sendRequest threw:", e);
 }
 
 console.log("---");

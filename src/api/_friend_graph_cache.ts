@@ -1,0 +1,155 @@
+/**
+ * Friend-graph snapshot cache — persisted view of the three friend-graph
+ * id-sets so the diff-style {@link Friends} events can detect deltas that
+ * occurred while the SDK was offline.
+ *
+ * @remarks
+ * The cache stores ONLY id-sets (not richer envelopes like
+ * `IncomingFriendRequestRecord`) because the diff-style events fan out
+ * one id at a time and the bundle's `publicUsers` cache / current
+ * `incomingFriendRequests` Map already carries the materialization data
+ * the bridge needs to build the consumer-shape payload at emit time.
+ *
+ * Encoding: plain JSON over `TextEncoder`/`TextDecoder` — small (a few
+ * KB even for chunky friend graphs), and JSON survives bundle / SDK
+ * version drift better than any binary tagged format.
+ *
+ * @internal
+ */
+import type { DataStore } from "../storage/data-store.ts";
+
+/**
+ * Persisted snapshot of the three id-sets that drive diff-style
+ * {@link Friends} events.
+ *
+ * @internal
+ */
+export interface FriendGraphSnapshot {
+  /** Hyphenated UUIDs of mutually-confirmed friends. */
+  mutuals: string[];
+  /** Hyphenated UUIDs of pending outgoing friend requests. */
+  outgoing: string[];
+  /** Hyphenated UUIDs of pending incoming friend requests. */
+  incoming: string[];
+  /** Wall-clock timestamp (ms) when the snapshot was last persisted. */
+  ts: number;
+}
+
+/**
+ * DataStore key the snapshot is persisted under. Single key per logical
+ * client — the cache is global to the Friends manager, not per-event.
+ *
+ * @internal
+ */
+export const FRIEND_GRAPH_CACHE_KEY = "snapcap:friend_graph_cache";
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+/**
+ * Read the persisted snapshot from `ds`.
+ *
+ * Returns `undefined` when the cache key is absent (first-ever run, or
+ * after a manual wipe) OR when the stored bytes can't be decoded as a
+ * snapshot. Callers should treat both cases the same: skip diff replay
+ * on this tick and seed `prior` from `current`.
+ *
+ * @internal
+ */
+export async function loadGraphCache(
+  ds: DataStore,
+): Promise<FriendGraphSnapshot | undefined> {
+  let raw: Uint8Array | undefined;
+  try {
+    raw = await ds.get(FRIEND_GRAPH_CACHE_KEY);
+  } catch {
+    return undefined;
+  }
+  if (!raw || raw.byteLength === 0) return undefined;
+  try {
+    const obj = JSON.parse(decoder.decode(raw)) as Partial<FriendGraphSnapshot>;
+    if (
+      !Array.isArray(obj.mutuals) ||
+      !Array.isArray(obj.outgoing) ||
+      !Array.isArray(obj.incoming)
+    ) return undefined;
+    return {
+      mutuals: obj.mutuals.filter((x): x is string => typeof x === "string"),
+      outgoing: obj.outgoing.filter((x): x is string => typeof x === "string"),
+      incoming: obj.incoming.filter((x): x is string => typeof x === "string"),
+      ts: typeof obj.ts === "number" ? obj.ts : Date.now(),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Persist `snap` into `ds` under {@link FRIEND_GRAPH_CACHE_KEY}.
+ *
+ * Best-effort durable: errors are swallowed so a failing flush doesn't
+ * break the live event fan-out. Subsequent ticks will overwrite the same
+ * key and recover.
+ *
+ * @internal
+ */
+export async function saveGraphCache(
+  ds: DataStore,
+  snap: FriendGraphSnapshot,
+): Promise<void> {
+  try {
+    await ds.set(FRIEND_GRAPH_CACHE_KEY, encoder.encode(JSON.stringify(snap)));
+  } catch {
+    /* persistence failures shouldn't poison live emit fan-out */
+  }
+}
+
+/**
+ * Diff `current` against `prior`. Returns:
+ *
+ *  - `added.<slot>` — ids in `current.<slot>` that were NOT in
+ *    `prior.<slot>`.
+ *  - `removed.<slot>` — ids in `prior.<slot>` that are NO LONGER in
+ *    `current.<slot>`.
+ *  - `acceptedRequests` — cross-slot signal: ids that were in
+ *    `prior.outgoing` AND are now in `current.mutuals`. The recipient
+ *    accepted our outbound request, the bundle promoted them to
+ *    mutuals, and the outgoing entry vanished — all on the same tick.
+ *
+ * Note: an accepted request also produces an entry in
+ * `added.mutuals` for the same id; the {@link Friends} bridge fans out
+ * BOTH `friend:added` and `request:accepted` for those ids
+ * intentionally — the events carry distinct semantics.
+ *
+ * @internal
+ */
+export function diffGraph(
+  prior: FriendGraphSnapshot,
+  current: FriendGraphSnapshot,
+): {
+  added: { mutuals: string[]; outgoing: string[]; incoming: string[] };
+  removed: { mutuals: string[]; outgoing: string[]; incoming: string[] };
+  acceptedRequests: string[];
+} {
+  const priorMutuals = new Set(prior.mutuals);
+  const priorOutgoing = new Set(prior.outgoing);
+  const priorIncoming = new Set(prior.incoming);
+  const currMutuals = new Set(current.mutuals);
+  const currOutgoing = new Set(current.outgoing);
+  const currIncoming = new Set(current.incoming);
+
+  const added = {
+    mutuals: current.mutuals.filter((id) => !priorMutuals.has(id)),
+    outgoing: current.outgoing.filter((id) => !priorOutgoing.has(id)),
+    incoming: current.incoming.filter((id) => !priorIncoming.has(id)),
+  };
+  const removed = {
+    mutuals: prior.mutuals.filter((id) => !currMutuals.has(id)),
+    outgoing: prior.outgoing.filter((id) => !currOutgoing.has(id)),
+    incoming: prior.incoming.filter((id) => !currIncoming.has(id)),
+  };
+  const acceptedRequests = prior.outgoing.filter(
+    (id) => currMutuals.has(id),
+  );
+  return { added, removed, acceptedRequests };
+}

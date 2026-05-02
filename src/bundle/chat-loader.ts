@@ -167,6 +167,28 @@ export async function ensureChatBundle(sandbox: Sandbox, opts: ChatBundleOpts = 
     throw new Error("chat-bundle: A (AtlasGw client) source-patch site missing — bundle version may have shifted");
   }
 
+  // Expose closure-private `N` — the FriendRequests client instance constructed
+  // immediately after `A` (the AtlasGw client) in the same module, around chat
+  // main byte ~6940668. `N` exposes `Process` (accept/reject/cancel via a oneof
+  // action) and `IncomingFriendSync({syncToken?})` — the latter is what
+  // populates `state.user.incomingFriendRequests`. The bundle's helper `R(e)`
+  // (a few hundred bytes below) calls `N.IncomingFriendSync({syncToken: e})`
+  // ONCE at init; the SPA's React layer normally drives subsequent cadence,
+  // so consumers without React (us) need an explicit `friends.refresh()`
+  // to keep `request:received` events firing.
+  //
+  // Same `const X=globalThis.__SNAPCAP_X=…` pattern as `Fi`/`Ni`/`jz`/`A` above
+  // — preserves the original closure binding inside the module body while
+  // giving us a callable reference from outside.
+  if (mainSrc.includes("N=new class{rpc;constructor(e){this.rpc=e,this.Process=this.Process.bind(this)")) {
+    mainSrc = mainSrc.replace(
+      "N=new class{rpc;constructor(e){this.rpc=e,this.Process=this.Process.bind(this)",
+      "N=globalThis.__SNAPCAP_FRIEND_REQUESTS=new class{rpc;constructor(e){this.rpc=e,this.Process=this.Process.bind(this)",
+    );
+  } else {
+    throw new Error("chat-bundle: N (FriendRequests client) source-patch site missing — bundle version may have shifted");
+  }
+
   // Make sure happy-dom has a #root so React mount during top-level eval
   // doesn't blow up.
   const doc = sandbox.window.document as { body?: { innerHTML: string } };

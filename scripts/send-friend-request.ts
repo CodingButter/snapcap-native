@@ -50,9 +50,9 @@ if (!target) {
 const targetId = target.userId ?? target.id ?? target.user_id;
 console.log(`[friend-req] target found: username=${target.username} userId=${targetId} display=${target.displayName ?? target.display_name ?? "?"}`);
 
-console.log(`[friend-req] calling friends.add(${targetId})…`);
+console.log(`[friend-req] calling friends.sendRequest(${targetId})…`);
 const t2 = Date.now();
-await client.friends.add(targetId);
-console.log(`[friend-req] friends.add returned in ${Date.now() - t2}ms`);
+await client.friends.sendRequest(targetId);
+console.log(`[friend-req] friends.sendRequest returned in ${Date.now() - t2}ms`);
 console.log(`[friend-req] DONE — check ${TARGET_USERNAME}'s "Added Me" panel`);
 process.exit(0);

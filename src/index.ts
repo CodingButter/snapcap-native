@@ -82,14 +82,21 @@ export {
   FriendSource,
   type IFriendsManager,
   type Friend,
-  type FriendRequest,
-  type OutgoingRequest,
+  type ReceivedRequest,
+  type SentRequest,
   type FriendsSnapshot,
   type FriendLinkType,
   type UserId,
   type Unsubscribe,
   type User as FriendsUser,
+  type BitmojiPublicInfo,
+  type FriendsEvents,
 } from "./api/friends.ts";
+
+// Shared subscription primitive — every domain manager (Friends today;
+// Messaging, Stories, Inbox, Presence ahead) composes this. `Subscription`
+// is the consumer-facing live-handle type returned by every `on(...)`.
+export { TypedEventBus, type Subscription } from "./lib/typed-event-bus.ts";
 export { Messaging } from "./api/messaging.ts";
 export { Presence } from "./api/presence.ts";
 export { Stories } from "./api/stories.ts";

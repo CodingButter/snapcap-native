@@ -87,12 +87,12 @@ const target = (Array.isArray(results) ? results : []).find((r: any) => r.userna
 if (!target) { console.error(`[capture] no exact match for ${RECIPIENT}`); process.exit(4); }
 console.log(`[capture] target: ${target.username} (${target.userId})`);
 
-console.log(`[capture] calling friends.add(${target.userId})…`);
+console.log(`[capture] calling friends.sendRequest(${target.userId})…`);
 try {
-  await client.friends.add(target.userId);
-  console.log(`[capture] friends.add resolved without throwing`);
+  await client.friends.sendRequest(target.userId);
+  console.log(`[capture] friends.sendRequest resolved without throwing`);
 } catch (e) {
-  console.log(`[capture] friends.add threw: ${(e as Error).message}`);
+  console.log(`[capture] friends.sendRequest threw: ${(e as Error).message}`);
 }
 
 console.log(`\n[capture] === SUMMARY ===`);

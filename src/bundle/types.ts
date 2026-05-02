@@ -411,8 +411,23 @@ export type AtlasGwClassCtor = new (rpc: { unary: UnaryFn }) => Record<string, F
 export interface AtlasGwClient {
   /** Pull/sync the friend graph; outgoing-side delta sync. */
   SyncFriendData: (req: unknown, metadata?: unknown) => Promise<unknown>;
-  /** Look up public info (display name, bitmoji, etc.) for a list of userIds. */
-  GetSnapchatterPublicInfo: (req: { userIds: string[] }, metadata?: unknown) => Promise<unknown>;
+  /**
+   * Look up public info (username, display name, bitmoji, profile flags)
+   * for a list of userIds. Each userId is the raw 16-byte UUID, NOT a
+   * hyphenated string — pass `Uint8Array` values via `uuidToBytes`.
+   * `source` is an optional Snap-side enum (`a.MW.*`); the SPA passes
+   * `MW.CHAT` from chat-bundle call sites and omits it elsewhere.
+   *
+   * Response shape: `{ snapchatters: Array<Snapchatter> }` with each
+   * `snapchatter.userId` likewise as `Uint8Array(16)` and string fields
+   * camelCased (`userId, username, displayName, mutableUsername,
+   * isOfficial, isPopular, snapProId, profileTier, bitmojiPublicInfo,
+   * profileLogo, creatorSubscriptionProductsInfo`).
+   */
+  GetSnapchatterPublicInfo: (
+    req: { userIds: Uint8Array[]; source?: number },
+    metadata?: unknown,
+  ) => Promise<{ snapchatters: SnapchatterPublicInfo[] }>;
   /** Resolve a username to a userId — exact match only, NOT fuzzy search. */
   GetUserIdByUsername: (req: { username: string }, metadata?: unknown) => Promise<unknown>;
   /** Followers list (paginated). */
@@ -503,8 +518,10 @@ export interface AuthSlice {
 
 /**
  * Snake-cased record stored in `state.user.publicUsers`. Populated by
- * `GetSnapchatterPublicInfo`; the bundle keeps the wire shape (snake-case)
- * so the api layer is responsible for camel-casing for consumer surfaces.
+ * Snap's own SPA paths that touch this cache (search results,
+ * SyncFriendData side-effects); `GetSnapchatterPublicInfo` itself does
+ * NOT auto write-back here — its response shape is the camel-cased
+ * {@link SnapchatterPublicInfo} delivered to the immediate caller.
  *
  * @internal Bundle wire-format type.
  */
@@ -513,6 +530,45 @@ export interface PublicUserRecord {
   username?: string;
   display_name?: string;
   mutable_username?: string;
+}
+
+/**
+ * Camel-cased Snapchatter record returned in
+ * `GetSnapchatterPublicInfo({snapchatters: [...]})`. Field set captured
+ * from the chat-bundle Atlas module's response default (`function $`).
+ * Bundle keeps `userId` as `Uint8Array(16)` — convert via `bytesToUuid`
+ * before exposing to consumers.
+ *
+ * Distinct from {@link PublicUserRecord} (snake-cased, lives in
+ * `state.user.publicUsers`). `GetSnapchatterPublicInfo` does NOT
+ * write-back into that cache — its caller receives this shape directly.
+ * Nested envelopes (`bitmojiPublicInfo`, `profileLogo`,
+ * `creatorSubscriptionProductsInfo`) stay typed as `unknown` so schema
+ * drift surfaces as a typed `unknown` rather than a stale concrete
+ * shape; the api layer ({@link User} / {@link BitmojiPublicInfo})
+ * provides the consumer-facing types.
+ *
+ * @remarks
+ * Index signature (`[k: string]: unknown`) carries any future fields
+ * Snap adds without forcing an SDK update — same forward-compat posture
+ * as {@link User}'s tail.
+ *
+ * @internal Bundle wire-format type.
+ */
+export interface SnapchatterPublicInfo {
+  userId: Uint8Array;
+  username?: string;
+  displayName?: string;
+  mutableUsername?: string;
+  isOfficial?: boolean;
+  isPopular?: boolean;
+  snapProId?: string;
+  profileTier?: number;
+  bitmojiPublicInfo?: unknown;
+  profileLogo?: unknown;
+  creatorSubscriptionProductsInfo?: unknown;
+  /** Forward-compat tail — see remarks. */
+  [k: string]: unknown;
 }
 
 /**

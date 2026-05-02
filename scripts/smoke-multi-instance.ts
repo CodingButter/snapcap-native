@@ -81,8 +81,8 @@ async function runMode(label: string, throttleA: ThrottleConfig | ThrottleGate, 
   console.log(`[multi]   userIds distinct: ${!!userIdA && !!userIdB && userIdA !== userIdB}`);
 
   const [snapA, snapB] = await Promise.all([clientA.friends.snapshot(), clientB.friends.snapshot()]);
-  console.log(`[multi]   A: mutuals=${snapA.mutuals.length} incoming=${snapA.incoming.length} outgoing=${snapA.outgoing.length}`);
-  console.log(`[multi]   B: mutuals=${snapB.mutuals.length} incoming=${snapB.incoming.length} outgoing=${snapB.outgoing.length}`);
+  console.log(`[multi]   A: mutuals=${snapA.mutuals.length} received=${snapA.received.length} sent=${snapA.sent.length}`);
+  console.log(`[multi]   B: mutuals=${snapB.mutuals.length} received=${snapB.received.length} sent=${snapB.sent.length}`);
 
   const ok = sandboxesDistinct && !!userIdA && !!userIdB && userIdA !== userIdB;
   console.log(`[multi]   ${label}: ${ok ? "PASS" : "FAIL"}`);
