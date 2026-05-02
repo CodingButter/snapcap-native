@@ -20,12 +20,14 @@
  * land on the synthesized global, where SDK code can read them back via
  * `getGlobal(key)`. Consumer code outside the sandbox is unaffected.
  */
+import { join } from "node:path";
 import vm from "node:vm";
 import { Window } from "happy-dom";
 import type { DataStore } from "../storage/data-store.ts";
 import { createThrottle, type ThrottleConfig, type ThrottleGate } from "../transport/throttle.ts";
 import { getOrCreateJar } from "./cookie-jar.ts";
 import { SDK_SHIMS, type ShimContext } from "./index.ts";
+import { installWorkerShim } from "./worker.ts";
 
 /**
  * Construction options for a {@link Sandbox}.
@@ -57,6 +59,13 @@ export type SandboxOpts = {
   viewportHeight?: number;
   /** Persistent backing for localStorage / sessionStorage shims. */
   dataStore?: DataStore;
+  /**
+   * Filesystem path to the on-disk vendored Snap bundle. Used by the
+   * {@link installWorkerShim Worker shim} to resolve worker chunks
+   * (`<bundleDir>/cf-st.sc-cdn.net/dw/<basename>`). Defaults to
+   * `vendor/snap-bundle` relative to this package's source tree.
+   */
+  bundleDir?: string;
   /**
    * Optional opt-in HTTP throttling. Default: no throttle (browser-cadence).
    *
@@ -344,6 +353,20 @@ export class Sandbox {
         delete: async () => false, keys: async () => [], match: async () => undefined,
       };
     }
+    // Worker class shim — synchronous in-process Web Worker simulator.
+    // Snap's bundle calls `new Worker(blobUrl)` from `state.wasm.initialize()`
+    // to spawn a thread that boots the messaging WASM. We satisfy the
+    // contract by running the worker chunk's JS in a small isolated
+    // scope inside this same realm. See `./worker.ts` for the protocol
+    // bridge details.
+    const bundleDir = opts.bundleDir ?? join(import.meta.dirname, "..", "..", "vendor", "snap-bundle");
+    installWorkerShim(this, { bundleDir });
+
+    // (Reverted) MessageChannel/MessagePort exposure — caused auth to hang
+    // at bundle load time. Need narrower exposure path, possibly only at
+    // the time wasm.initialize fires.
+    // this.setGlobal("MessageChannel", MessageChannel);
+    // this.setGlobal("MessagePort", MessagePort);
   }
 
   /**
