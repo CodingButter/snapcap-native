@@ -1,6 +1,6 @@
 /**
  * Typed event bus — the shared subscription primitive every domain
- * manager (Friends, Messaging, Stories, Inbox, Presence) composes.
+ * manager (Friends, Messaging, Stories, Presence) composes.
  *
  * Built on the standard `EventTarget` so AbortSignal-based cleanup is
  * native — listeners auto-unsubscribe when the externally-passed

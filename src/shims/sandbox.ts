@@ -24,6 +24,11 @@ import { join } from "node:path";
 import vm from "node:vm";
 import { Window } from "happy-dom";
 import type { DataStore } from "../storage/data-store.ts";
+import type {
+  KeyManagerStatics,
+  StandaloneChatModule,
+  StandaloneChatWreq,
+} from "../auth/fidelius-mint.ts";
 import { createThrottle, type ThrottleConfig, type ThrottleGate } from "../transport/throttle.ts";
 import { getOrCreateJar } from "./cookie-jar.ts";
 import { SDK_SHIMS, type ShimContext } from "./index.ts";
@@ -197,6 +202,21 @@ export class Sandbox {
    * @internal
    */
   chatWasmBoot?: Promise<unknown>;
+  /**
+   * Resolved standalone Fidelius mint realm — a SECOND, isolated chat-WASM
+   * instance booted in its own `vm.Context` with neutered browser stubs.
+   * Owned by `auth/fidelius-mint.ts`; cached here so two `SnapcapClient`
+   * instances each mint their own identity in their own realm instead of
+   * sharing a process-singleton.
+   *
+   * @internal
+   */
+  fideliusMintBoot?: Promise<{
+    km: KeyManagerStatics;
+    moduleEnv: StandaloneChatModule;
+    context: vm.Context;
+    wreq: StandaloneChatWreq;
+  }>;
 
   constructor(opts: SandboxOpts = {}) {
     // Accept either a pre-built gate (shared across instances) or a config

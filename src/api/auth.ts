@@ -147,7 +147,7 @@ async function kickoffMessagingSession(ctx: ClientContext): Promise<void> {
   // placeholder UDS slot would let downstream E2E ops silently produce
   // garbage (encrypt against zeros, read garbage on decrypt). Better to
   // surface the bring-up failure loudly than to ship a bad identity.
-  const identity: FideliusIdentity = await mintFideliusIdentity();
+  const identity: FideliusIdentity = await mintFideliusIdentity(ctx.sandbox);
 
   const bearer = (authSlice(ctx.sandbox) as unknown as AuthSliceLive).authToken.token;
   if (!bearer) {

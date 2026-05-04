@@ -93,15 +93,20 @@ export {
   type FriendsEvents,
 } from "./api/friends.ts";
 
-// Shared subscription primitive — every domain manager (Friends today;
-// Messaging, Stories, Inbox, Presence ahead) composes this. `Subscription`
+// Shared subscription primitive — every domain manager (Friends,
+// Messaging today; Stories, Presence ahead) composes this. `Subscription`
 // is the consumer-facing live-handle type returned by every `on(...)`.
 export { TypedEventBus, type Subscription } from "./lib/typed-event-bus.ts";
-export { Messaging } from "./api/messaging.ts";
+export {
+  Messaging,
+  type MessagingEvents,
+  type ConversationSummary,
+  type RawEncryptedMessage,
+} from "./api/messaging.ts";
 export { Presence } from "./api/presence.ts";
 export { Stories } from "./api/stories.ts";
-export { Inbox } from "./api/inbox.ts";
 export { Media } from "./api/media.ts";
+export type { PlaintextMessage } from "./auth/fidelius-decrypt.ts";
 
 export { uuidToBytes, bytesToUuid, uuidToHighLow, highLowToUuid } from "./api/_helpers.ts";
 

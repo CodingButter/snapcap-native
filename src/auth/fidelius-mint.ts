@@ -31,8 +31,9 @@
  *      first-login time.
  *
  * Boot cost: ~12 MB WASM compile + ~1488 webpack module registrations +
- * ~250ms init. Cached on the module-level `cachedMintBoot` promise so
- * repeat mints in the same process share one instance.
+ * ~250ms init. Cached on `sandbox.fideliusMintBoot` so repeat mints
+ * against the same `Sandbox` share one instance, but two `SnapcapClient`
+ * instances each get their own realm (multi-tenant isolation).
  *
  * @internal Auth-layer; called from `kickoffMessagingSession` in
  * `api/auth.ts`.
@@ -41,9 +42,29 @@ import vm from "node:vm";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FideliusIdentity } from "../api/fidelius.ts";
+import type { Sandbox } from "../shims/sandbox.ts";
 
-type KeyManagerStatics = {
+/**
+ * Static handle to the standalone Fidelius `e2ee_E2EEKeyManager` Embind
+ * class. Exposed so per-Sandbox bring-up caches in {@link Sandbox} can
+ * type the resolved boot promise without re-declaring the shape.
+ *
+ * @internal
+ */
+export type KeyManagerStatics = {
   generateKeyInitializationRequest: (algorithm: number) => GenerationResult;
+};
+
+/**
+ * Embind class registry handed back as `moduleEnv` once the standalone
+ * mint WASM finishes init. The exact set of classes is broad (~74 Embind
+ * classes); this is intentionally loose-typed because consumers
+ * (`fidelius-decrypt.ts`) reach by name and probe shapes empirically.
+ *
+ * @internal
+ */
+export type StandaloneChatModule = Record<string, unknown> & {
+  e2ee_E2EEKeyManager: KeyManagerStatics & Record<string, Function>;
 };
 
 type GenerationResult = {
@@ -59,19 +80,89 @@ type GenerationResult = {
   request: object;
 };
 
-/** Cached boot result — one fresh-realm WASM instance per process. */
-let cachedMintBoot: Promise<{ km: KeyManagerStatics }> | null = null;
+/**
+ * Webpack `__webpack_require__` shape, leaked onto the mint realm's global
+ * as `__snapcap_p` by the runtime source-patch in `bootStandaloneMintWasm`.
+ * Exposed via {@link getStandaloneChatRealm} so consumers
+ * (`fidelius-decrypt.ts`) can address modules by id from the host realm.
+ *
+ * @internal
+ */
+export type StandaloneChatWreq = ((id: string) => unknown) & {
+  m: Record<string, Function>;
+};
+
+/**
+ * Full mint-realm bring-up payload — the cached vm.Context that hosts the
+ * standalone chat WASM, the moduleEnv with all 74 Embind classes, and the
+ * webpack require leaked onto that context's global. Returned by
+ * {@link getStandaloneChatRealm} so `fidelius-decrypt.ts` can run the
+ * worker chunk in the SAME realm that owns the WASM, source-patching it
+ * to inject our pre-built Module instead of having the chunk boot a
+ * second one.
+ *
+ * @internal
+ */
+export type StandaloneChatRealm = {
+  moduleEnv: StandaloneChatModule;
+  context: vm.Context;
+  wreq: StandaloneChatWreq;
+};
+
+/**
+ * Get a handle to the cached standalone-WASM `moduleEnv` (the populated
+ * Emscripten Module dictionary), booting it on first call. Same instance
+ * returned to {@link mintFideliusIdentity}; reusing it for decrypt avoids
+ * a second 12 MB WASM compile + 1488-module register cycle.
+ *
+ * Cached per-{@link Sandbox} on `sandbox.fideliusMintBoot`, so two
+ * `SnapcapClient` instances each get their own mint realm.
+ *
+ * @internal — used by `auth/fidelius-decrypt.ts`. Public consumers should
+ * call `mintFideliusIdentity` (which boots if needed) before reaching for
+ * this helper.
+ */
+export async function getStandaloneChatModule(sandbox: Sandbox): Promise<StandaloneChatModule> {
+  const { moduleEnv } = await getOrBootKeyManager(sandbox);
+  return moduleEnv;
+}
+
+/**
+ * Get the full mint-realm payload — moduleEnv, vm.Context, and the
+ * webpack require leaked onto that context's global. Lazy-boots on first
+ * call (same cached promise as {@link mintFideliusIdentity} /
+ * {@link getStandaloneChatModule}).
+ *
+ * Cached per-{@link Sandbox} on `sandbox.fideliusMintBoot` — each
+ * `SnapcapClient` instance owns its own mint realm; multi-tenant runners
+ * never see one tenant's identity bleed into another's session.
+ *
+ * `fidelius-decrypt.ts` uses this to run the f16f14e3 worker chunk in
+ * the same vm.Context that hosts our pre-minted WASM Module. The chunk's
+ * loadWasm path is source-patched away and our Module is injected into
+ * `un.wasmModule` so `En.createMessagingSession` finds the same Embind
+ * classes the standalone mint WASM registered.
+ *
+ * @internal
+ */
+export async function getStandaloneChatRealm(sandbox: Sandbox): Promise<StandaloneChatRealm> {
+  const { moduleEnv, context, wreq } = await getOrBootKeyManager(sandbox);
+  return { moduleEnv, context, wreq };
+}
 
 /**
  * Produce a fresh {@link FideliusIdentity} from a fresh-realm WASM
  * instance. Lazy-boots the standalone WASM on first call; subsequent
- * calls reuse the cached instance.
+ * calls on the same {@link Sandbox} reuse the cached instance.
  *
+ * @param sandbox - per-instance Sandbox; the boot promise is cached on
+ *   `sandbox.fideliusMintBoot` so each `SnapcapClient` mints its own
+ *   identity in its own realm.
  * @throws if the WASM boot fails (missing bundle files, factory shape
  *   shifted, runtime init timeout) or the mint call aborts.
  */
-export async function mintFideliusIdentity(): Promise<FideliusIdentity> {
-  const { km } = await getOrBootKeyManager();
+export async function mintFideliusIdentity(sandbox: Sandbox): Promise<FideliusIdentity> {
+  const { km } = await getOrBootKeyManager(sandbox);
   // Algorithm 1 = "TEN" (v10) — matches what browsers send at first
   // login. Older algorithm 0 (v9) shape produces a request without the
   // wrapped RWK and Snap's server still accepts it but we standardise
@@ -86,12 +177,20 @@ export async function mintFideliusIdentity(): Promise<FideliusIdentity> {
   };
 }
 
-async function getOrBootKeyManager(): Promise<{ km: KeyManagerStatics }> {
-  if (cachedMintBoot) return cachedMintBoot;
-  cachedMintBoot = bootStandaloneMintWasm();
+async function getOrBootKeyManager(sandbox: Sandbox): Promise<{
+  km: KeyManagerStatics;
+  moduleEnv: StandaloneChatModule;
+  context: vm.Context;
+  wreq: StandaloneChatWreq;
+}> {
+  if (sandbox.fideliusMintBoot) return sandbox.fideliusMintBoot;
+  const boot = bootStandaloneMintWasm();
+  sandbox.fideliusMintBoot = boot;
   // If the boot rejects, drop the cache so a retry can re-attempt.
-  cachedMintBoot.catch(() => { cachedMintBoot = null; });
-  return cachedMintBoot;
+  boot.catch(() => {
+    if (sandbox.fideliusMintBoot === boot) sandbox.fideliusMintBoot = undefined;
+  });
+  return boot;
 }
 
 function defaultBundleDir(): string {
@@ -104,7 +203,12 @@ function defaultBundleDir(): string {
  * guarantees clean Embind registration (no collision with the bundle's
  * own auto-instantiated Module).
  */
-async function bootStandaloneMintWasm(): Promise<{ km: KeyManagerStatics }> {
+async function bootStandaloneMintWasm(): Promise<{
+  km: KeyManagerStatics;
+  moduleEnv: StandaloneChatModule;
+  context: vm.Context;
+  wreq: StandaloneChatWreq;
+}> {
   const bundleDir = defaultBundleDir();
   const chatDw = join(bundleDir, "cf-st.sc-cdn.net", "dw");
   const runtimePath = join(chatDw, "9989a7c6c88a16ebf19d.js");
@@ -359,7 +463,12 @@ async function bootStandaloneMintWasm(): Promise<{ km: KeyManagerStatics }> {
       "fidelius-mint: WASM did not expose e2ee_E2EEKeyManager.generateKeyInitializationRequest — Embind shape may have shifted",
     );
   }
-  return { km };
+  return {
+    km,
+    moduleEnv: moduleEnv as StandaloneChatModule,
+    context,
+    wreq: wreq as StandaloneChatWreq,
+  };
 }
 
 /**

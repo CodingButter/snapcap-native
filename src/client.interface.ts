@@ -8,7 +8,6 @@ import type { Friends } from "./api/friends.ts";
 import type { Messaging } from "./api/messaging.ts";
 import type { Presence } from "./api/presence.ts";
 import type { Stories } from "./api/stories.ts";
-import type { Inbox } from "./api/inbox.ts";
 import type { Media } from "./api/media.ts";
 
 /**
@@ -115,8 +114,9 @@ export interface ISnapcapClient {
   readonly friends: Friends;
 
   /**
-   * Placeholder for the upcoming Messaging manager. No methods today —
-   * `client.messaging.send(...)` is a compile-time error.
+   * Messaging manager — inbox enumeration, raw envelope reads, live
+   * decrypted message stream, and outbound presence (typing/viewing).
+   * See {@link Messaging} for the surface.
    */
   readonly messaging: Messaging;
 
@@ -129,11 +129,6 @@ export interface ISnapcapClient {
    * Placeholder for the upcoming Stories manager. No methods today.
    */
   readonly stories: Stories;
-
-  /**
-   * Placeholder for the upcoming Inbox manager. No methods today.
-   */
-  readonly inbox: Inbox;
 
   /**
    * Placeholder for the upcoming Media manager. No methods today.

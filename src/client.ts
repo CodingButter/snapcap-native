@@ -32,7 +32,6 @@ import { Friends } from "./api/friends.ts";
 import { Messaging } from "./api/messaging.ts";
 import { Presence } from "./api/presence.ts";
 import { Stories } from "./api/stories.ts";
-import { Inbox } from "./api/inbox.ts";
 import { Media } from "./api/media.ts";
 import { Sandbox } from "./shims/sandbox.ts";
 import type { DataStore } from "./storage/data-store.ts";
@@ -153,8 +152,6 @@ export class SnapcapClient implements ISnapcapClient {
   readonly presence: Presence;
   /** {@inheritDoc ISnapcapClient.stories} */
   readonly stories: Stories;
-  /** {@inheritDoc ISnapcapClient.inbox} */
-  readonly inbox: Inbox;
   /** {@inheritDoc ISnapcapClient.media} */
   readonly media: Media;
 
@@ -210,7 +207,6 @@ export class SnapcapClient implements ISnapcapClient {
     this.messaging = new Messaging(getCtx);
     this.presence = new Presence(getCtx);
     this.stories = new Stories(getCtx);
-    this.inbox = new Inbox(getCtx);
     this.media = new Media(getCtx);
   }
 
