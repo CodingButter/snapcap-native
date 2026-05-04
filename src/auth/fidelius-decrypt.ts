@@ -103,6 +103,15 @@ export type SetupBundleSessionOpts = {
    * plaintext message. May fire many times per session.
    */
   onPlaintext: (msg: PlaintextMessage) => void;
+  /**
+   * Called once, after `En.createMessagingSession(...)` resolves, with
+   * the bundle-realm session object. Consumers (e.g. `Messaging.sendText`)
+   * hold the reference to drive outbound `sendMessageWithContent` calls
+   * via the session's `getConversationManager()` / `getSnapManager()`.
+   *
+   * Optional — leave unset if the caller only wants inbound decrypt.
+   */
+  onSession?: (session: BundleMessagingSession) => void;
   /** Called for diagnostic events. Defaults to `process.stderr.write`. */
   log?: (line: string) => void;
   /**
@@ -137,6 +146,16 @@ export type SetupBundleSessionOpts = {
  * once started); reserved for future explicit teardown.
  */
 export type BundleSessionDisposer = () => void;
+
+/**
+ * The bundle-realm WASM messaging session — Embind-bound, methods include
+ * `getConversationManager()`, `getSnapManager()`, `getFeedManager()`,
+ * `reachabilityChanged(b)`, `appStateChanged(state)`, etc.
+ *
+ * Surfaced via {@link SetupBundleSessionOpts.onSession} so outbound send
+ * methods on `Messaging` can drive `sendMessageWithContent` directly.
+ */
+export type BundleMessagingSession = Record<string, Function>;
 
 type EmModule = {
   _malloc: (n: number) => number;
@@ -214,6 +233,131 @@ export async function setupBundleSession(
     realmGlobal.Worker = function WorkerStub() {
       throw new Error("Worker unavailable in fidelius-decrypt realm");
     };
+  }
+  // CustomEvent + Event stubs — chat-bundle module 89588 (Zustand
+  // subscribe-with-CustomEvent dispatcher) reaches for `CustomEvent`
+  // when reachModule traverses module 56639's dep graph during a send.
+  // Provide minimal stubs; the bundle only constructs and dispatches
+  // these to no-op listener buckets.
+  if (typeof realmGlobal.CustomEvent !== "function") {
+    realmGlobal.CustomEvent = class CustomEvent {
+      type: string;
+      detail: unknown;
+      constructor(type: string, init?: { detail?: unknown }) {
+        this.type = type;
+        this.detail = init?.detail;
+      }
+    };
+  }
+  if (typeof realmGlobal.Event !== "function") {
+    realmGlobal.Event = class Event {
+      type: string;
+      constructor(type: string) {
+        this.type = type;
+      }
+    };
+  }
+  if (typeof realmGlobal.EventTarget !== "function") {
+    realmGlobal.EventTarget = class EventTarget {
+      #l = new Map<string, Set<(ev: unknown) => void>>();
+      addEventListener(type: string, h: (ev: unknown) => void): void {
+        if (!this.#l.has(type)) this.#l.set(type, new Set());
+        this.#l.get(type)!.add(h);
+      }
+      removeEventListener(type: string, h: (ev: unknown) => void): void {
+        this.#l.get(type)?.delete(h);
+      }
+      dispatchEvent(_ev: unknown): boolean { return true; }
+    };
+  }
+  // Beef up the document stub — chat-bundle module 89588 + descendants
+  // reach for hasFocus / visibilityState / readyState / addEventListener
+  // / removeEventListener at module-eval time. The mint realm's bare
+  // document was minimal; add the rest so wreq("56639") and friends can
+  // resolve their dep graphs without throwing.
+  const docAny = realmGlobal.document as Record<string, unknown> | undefined;
+  if (docAny) {
+    if (typeof docAny.hasFocus !== "function") docAny.hasFocus = () => true;
+    if (typeof docAny.visibilityState !== "string") docAny.visibilityState = "visible";
+    if (typeof docAny.readyState !== "string") docAny.readyState = "complete";
+    if (typeof docAny.addEventListener !== "function") {
+      docAny.addEventListener = () => {};
+      docAny.removeEventListener = () => {};
+    }
+    if (typeof docAny.dispatchEvent !== "function") docAny.dispatchEvent = () => true;
+    // createElement returning null breaks chat-bundle init paths that
+    // probe `"onreadystatechange" in c.createElement("script")` for
+    // legacy IE detection, then walk the result. Return a per-tag
+    // object stub with the slots most-likely consumed.
+    docAny.createElement = (tag: string): Record<string, unknown> => ({
+      tagName: typeof tag === "string" ? tag.toUpperCase() : "DIV",
+      onreadystatechange: null,
+      onload: null,
+      onerror: null,
+      style: {},
+      setAttribute: () => {},
+      getAttribute: () => null,
+      removeAttribute: () => {},
+      appendChild: (c: unknown) => c,
+      removeChild: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      cloneNode: () => ({}),
+      classList: {
+        add: () => {},
+        remove: () => {},
+        contains: () => false,
+        toggle: () => false,
+      },
+      // commonly-poked slots
+      src: "",
+      innerHTML: "",
+      textContent: "",
+    });
+    if (typeof docAny.createElementNS !== "function") {
+      docAny.createElementNS = (_ns: string, tag: string) => (docAny.createElement as Function)(tag);
+    }
+  }
+  // window-level focus / blur listeners — same purpose. Some module
+  // factories register synchronous addEventListener at top-level.
+  if (typeof realmGlobal.onfocus !== "function") realmGlobal.onfocus = null;
+  if (typeof realmGlobal.onblur !== "function") realmGlobal.onblur = null;
+  // BroadcastChannel — Snap's bundle uses it for cross-tab Zustand sync
+  // when present. Provide a no-op so module init doesn't throw.
+  if (typeof realmGlobal.BroadcastChannel !== "function") {
+    realmGlobal.BroadcastChannel = class BroadcastChannel {
+      name: string;
+      onmessage: ((ev: { data: unknown }) => void) | null = null;
+      constructor(name: string) { this.name = name; }
+      postMessage(_data: unknown): void {}
+      close(): void {}
+      addEventListener(): void {}
+      removeEventListener(): void {}
+    };
+  }
+  // requestIdleCallback — chat bundle uses this for background tasks.
+  if (typeof realmGlobal.requestIdleCallback !== "function") {
+    realmGlobal.requestIdleCallback = (cb: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void): number => {
+      return setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 50 }), 0) as unknown as number;
+    };
+    realmGlobal.cancelIdleCallback = (id: number): void => clearTimeout(id as unknown as NodeJS.Timeout);
+  }
+  // Blob shim — Node 18+ exposes `globalThis.Blob`. The bundle's media
+  // send pipeline (sendImage / sendSnap / stories.post) constructs Blobs
+  // and reads `.size` / `.type` / `.arrayBuffer()`, all of which Node's
+  // Blob supports. Project the host-realm Blob into the standalone realm
+  // so the bundle's `instanceof Blob` checks (where present) pass.
+  if (typeof realmGlobal.Blob !== "function" && typeof globalThis.Blob === "function") {
+    realmGlobal.Blob = globalThis.Blob;
+  }
+  // URL.createObjectURL stub — only one bundle path uses it (audio note).
+  // For image / snap / story sends it's not strictly required, but a stub
+  // prevents `URL.createObjectURL is not a function` crashes if the
+  // bundle's pg helper ever lands on the createObjectURL fallback branch.
+  const realmURL = realmGlobal.URL as { createObjectURL?: Function; revokeObjectURL?: Function } | undefined;
+  if (realmURL && typeof realmURL.createObjectURL !== "function") {
+    realmURL.createObjectURL = (_blob: unknown): string => "blob:snapcap-stub";
+    realmURL.revokeObjectURL = (_url: string): void => {};
   }
   if (!realmGlobal.MessageChannel) {
     // Tiny synchronous stub. The chunk constructs MessageChannel for its
@@ -296,6 +440,10 @@ export async function setupBundleSession(
           normalized = data.toString("utf8");
         } else {
           normalized = data as unknown as ArrayBuffer;
+        }
+        if (process.env.SNAPCAP_DEBUG_WORKER) {
+          const sz = typeof normalized === "string" ? normalized.length : (normalized as ArrayBuffer).byteLength;
+          log(`[ws.shim] MSG ${typeof normalized === "string" ? "txt" : "bin"} ${sz}B`);
         }
         // Project ArrayBuffer into the sandbox realm so `instanceof
         // ArrayBuffer` checks inside the chunk pass.
@@ -453,30 +601,179 @@ export async function setupBundleSession(
     throw new Error("setupBundleSession: Module.messaging_Session.create not a function");
   }
   const origCreate = Sess.create.bind(Sess);
+  const sessionStartMs = Date.now();
+  // Hold a session reference for the live-push fetch path. Captured the
+  // first time createMessagingSession resolves; the wrapped delegate
+  // hooks reach for it to call cm.fetchMessage by analyticsMessageId.
+  let capturedSession: Record<string, Function> | undefined;
+  // Dedupe analyticsMessageId fetches — the WS push fires the same id
+  // multiple times per delivery (analytics retry, batch echoes, etc.).
+  const fetchedAnalyticsIds = new Set<string>();
+
+  // Factory-wrapper builder. Slot 9 of messaging_Session.create can be
+  // either a FACTORY (`function(e){return {onMessageReceived: ...}}`,
+  // which is what the bundle's chunk passes — Embind invokes the factory
+  // with a session-context arg and uses the returned object) or a plain
+  // delegate object (callers that pre-build the delegate). We handle both
+  // shapes by wrapping the relevant onMessageReceived / onMessagesReceived
+  // slots so plaintext lands in `opts.onPlaintext`.
+  const buildHookedDelegate = (orig: Record<string, unknown>): Record<string, unknown> => {
+    const origOnMR = (orig.onMessageReceived as Function | undefined)?.bind(orig);
+    const origOnMsR = (orig.onMessagesReceived as Function | undefined)?.bind(orig);
+    return {
+      ...orig,
+      onMessageReceived: (t: unknown) => {
+        if (process.env.SNAPCAP_DEBUG_WORKER) {
+          const elapsed = Date.now() - sessionStartMs;
+          const obj = t as Record<string, unknown>;
+          log(`[hook.onMessageReceived] @${elapsed}ms isSender=${obj?.isSender} ct=${obj?.contentType} hasContent=${!!obj?.content}`);
+        }
+        if (process.env.SNAPCAP_PROBE_CONVMGR && t && typeof t === "object") {
+          const obj = t as Record<string, unknown>;
+          log(`[probe.t] keys=${Object.keys(obj).join(",")} sample=${safeStringifyVal(obj).slice(0, 400)}`);
+        }
+        handlePushMessage(t);
+        try { origOnMR?.(t); } catch (e) {
+          log(`[hook.onMessageReceived] orig threw ${(e as Error).message}`);
+        }
+      },
+      onMessagesReceived: (ts: unknown) => {
+        if (process.env.SNAPCAP_DEBUG_WORKER) {
+          const elapsed = Date.now() - sessionStartMs;
+          log(`[hook.onMessagesReceived] @${elapsed}ms len=${Array.isArray(ts) ? ts.length : "?"}`);
+        }
+        if (Array.isArray(ts)) {
+          for (const m of ts) handlePushMessage(m);
+        }
+        try { origOnMsR?.(ts); } catch (e) {
+          log(`[hook.onMessagesReceived] orig threw ${(e as Error).message}`);
+        }
+      },
+    };
+  };
+
+  // Push-path handler: deliver if the delegate already carries plaintext
+  // (cached history surfaces with `m.content` populated), otherwise pull
+  // the body from the bundle by analyticsMessageId via cm.fetchMessage —
+  // the bundle's WASM runs the Fidelius decrypt + cleartext-body lookup
+  // and hands us the unified plaintext message proto.
+  const handlePushMessage = (m: unknown): void => {
+    if (!m || typeof m !== "object") return;
+    const obj = m as Record<string, unknown>;
+    const content = obj.content;
+    const hasBytes = !!(content && (content as Uint8Array).byteLength > 0);
+    if (process.env.SNAPCAP_DEBUG_WORKER) {
+      const keys = Object.keys(obj).slice(0, 30).join(",");
+      const cid = (obj.conversationId as { id?: unknown })?.id ?? obj.conversationId;
+      const md = obj.conversationMetricsData as { conversationId?: unknown } | undefined;
+      const cidFromMd = (md?.conversationId as { id?: unknown })?.id ?? md?.conversationId;
+      log(`[handlePush] hasBytes=${hasBytes} cid=${safeStringifyVal(cid).slice(0,60)} cidMd=${safeStringifyVal(cidFromMd).slice(0,60)} keys=${keys}`);
+    }
+    if (hasBytes) {
+      // Cached history path — the analytics-style record actually carries
+      // plaintext bytes already. Surface verbatim.
+      deliverPlaintext(m, opts.onPlaintext, log);
+      return;
+    }
+    // Live-push notification with empty content. Resolve via convMgr.
+    fetchPushBody(obj);
+  };
+
   Sess.create = function patchedCreate(...a: unknown[]) {
-    const orig = a[9] as Record<string, Function> | undefined;
-    if (orig && typeof orig === "object") {
-      const origOnMR = orig.onMessageReceived?.bind(orig);
-      const origOnMsR = orig.onMessagesReceived?.bind(orig);
-      a[9] = {
-        ...orig,
-        onMessageReceived: (t: unknown) => {
-          deliverPlaintext(t, opts.onPlaintext, log);
-          try { origOnMR?.(t); } catch (e) {
-            log(`[hook.onMessageReceived] orig threw ${(e as Error).message}`);
-          }
-        },
-        onMessagesReceived: (ts: unknown) => {
-          if (Array.isArray(ts)) {
-            for (const m of ts) deliverPlaintext(m, opts.onPlaintext, log);
-          }
-          try { origOnMsR?.(ts); } catch (e) {
-            log(`[hook.onMessagesReceived] orig threw ${(e as Error).message}`);
-          }
-        },
+    const slot9 = a[9];
+    if (typeof slot9 === "function") {
+      // Factory: wrap so we hook the delegate the factory returns.
+      const origFactory = slot9 as (...fargs: unknown[]) => unknown;
+      a[9] = (...fargs: unknown[]) => {
+        const built = origFactory(...fargs);
+        if (built && typeof built === "object") {
+          return buildHookedDelegate(built as Record<string, unknown>);
+        }
+        return built;
       };
+    } else if (slot9 && typeof slot9 === "object") {
+      a[9] = buildHookedDelegate(slot9 as Record<string, unknown>);
     }
     return origCreate(...a);
+  };
+
+  // Live-push body fetch. Snap's messaging delegate fires with empty
+  // `content` for live WS push — the analytics-style record carries
+  // metadata only (analyticsMessageId / conversationMetricsData /
+  // decryptResult). The actual decrypted body is reachable via the
+  // bundle's `convMgr.fetchMessage(...)` / `fetchMessageByServerId(...)`
+  // — the same call Snap's web UI uses to render the message body after
+  // a push notification. We deduplicate per analyticsMessageId so the
+  // WS retry frames don't fire repeated fetches.
+  const fetchPushBody = (obj: Record<string, unknown>): void => {
+    if (!capturedSession) return; // session not yet ready — drop
+    const cm = (capturedSession.getConversationManager as Function | undefined)?.();
+    if (!cm) return;
+    const cmAny = cm as Record<string, Function>;
+
+    // Pull conversationId from conversationMetricsData.conversationId.
+    const cmd = obj.conversationMetricsData as { conversationId?: unknown } | undefined;
+    const convIdAny = cmd?.conversationId;
+    const convIdBytes = coerceIdBytes(convIdAny, VmU8);
+    if (!convIdBytes) return;
+
+    // Pull message identifier. The analytics record carries
+    // `analyticsMessageId` as a UUID string (e.g.
+    // "00000000-0000-0008-AB17-E6B2F4F7DD75") — the high 8 bytes encode
+    // the server message id, low 8 bytes are conv-id-tail. Use the
+    // attemptId (a 16-byte client UUID) as the dedupe key + raw id.
+    const aid = obj.analyticsMessageId;
+    const dedupeKey = typeof aid === "string"
+      ? aid
+      : safeStringifyVal(aid).slice(0, 80);
+    if (fetchedAnalyticsIds.has(dedupeKey)) return;
+    fetchedAnalyticsIds.add(dedupeKey);
+    // Cap dedupe set so we don't grow unboundedly.
+    if (fetchedAnalyticsIds.size > 5000) {
+      const first = fetchedAnalyticsIds.values().next().value as string | undefined;
+      if (first) fetchedAnalyticsIds.delete(first);
+    }
+
+    const onResult = (msg: unknown): void => {
+      if (msg && typeof msg === "object") {
+        deliverPlaintext(msg, opts.onPlaintext, log);
+      }
+    };
+
+    // Strategy: trigger `fetchConversationWithMessages` on the conv. The
+    // bundle's WASM re-decrypts that conv's recent messages and re-fires
+    // OUR ALREADY-WRAPPED `messagingDelegate.onMessagesReceived` with
+    // populated `m.content` — same callback the cached-history path uses
+    // at session start. We don't need a separate callback wrapper here;
+    // the existing wrap surfaces decrypted content via deliverPlaintext
+    // automatically.
+    //
+    // (Earlier we tried `fetchMessage(convId, aid, cb)` directly but the
+    // bundle's signature wants an int64 server message id, not the
+    // analytics UUID — wrong shape, threw repeatedly. The conv-level
+    // re-fetch is simpler and uses the path we already proved works.)
+    if (typeof cmAny.fetchConversationWithMessages === "function") {
+      try {
+        cmAny.fetchConversationWithMessages(
+          { id: convIdBytes },
+          {
+            onFetchConversationWithMessagesComplete: (
+              _conv: unknown,
+              messages: unknown,
+              _hasMore: unknown,
+            ) => {
+              if (Array.isArray(messages)) {
+                for (const m of messages) deliverPlaintext(m, opts.onPlaintext, log);
+              }
+            },
+            onError: (...a: unknown[]) =>
+              log(`[fetchPushBody.onError] ${safeStringifyVal(a).slice(0, 200)}`),
+          },
+        );
+      } catch (e) {
+        log(`[fetchPushBody] threw ${(e as Error).message?.slice(0, 200)}`);
+      }
+    }
   };
 
   // ── Inject our pre-built Module into un.wasmModule + fatal reporter ─
@@ -790,7 +1087,11 @@ export async function setupBundleSession(
   // restarts — without persistence, the WASM mints a fresh Fidelius
   // identity each run and any messages encrypted to our PREVIOUS
   // public key fail to decrypt with `CEK_ENTRY_NOT_FOUND`.
-  const UDS_PREFIX = "local_uds_";
+  // Canonical UDS slot path uses `local_` prefix (composed with slot
+  // names like `uds.e2eeIdentityKey.shared` → `local_uds.e2eeIdentityKey.shared`).
+  // An earlier version used `local_uds_` which produced the duplicate
+  // `local_uds_uds.e2eeIdentityKey.shared` key alongside the canonical one.
+  const UDS_PREFIX = "local_";
   const td = new TextDecoder();
   const te = new TextEncoder();
   const ds = opts.dataStore;
@@ -886,10 +1187,14 @@ export async function setupBundleSession(
           }
         },
         async purge() {
-          if (ds) {
-            try { await ds.delete(RWK_KEY); }
-            catch { /* tolerate */ }
-          }
+          // Intentionally a no-op (logged): the WASM calls purge() as a
+          // best-effort hint to rotate the wrapping key, but our SDK
+          // persists across runs — losing the RWK forces a re-mint and
+          // resets the entire identity (every cached CEK becomes
+          // unwrappable). We tolerate the rotation hint by ignoring it;
+          // the WASM regenerates the in-memory RWK on next session boot
+          // from the persisted blob.
+          log("[rwk.purge.skipped]");
         },
       };
     })(),
@@ -933,6 +1238,19 @@ export async function setupBundleSession(
   } catch (e) {
     log(`[fidelius-decrypt] createMessagingSession FAILED: ${(e as Error).message}`);
     throw e;
+  }
+
+  // Capture the session ref for the live-push body fetch path
+  // (handlePushMessage → fetchPushBody → cm.fetchMessage).
+  capturedSession = session;
+
+  // Hand the session out to the caller — `Messaging.sendText/sendImage/sendSnap`
+  // hold the reference and drive `sendMessageWithContent` through it.
+  if (opts.onSession) {
+    try { opts.onSession(session); }
+    catch (e) {
+      log(`[fidelius-decrypt] onSession callback threw ${(e as Error).message?.slice(0, 200)}`);
+    }
   }
 
   // ── CRITICAL: pulse reachabilityChanged + appStateChanged(ACTIVE) ──
@@ -1022,6 +1340,26 @@ export async function setupBundleSession(
         | undefined;
 
       if (cm) {
+        if (process.env.SNAPCAP_PROBE_CONVMGR) {
+          // One-shot introspection — print every method on convMgr and a
+          // .toString() of the candidates we suspect.
+          const allKeys: string[] = [];
+          let proto: object | null = cm as unknown as object;
+          while (proto && proto !== Object.prototype) {
+            for (const k of Object.getOwnPropertyNames(proto)) {
+              if (typeof (cm as Record<string, unknown>)[k] === "function") allKeys.push(k);
+            }
+            proto = Object.getPrototypeOf(proto);
+          }
+          log(`[probe] convMgr keys: ${Array.from(new Set(allKeys)).sort().join(", ")}`);
+          for (const k of ["fetchMessage", "fetchMessageByServerId", "fetchMessagesByServerIds", "fetchServerMessageIdentifier", "fetchMessageForQuotedView", "fetchMessages"]) {
+            const fn = (cm as Record<string, unknown>)[k];
+            if (typeof fn === "function") {
+              log(`[probe] cm.${k}.toString = ${(fn as Function).toString().slice(0, 200)}`);
+              log(`[probe] cm.${k}.length = ${(fn as Function).length}`);
+            }
+          }
+        }
         // History-fetch every conv first — surfaces decrypted messages
         // through the wrapped messagingDelegate.onMessagesReceived hook.
         for (const convId of convIds) {
@@ -1135,7 +1473,56 @@ function deliverPlaintext(
 
   if (!bytes || bytes.byteLength === 0) return;
 
-  onPlaintext({ content: bytes, isSender, contentType, raw: obj });
+  // Surface a hyphenated conversationId on `raw` so consumers can filter
+  // without re-decoding the embedded ID-bytes object. The WASM hands us
+  // either a top-level `conversationId: { id: Uint8Array(16) }` (live
+  // push) or only `conversationMetricsData.conversationId: { id: ... }`
+  // (some history paths). Normalize both into `raw.conversationId` as
+  // a UUID string while leaving the original obj keys intact for callers
+  // that want the raw shape.
+  const ridTop = (obj.conversationId as { id?: unknown } | undefined)?.id;
+  const md = obj.conversationMetricsData as { conversationId?: unknown } | undefined;
+  const ridMd = (md?.conversationId as { id?: unknown } | undefined)?.id;
+  const ridBytes = ridTop ?? ridMd;
+  let convIdStr: string | undefined;
+  if (ridBytes) {
+    convIdStr = bytesToUuidString(ridBytes);
+  }
+  const rawOut: Record<string, unknown> = { ...obj };
+  if (convIdStr && !rawOut.conversationId) {
+    rawOut.conversationId = convIdStr;
+  } else if (convIdStr && rawOut.conversationId && typeof rawOut.conversationId === "object") {
+    // Bundle hands us `{ id: bytes }`; promote a sibling string field for
+    // simple filtering. Keep the original object under `conversationIdRaw`.
+    rawOut.conversationIdRaw = rawOut.conversationId;
+    rawOut.conversationId = convIdStr;
+  }
+
+  if (process.env.SNAPCAP_DEBUG_WORKER) {
+    log(`[deliver] bytes=${bytes.byteLength} convId=${convIdStr ?? "?"} ct=${contentType} isSender=${isSender}`);
+  }
+
+  onPlaintext({ content: bytes, isSender, contentType, raw: rawOut });
+}
+
+/**
+ * Convert a 16-byte UUID byte array (from Embind) back into a
+ * hyphenated UUID string. Cross-realm safe.
+ */
+function bytesToUuidString(b: unknown): string | undefined {
+  if (!b) return undefined;
+  // Walk to a 16-byte indexable — handles real Uint8Array, cross-realm
+  // typed array, plain {0,1,...,15,byteLength:16}, or an array.
+  const o = b as { byteLength?: number; length?: number; [k: number]: number };
+  const n = o.byteLength ?? o.length ?? 0;
+  if (n !== 16) return undefined;
+  const hex: string[] = [];
+  for (let i = 0; i < 16; i++) {
+    const v = (o[i] ?? 0) & 0xff;
+    hex.push(v.toString(16).padStart(2, "0"));
+  }
+  const h = hex.join("");
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;
 }
 
 /** Convert UUID string ("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx") to 16 bytes in the given realm's Uint8Array. */
@@ -1147,6 +1534,66 @@ function uuidToBytes16(uuid: string, VmU8: Uint8ArrayConstructor): Uint8Array {
   const out = new VmU8(16);
   for (let i = 0; i < 16; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   return out;
+}
+
+/**
+ * Loose UUID → 16-byte realm-Uint8Array. Returns `undefined` if the
+ * string isn't UUID-shaped (Snap sometimes emits ids that miss
+ * separators or vary in case).
+ */
+function uuidStringToBytes16(uuid: string, VmU8: Uint8ArrayConstructor): Uint8Array {
+  const hex = uuid.replace(/-/g, "").toLowerCase();
+  if (hex.length !== 32 || !/^[0-9a-f]{32}$/.test(hex)) {
+    // Best-effort — pad / truncate to 16 bytes worth of hex.
+    const padded = (hex + "00000000000000000000000000000000").slice(0, 32);
+    const out = new VmU8(16);
+    for (let i = 0; i < 16; i++) out[i] = parseInt(padded.slice(i * 2, i * 2 + 2), 16) || 0;
+    return out;
+  }
+  const out = new VmU8(16);
+  for (let i = 0; i < 16; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+/**
+ * Coerce one of the bundle's Embind ID shapes to a realm-local 16-byte
+ * Uint8Array. Embind hands us either:
+ *   - `{ id: Uint8Array(16) }` (most common — e.g. conversationId on
+ *     conversationMetricsData)
+ *   - `{ id: { 0:n, 1:n, …, 15:n, byteLength:16 } }` (cross-realm shape
+ *     where the inner Uint8Array's prototype isn't ours)
+ *   - a bare 16-byte Uint8Array
+ *   - a UUID string (rare but possible)
+ *
+ * Returns `undefined` if none of the above produce 16 bytes.
+ */
+function coerceIdBytes(v: unknown, VmU8: Uint8ArrayConstructor): Uint8Array | undefined {
+  if (!v) return undefined;
+  if (typeof v === "string") {
+    return uuidStringToBytes16(v, VmU8);
+  }
+  // Walk one or two levels to find a 16-byte buffer.
+  const tryRead = (b: unknown): Uint8Array | undefined => {
+    if (!b) return undefined;
+    if (b instanceof Uint8Array && b.byteLength === 16) {
+      const out = new VmU8(16);
+      out.set(b);
+      return out;
+    }
+    if (typeof b === "object") {
+      const o = b as { byteLength?: number; [k: number]: number };
+      if (o.byteLength === 16) {
+        const out = new VmU8(16);
+        for (let i = 0; i < 16; i++) out[i] = o[i] ?? 0;
+        return out;
+      }
+    }
+    return undefined;
+  };
+  const direct = tryRead(v);
+  if (direct) return direct;
+  const inner = (v as { id?: unknown }).id;
+  return tryRead(inner);
 }
 
 /** Cross-realm-safe value stringifier that survives BigInt + circular refs. */

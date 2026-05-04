@@ -29,6 +29,7 @@ import { bytesToUuid, extractUserId, makeFriendIdParams, uuidToBytes } from "./_
 import {
   diffGraph,
   type FriendGraphSnapshot,
+  isEmptyGraphSnapshot,
   loadGraphCache,
   saveGraphCache,
 } from "./_friend_graph_cache.ts";
@@ -863,6 +864,65 @@ function makeSentRequest(
 }
 
 /**
+ * Build the id-set view of the friend graph used by the persistent
+ * cache + diff machinery.
+ *
+ * Pure projection: no sync, no DataStore access. Materialization (rich
+ * `Friend` / `ReceivedRequest` shapes) lives in {@link buildSnapshot};
+ * this returns ONLY the three id-sets the {@link FriendGraphSnapshot}
+ * persists, plus a wall-clock timestamp.
+ *
+ * Shared between the snapshot read path (which persists on every read
+ * so single-call consumers seed the cache) and the diff-bridge tick
+ * path (which persists after each fan-out so subsequent ticks diff
+ * against the latest).
+ *
+ * @internal
+ */
+function buildGraphSnapshot(user: UserSlice): FriendGraphSnapshot {
+  return {
+    mutuals: Array.isArray(user.mutuallyConfirmedFriendIds)
+      ? user.mutuallyConfirmedFriendIds.map(unwrapUserId).filter((id) => id !== "")
+      : [],
+    outgoing: Array.isArray(user.outgoingFriendRequestIds)
+      ? user.outgoingFriendRequestIds.map(unwrapUserId).filter((id) => id !== "")
+      : [],
+    incoming: user.incomingFriendRequests
+      ? Array.from(user.incomingFriendRequests.keys())
+          .map(unwrapUserId)
+          .filter((id) => id !== "")
+      : [],
+    ts: Date.now(),
+  };
+}
+
+/**
+ * Persist `snap` only if doing so wouldn't clobber a previously-good
+ * cache with an empty snapshot. The bundle's `state.user` slice can
+ * legitimately project as `{mutuals:[], outgoing:[], incoming:[]}` during
+ * boot before the first `SyncFriendData` lands; writing that over a
+ * populated cache wipes the offline-replay baseline between SDK runs.
+ *
+ * Falls through to {@link saveGraphCache} when `snap` is non-empty OR
+ * when no prior populated cache exists. Best-effort: failures are
+ * swallowed (matches the underlying `saveGraphCache` contract).
+ *
+ * @internal
+ */
+async function saveGraphCacheGuarded(
+  ds: import("../storage/data-store.ts").DataStore,
+  snap: FriendGraphSnapshot,
+): Promise<void> {
+  if (isEmptyGraphSnapshot(snap)) {
+    try {
+      const prior = await loadGraphCache(ds);
+      if (prior && !isEmptyGraphSnapshot(prior)) return;
+    } catch { /* fall through to save attempt */ }
+  }
+  await saveGraphCache(ds, snap);
+}
+
+/**
  * Build a full `FriendsSnapshot` from a `UserSlice`. Pure — no sync, no
  * side effects. The single source of truth for snapshot shape; both the
  * top-level `snapshot()` accessor and the `onChange` subscriber path
@@ -982,7 +1042,44 @@ export class Friends implements IFriendsManager {
 
   /** {@inheritDoc IFriendsManager.snapshot} */
   async snapshot(): Promise<FriendsSnapshot> {
-    return buildSnapshot(await this.#ensureSynced());
+    const user = await this.#ensureSynced();
+    // Persist the id-set cache on every snapshot read. The diff-style
+    // event bridge below also writes this key on every selector tick,
+    // but bridges only run when someone has subscribed — without this
+    // call, a consumer that ONLY uses `list()` / `snapshot()` would
+    // never seed the persisted graph cache, and a future subscriber
+    // would have nothing to replay deltas against. Routing every read
+    // through the same DataStore key keeps single-source-of-truth and
+    // ensures cold-start consumers find a populated cache.
+    //
+    // Awaited (not fire-and-forget) so consumers that immediately
+    // `process.exit()` after a single `list()` / `snapshot()` still
+    // see the cache key flushed to disk. The FileDataStore flush is a
+    // synchronous `writeFileSync` under one `await`, matching every
+    // other DataStore write the SDK does — bounded cost.
+    await this.#persistGraphSnapshotFrom(user);
+    return buildSnapshot(user);
+  }
+
+  /**
+   * Build the id-set snapshot from a live `UserSlice` and persist it
+   * into the per-instance DataStore under {@link FRIEND_GRAPH_CACHE_KEY}.
+   *
+   * Best-effort, fire-and-forget: the underlying `saveGraphCache`
+   * swallows persistence errors so a failing flush never poisons the
+   * read or the live event fan-out. Shared between the snapshot read
+   * path and the diff-bridge tick path so both code routes write the
+   * same shape under the same key.
+   *
+   * @internal
+   */
+  async #persistGraphSnapshotFrom(user: UserSlice): Promise<void> {
+    try {
+      const ctx = await this._getCtx();
+      await saveGraphCacheGuarded(ctx.dataStore, buildGraphSnapshot(user));
+    } catch {
+      /* persistence failures shouldn't poison the read */
+    }
   }
 
   /** {@inheritDoc IFriendsManager.refresh} */
@@ -1280,24 +1377,11 @@ export class Friends implements IFriendsManager {
 
     const ctx = await this._getCtx();
 
-    // Snapshot of the friend graph as id-sets — what gets persisted +
-    // diffed. Materialization (publicUsers / IncomingFriendRequestRecord
-    // lookups) happens at emit time using the live slice values, NOT
-    // the persisted snapshot.
-    const buildCurrent = (u: UserSlice): FriendGraphSnapshot => ({
-      mutuals: Array.isArray(u.mutuallyConfirmedFriendIds)
-        ? u.mutuallyConfirmedFriendIds.map(unwrapUserId).filter((id) => id !== "")
-        : [],
-      outgoing: Array.isArray(u.outgoingFriendRequestIds)
-        ? u.outgoingFriendRequestIds.map(unwrapUserId).filter((id) => id !== "")
-        : [],
-      incoming: u.incomingFriendRequests
-        ? Array.from(u.incomingFriendRequests.keys())
-            .map(unwrapUserId)
-            .filter((id) => id !== "")
-        : [],
-      ts: Date.now(),
-    });
+    // Snapshot shape comes from the module-level `buildGraphSnapshot`
+    // helper — same projection used by the read-path persistence
+    // (`#persistGraphSnapshotFrom`). Materialization (publicUsers /
+    // IncomingFriendRequestRecord lookups) happens at emit time using
+    // the live slice values, NOT the persisted snapshot.
 
     // Seed prior. Cache hit → replay offline deltas. Cache miss →
     // establish baseline silently (first-ever run, no replay).
@@ -1306,11 +1390,11 @@ export class Friends implements IFriendsManager {
     if (cached) {
       prior = cached;
     } else {
-      prior = buildCurrent(userSlice(ctx.sandbox));
+      prior = buildGraphSnapshot(userSlice(ctx.sandbox));
       // Persist the baseline so a crash before the first real tick
       // doesn't lose it; subsequent runs will diff against this rather
       // than treating the whole graph as "new".
-      await saveGraphCache(ctx.dataStore, prior);
+      await saveGraphCacheGuarded(ctx.dataStore, prior);
     }
 
     // Run the first diff synchronously so offline-window deltas fan
@@ -1354,10 +1438,10 @@ export class Friends implements IFriendsManager {
     // is empty by construction).
     {
       const liveSlice = userSlice(ctx.sandbox);
-      const initial = buildCurrent(liveSlice);
+      const initial = buildGraphSnapshot(liveSlice);
       fanOut(initial, liveSlice);
       prior = initial;
-      await saveGraphCache(ctx.dataStore, prior);
+      await saveGraphCacheGuarded(ctx.dataStore, prior);
     }
 
     subscribeUserSlice<Composite>(
@@ -1381,12 +1465,14 @@ export class Friends implements IFriendsManager {
       },
       (_curr, _prev, state: ChatState) => {
         const liveSlice = userSliceFrom(state);
-        const current = buildCurrent(liveSlice);
+        const current = buildGraphSnapshot(liveSlice);
         fanOut(current, liveSlice);
         prior = current;
         // Fire-and-forget; persistence failures are swallowed inside
         // saveGraphCache so they can't break the live emit fan-out.
-        void saveGraphCache(ctx.dataStore, current);
+        // Guarded variant avoids clobbering a populated cache with an
+        // empty snapshot during an interim user-slice tick.
+        void saveGraphCacheGuarded(ctx.dataStore, current);
       },
     );
     // Note: install-once-per-instance — no signal-based teardown. The

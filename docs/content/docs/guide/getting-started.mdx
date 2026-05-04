@@ -44,6 +44,21 @@ The constructor **throws** if `browser.userAgent` is missing. There's no shared 
 
 `credentials` are **not** persisted to the DataStore. Pass them again on every boot if you want automatic recovery from server-side session expiry.
 
+### Choosing a DataStore
+
+Two implementations ship out of the box:
+
+- **`FileDataStore(path)`** — single-JSON-file persistence on disk. Survives process restarts. Good for development and single-tenant production.
+- **`MemoryDataStore()`** — ephemeral in-process map. Cold-starts (full WebLogin + kameleon boot) every run. Good for tests and short-lived scripts.
+
+For Redis / Postgres / KMS-wrapped persistence, implement the [`DataStore`](/docs/api/interfaces/DataStore) interface — see [Persistence → Plugging in your own backend](/docs/guide/persistence#plugging-in-your-own-backend).
+
+### Clean shutdown
+
+There's no `client.dispose()` to call. The per-instance Sandbox is GC-tracked; once the `SnapcapClient` reference is released and any `messaging.on(...)` subscriptions have been unsubscribed, the realm and all in-process state get collected.
+
+If you want a clean network shutdown — closing the bundle's duplex WebSocket, tearing down the Zustand auth slice — call `await client.logout()`. It is safe to call even if the bundle session never came up.
+
 ## A complete script
 
 ```ts

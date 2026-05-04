@@ -1,0 +1,77 @@
+---
+title: 'Safety & risk'
+description: 'ToS posture, account risk, fingerprint hygiene, throttling, and the things this project will never be used for.'
+---
+
+`@snapcap/native` is **unofficial** and **not affiliated with Snap Inc.** It is research and developer tooling, surfaced for people who need a programmatic interface to their own Snap accounts.
+
+This page is intentionally short. Read it before pointing the SDK at anything you can't afford to lose.
+
+## Terms of Service
+
+Automating Snapchat may violate Snapchat's Terms of Service. Whether a given use is permitted is a question for you, your legal counsel, and Snap — not for the maintainers of this project. By using `@snapcap/native` you accept that compliance with Snap's ToS, your local laws, and any applicable contracts is **your responsibility**.
+
+## Account risk
+
+Accounts driven by automation can be **rate-limited, locked, or banned**. Snap's anti-fraud signals are opaque, change without notice, and do not return clean error codes. There is no SLA on this SDK's behaviour against the live service.
+
+Practical guidance:
+
+- Use **throwaway or test accounts** when you can. Assume any account driven by this SDK can lose access without warning.
+- Keep credentials and persisted state isolated per tenant — one `DataStore` per account, one `userAgent` per account.
+- Don't operate accounts you don't own or have explicit, ongoing consent to operate.
+- If an account starts returning auth failures repeatedly, **stop**. Re-running login on a flagged account makes it worse, not better.
+
+## Fingerprint hygiene
+
+`BrowserContext.userAgent` is required at construction time — there is no shared default. Reasoning: every consumer defaulting to the same UA would itself become a snapcap fingerprint, and that's the kind of signal that makes a fleet trivially identifiable.
+
+In multi-tenant deployments:
+
+- Vary `userAgent` per tenant, picking from a pool of recent realistic Chrome / Edge / Safari UAs.
+- Plan for per-tenant residential proxies once `BrowserContext.httpAgent` plumbs through (TODO). Without per-tenant IP diversity, every tenant in a process shares the same outbound address — visible to Snap.
+- Be aware that **TLS fingerprint is per-process**, not per-instance. Node's TLS stack is monolithic; every `SnapcapClient` in one process shares the same JA3. Real fingerprint diversity at scale requires multiple processes.
+
+See [Multi-tenant](/docs/guide/multi-tenant) for the full picture.
+
+## Throttling
+
+The default is **no throttle**. Outbound requests fire as fast as the consumer code asks for them.
+
+Production deployments should opt into the curated rules:
+
+```ts
+import {
+  SnapcapClient,
+  createSharedThrottle,
+  RECOMMENDED_THROTTLE_RULES,
+} from "@snapcap/native";
+
+const gate = createSharedThrottle({ rules: RECOMMENDED_THROTTLE_RULES });
+const clients = tenants.map((t) =>
+  new SnapcapClient({ ...t, throttle: gate }),
+);
+```
+
+A shared `ThrottleGate` keeps the **aggregate** request rate constant regardless of how many tenants are coordinating. See [Throttling](/docs/guide/throttle) for rule shape and trade-offs.
+
+## What this project is not for
+
+The maintainers will not knowingly support, advise on, or accept contributions for:
+
+- **Spam.** Mass-DM, mass-friend-add, unsolicited outreach, or any flavour of "growth hacking" that targets people who didn't ask to be targeted.
+- **Harassment.** Doxxing, stalking, mass-reporting, or coordinated targeting of individuals.
+- **Scraping at scale.** Bulk extraction of user data, friend graphs, or content beyond what a single account can read for legitimate use.
+- **Account takeover or credential theft.** Anything that operates against accounts the operator does not own or have explicit, contemporaneous consent to operate.
+- **Ban evasion.** Rebuilding access for accounts Snap has terminated, or rotating credentials across a fleet to evade enforcement.
+- **Impersonation or fraud.** Using automation to misrepresent identity, defraud users, or bypass commerce / age controls.
+
+If you use this for any of the above, you are on your own. Bug reports tied to abusive automation will be closed without comment.
+
+## Disclosure
+
+Found a real bug, a security issue, or a way the SDK could leak credentials? Open a GitHub issue (for non-sensitive bugs) or contact the maintainers privately for security-sensitive reports. See the [GitHub repository](https://github.com/codingbutter/snapcap-native) for the current contact path.
+
+## License & liability
+
+`@snapcap/native` is released under the [MIT license](https://github.com/codingbutter/snapcap-native/blob/main/LICENSE). The license text is the operative statement of warranty and liability — the short version: **no warranty, no liability, use at your own risk**.

@@ -1,0 +1,126 @@
+---
+title: 'Architecture overview'
+description: 'A one-page mental model: SnapcapClient → per-instance Sandbox (vm.Context + happy-dom + Snap''s JS/WASM + shims + DataStore) → native gRPC-Web transport.'
+---
+
+`@snapcap/native` is a thin orchestration layer over Snap's actual web JavaScript bundle. We do not reimplement Snap's protocols — we run them. The SDK's job is to make Snap's bundle think it's running in a real browser, then provide the I/O the bundle expects (cookies, storage, gRPC, WebSockets) without rerouting through a browser shell.
+
+This page is the one-page mental model. For the long-form deep dives (sandbox construction, kameleon, SSO flow, Fidelius, the bundle session), jump to [Internals](/docs/internals/architecture).
+
+## The diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Consumer code                                                       │
+│    import { SnapcapClient, FileDataStore } from "@snapcap/native"    │
+│    const client = new SnapcapClient({ dataStore, browser, creds })   │
+│    await client.authenticate(); await client.friends.list()          │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+┌─────────────────────────────────▼────────────────────────────────────┐
+│  SnapcapClient — public TypeScript SDK                                │
+│   ─ Per-domain managers: friends, messaging, presence, stories, media │
+│   ─ Auth surface: authenticate, logout, refreshAuthToken, …           │
+│   ─ Owns one per-instance Sandbox + lazy ClientContext                │
+└─────────────────────────────────┬────────────────────────────────────┘
+                                  │
+        ┌─────────────────────────┴──────────────────────────┐
+        │                                                    │
+┌───────▼────────────────────────────┐      ┌────────────────▼──────────┐
+│  Sandbox — per-instance vm.Context │      │  Native transport layer    │
+│                                    │      │                            │
+│  ─ happy-dom Window own-properties │      │  ─ Node fetch (snapshotted │
+│    projected onto realm globals    │      │    at module load)         │
+│  ─ Patched webpack runtime         │      │  ─ tough-cookie cookie jar │
+│    (leaks __webpack_require__)     │      │    backed by DataStore     │
+│  ─ Snap's chat + accounts JS       │      │  ─ Throttle gates          │
+│  ─ Snap's WASM modules:            │      │  ─ Structured logging      │
+│      · kameleon attestation        │      │                            │
+│      · chat-session worker         │      │  Bypasses the sandbox.     │
+│      · Fidelius E2E (~12 MB)       │      │  Outbound traffic stays    │
+│  ─ Browser API shims (every I/O    │      │  observable from the host  │
+│    boundary):                      │      │  realm.                    │
+│      fetch / XHR / WebSocket /     │      │                            │
+│      localStorage / sessionStorage │      └────────────────┬───────────┘
+│      / IndexedDB / document.cookie │                       │
+│  ─ DataStore-backed persistence    │                       │
+└────────────────────────────────────┘                       ▼
+                                          gRPC-Web to:
+                                            web.snapchat.com   (AtlasGw, MCS)
+                                            accounts.snapchat.com (WebLogin, SSO)
+                                            session.snapchat.com  (attestation)
+                                            aws.duplex.snapchat.com (presence WS)
+                                            cf-st.sc-cdn.net      (media)
+```
+
+## Layer by layer
+
+### `SnapcapClient` — public SDK
+
+The single public entry point. Construction is synchronous and does no I/O — it just builds a per-instance `Sandbox` and wires the per-domain managers. The first network call happens inside `authenticate()`.
+
+Per-domain managers (`client.friends`, `client.messaging`, `client.presence`, `client.stories`, `client.media`) are typed wrappers around the bundle's own webpack-resolved methods. They expose verbs in idiomatic TypeScript shapes (UUID strings, plain numbers, `Uint8Array`) and translate to whatever buffer / `{highBits, lowBits}` shape the bundle expects internally.
+
+### Per-instance `Sandbox` (V8 `vm.Context`)
+
+Each `SnapcapClient` constructs an empty `vm.Context` (so V8 fills the new realm with `Object` / `Array` / `Promise` / `WebAssembly` / …), then projects every defined own-property of a fresh happy-dom `Window` onto the realm's global. happy-dom is **not** registered globally — it never touches Node's `globalThis`. Two clients in the same process get two independent realms.
+
+Inside the sandbox:
+
+- **Snap's accounts bundle** — the WebLoginService gRPC client + protobuf encoders + the kameleon WASM loader. Loaded at `authenticate()` cold start.
+- **Snap's chat bundle** — AtlasGw client, MessagingCoreService, Fidelius E2E identity / decrypt, the bundle session that drives the duplex WebSocket.
+- **Snap's WASM modules** — kameleon (~814 KB, attestation token mint), Fidelius E2E (~12 MB plus an 814 KB sibling), the chat-session worker. All run unmodified inside the realm.
+- **Webpack runtime patch** — Snap's webpack closure-privates `__webpack_require__`. We source-patch the IIFE so the runtime exposes it as `globalThis.__snapcap_p`, which the SDK reads back to address modules by id.
+
+### Browser API shims
+
+The bundle expects to talk to a browser. The SDK shims every I/O boundary so the bundle's own code stays unmodified:
+
+- `fetch` and `XMLHttpRequest` route through native `fetch` with the SDK's cookie jar.
+- `WebSocket` is implemented over `ws`, with cookies from the same jar and cross-realm projection so the bundle's listeners receive realm-local objects.
+- `localStorage`, `sessionStorage` route through a `StorageShim` over a `DataStore` (keys prefixed `local_` / `session_`).
+- `IndexedDB` is shimmed via async helpers over the same `DataStore` (keys `indexdb_<db>__<store>__<key>`).
+- `document.cookie` is bridged to a tough-cookie jar so JS-level cookie reads/writes stay consistent with the outgoing-fetch path.
+
+### `DataStore` — pluggable persistence
+
+A small key/value interface backs everything that the bundle would normally write to the browser:
+
+```ts
+interface DataStore {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+  // … plus list/clear primitives
+}
+```
+
+`FileDataStore` (single-JSON-file) and `MemoryDataStore` ship out of the box. Production deployments typically swap in Redis (one key prefix per tenant), Postgres (`BYTEA` keyed on `(tenant_id, key)`), or an envelope-encrypted store keyed by KMS. See [Persistence](/docs/guide/persistence) for the key layout and a custom-backend recipe.
+
+### Native transport — outbound network
+
+`src/transport/native-fetch.ts` snapshots Node's `fetch` at module load. Outbound gRPC-Web traffic does **not** go through the sandbox — it leaves the host realm directly, with cookies attached by `transport/cookies.ts`. The bundle's own `fetch` is shimmed to route through `nativeFetch` too, so its outbound traffic uses the same path and stays observable.
+
+This is also where opt-in throttling lives. A `ThrottleGate` (per-instance or shared across many clients) gates every outbound request; the recommended rule set is curated for Snap's anti-spam thresholds. See [Throttling](/docs/guide/throttle).
+
+### Per-account isolation
+
+Per-instance state — Zustand auth slice, bearer token, webpack runtime caches, kameleon boot output, bundle session — is owned by the sandbox. Two `SnapcapClient`s in the same process never collide on state; isolation is enforced at the V8 `vm.Context` boundary, not by convention.
+
+The pattern that scales:
+
+- One `DataStore` per tenant.
+- One `BrowserContext.userAgent` per tenant for fingerprint diversity.
+- One shared `ThrottleGate` across all tenants so aggregate request rate stays constant in N.
+
+See [Multi-tenant](/docs/guide/multi-tenant) for the recommended runner shape.
+
+## Where to go next
+
+- [Internals → Architecture](/docs/internals/architecture) — the long-form version with the bundle-driven api layer, the auth flow, and what's deferred.
+- [Internals → Sandbox](/docs/internals/sandbox) — why we don't use happy-dom's `GlobalRegistrator`, and how the realm projection works.
+- [Internals → Webpack trick](/docs/internals/webpack-trick) — the runtime patch that exposes `__webpack_require__`.
+- [Internals → Kameleon](/docs/internals/kameleon) — the attestation WASM and how we boot it.
+- [Internals → SSO flow](/docs/internals/sso-flow) — bearer mint, cookie seeding.
+- [Internals → Fidelius](/docs/internals/fidelius) — the E2E identity layer.
+- [Internals → Messaging session](/docs/internals/messaging-session) — bundle-driven inbound decrypt.

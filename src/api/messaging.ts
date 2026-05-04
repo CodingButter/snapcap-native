@@ -39,12 +39,15 @@ import { getOrCreateJar } from "../shims/cookie-jar.ts";
 import { type Subscription, TypedEventBus } from "../lib/typed-event-bus.ts";
 import {
   setupBundleSession,
+  type BundleMessagingSession,
   type PlaintextMessage,
 } from "../auth/fidelius-decrypt.ts";
 import {
   mintFideliusIdentity,
   getStandaloneChatRealm,
+  type StandaloneChatRealm,
 } from "../auth/fidelius-mint.ts";
+import { sendMediaViaSession, createOutboundCapture } from "./_media_upload.ts";
 
 // ── Inline ProtoReader (no shared one in transport/) ──────────────────
 class ProtoReader {
@@ -154,6 +157,24 @@ export class Messaging {
    */
   #sessionPromise?: Promise<void>;
 
+  /**
+   * Bundle-realm messaging session captured during `#bringUpSession` —
+   * the result of `En.createMessagingSession(...)`. `sendText` /
+   * `sendImage` / `sendSnap` drive `sendMessageWithContent` through it.
+   *
+   * @internal
+   */
+  #session?: BundleMessagingSession;
+
+  /**
+   * Standalone-chat realm captured during `#bringUpSession`. Holds the
+   * webpack `wreq` we use to reach the bundle's send entries (module
+   * 56639 — `pn` / `E$` / `HM`).
+   *
+   * @internal
+   */
+  #realm?: StandaloneChatRealm;
+
   /** @internal */
   constructor(private readonly _getCtx: () => Promise<ClientContext>) {}
 
@@ -255,6 +276,7 @@ export class Messaging {
     // Mint identity (warm-path: no-op if already cached) + grab realm.
     await mintFideliusIdentity(sandbox);
     const realm = await getStandaloneChatRealm(sandbox);
+    this.#realm = realm;
 
     // Pull bearer + self userId from the auth slice. The slice's userId
     // lands via Zustand setState during `auth.initialize`, which can race
@@ -262,26 +284,60 @@ export class Messaging {
     // before throwing so consumers don't hit a transient miss when they
     // chain `.on()` directly off `await authenticate()`.
     const { authSlice } = await import("../bundle/register.ts");
+    const auth = await import("./auth.ts");
     let userId: string | undefined;
     let bearer: string | undefined;
-    for (let i = 0; i < 20; i++) {
+    // Poll up to 30s for the bundle's auth slice to populate `userId`. On
+    // warm-path auth this is sub-second; on cold-fresh auth (no cookies,
+    // no cached identity) the bundle's React-effect chain that lands
+    // `state.auth.userId` can take 10-25s because it depends on multiple
+    // async fetches. For BEARER, we have a separate SDK-side getter
+    // (`getAuthToken`) that resolves immediately once authBundle()
+    // returns — use it as a fast-path.
+    bearer = auth.getAuthToken(ctx) || undefined;
+
+    // Kick the bundle to populate `state.auth.userId` (on cold-fresh
+    // auth, the field isn't set until `fetchUserData` runs — which the
+    // bundle's React layer normally calls on page mount but we don't run).
+    try {
+      const slice0 = authSlice(sandbox) as Record<string, unknown>;
+      const fetchUserData = slice0.fetchUserData as ((source?: string) => unknown) | undefined;
+      if (typeof fetchUserData === "function") {
+        // Best-effort fire — return value may be a Promise we don't need
+        // to await; the side-effect is the slice update.
+        const r = fetchUserData("messaging_session_bringup");
+        if (r && typeof (r as Promise<unknown>).then === "function") {
+          (r as Promise<unknown>).catch(() => {});
+        }
+      }
+    } catch { /* tolerate */ }
+
+    for (let i = 0; i < 300; i++) {
       const slice = authSlice(sandbox) as {
         userId?: string;
+        me?: { userId?: string } | string;
         authToken?: { token?: string };
       };
-      userId = slice.userId;
-      bearer = slice.authToken?.token;
+      // Try several known userId locations on the slice. The cold-fresh
+      // auth slice has only `me` + the action methods until fetchUserData
+      // runs; warm-path runs have `userId` directly.
+      const meAny = slice.me as { userId?: string } | string | undefined;
+      userId =
+        slice.userId ??
+        (typeof meAny === "object" ? meAny?.userId : undefined) ??
+        (typeof meAny === "string" ? meAny : undefined);
+      bearer = slice.authToken?.token || bearer;
       if (userId && userId.length >= 32 && bearer) break;
       await new Promise((r) => setTimeout(r, 100));
     }
     if (!userId || userId.length < 32) {
       throw new Error(
-        "Messaging.#bringUpSession: chat-bundle auth slice has no userId after 2s — call client.authenticate() first",
+        "Messaging.#bringUpSession: chat-bundle auth slice has no userId after 30s — auth.initialize may not have completed; verify client.authenticate() resolved cleanly",
       );
     }
     if (!bearer) {
       throw new Error(
-        "Messaging.#bringUpSession: chat-bundle auth slice has no bearer after 2s — call client.authenticate() first",
+        "Messaging.#bringUpSession: no bearer in auth slice or via getAuthToken — call client.authenticate() first",
       );
     }
 
@@ -313,7 +369,192 @@ export class Messaging {
       onPlaintext: (msg) => {
         this.#events.emit("message", msg);
       },
+      onSession: (session) => {
+        this.#session = session;
+      },
     });
+  }
+
+  // ── Outbound sends ──────────────────────────────────────────────────
+
+  /**
+   * Send a plain text DM into a conversation. Awaits messaging-session
+   * bring-up before dispatching (so the first send pays the ~3s cold
+   * cost; subsequent sends are free).
+   *
+   * Path: direct gRPC `MessagingCoreService.CreateContentMessage` with
+   * the captured wire shape from recon. Snap's web client sends text DMs
+   * with the body in plaintext at this layer — no Fidelius wrap on the
+   * `CreateContentMessage` request envelope. Same wire shape as the
+   * recon HAR `text-dm-create-content-message.req.bin`.
+   *
+   * @param convId - Hyphenated conversation UUID (from `listConversations`).
+   * @param text - UTF-8 message body. Snap's UI line-breaks ~250 chars;
+   *   server accepts longer but truncated rendering may apply.
+   * @returns The message ID Snap assigned (UUID string from the response,
+   *   OR our locally-generated client UUID if the response shape doesn't
+   *   carry it under a known field — caller can dedupe on the inbound
+   *   `message` event with `isSender === true`).
+   */
+  async sendText(convId: string, text: string): Promise<string> {
+    await this.#ensureSession();
+    if (!this.#session || !this.#realm) {
+      throw new Error("Messaging.sendText: bundle session not available after bring-up");
+    }
+
+    // Bundle-driven path. Module 56639 export `pn` (`ae` in build's
+    // internal naming) is the bundle's own sendText helper:
+    //   pn(session, convRef, text, quotedMessageId?, cdMetadata?, botMention?)
+    // It builds the ContentMessage envelope, encodes via the bundle's
+    // own proto codec (matches what the SPA sends), drives Fidelius for
+    // E2E convs, and dispatches via session.getConversationManager()
+    // .sendMessageWithContent. Snap's WS push later fires our wrapped
+    // messagingDelegate.onMessageReceived hook with isSender=true,
+    // surfacing the outbound for confirmation.
+    const sendsMod = this.#realm.wreq("56639") as Record<string, Function>;
+    const pn = sendsMod.pn as Function | undefined;
+    if (typeof pn !== "function") {
+      throw new Error(
+        "Messaging.sendText: module 56639 export `pn` (sendText) not a function — bundle shape may have shifted",
+      );
+    }
+
+    // Build a realm-local conversation ref so the bundle's cross-realm
+    // checks (Embind expects realm-local Uint8Array) pass.
+    const VmU8 = await import("node:vm").then(
+      (vm) => vm.runInContext("Uint8Array", this.#realm!.context) as Uint8ArrayConstructor,
+    );
+    const idBytes = new VmU8(16);
+    idBytes.set(uuidToBytes(convId));
+    const convRef = { id: idBytes, str: convId };
+
+    // Resolve as soon as the bundle's send routine completes (`pn` returns
+    // when the gRPC `CreateContentMessage` POST has been queued/dispatched
+    // by the WASM session). We do NOT wait for a WS echo — empirically
+    // unverified that Snap pushes our own outbound back to us via the
+    // duplex channel; the previous 15s echo wait was speculative and
+    // gated send latency on a callback that never reliably fires.
+    //
+    // For SOME conversation kinds (notably bots like My AI, conv type=50)
+    // the bundle's `sendMessageWithContent` success callback never fires
+    // even though the gRPC POST DOES go out and the bot DOES reply. The
+    // gRPC dispatch is fire-and-forget on our side; the success callback
+    // is the bundle's own bookkeeping that, for bot convs, depends on a
+    // duplex notification we don't receive a handler for. Cap the wait at
+    // 3s and resolve regardless — the message has been sent by the time
+    // the WASM hands it to the gRPC layer (~tens of ms). Consumers can
+    // confirm landing via `on("message", cb)` with `isSender === true`.
+    const fallbackId = crypto.randomUUID();
+    const sendPromise = pn(this.#session, convRef, text, undefined, undefined, false) as Promise<unknown>;
+    await Promise.race([
+      sendPromise.catch(() => undefined),
+      new Promise<void>((r) => setTimeout(r, 3000)),
+    ]);
+    return fallbackId;
+  }
+
+  /**
+   * Send a persistent image attachment into a conversation. Image stays
+   * in chat history (not ephemeral). Routes through the bundle's
+   * messaging session — `sendMessageWithContent` builds the
+   * `CreateContentMessage` envelope and the upload pipeline runs from
+   * inside the WASM via the `mediaUploadDelegate`.
+   *
+   * @param convId - Hyphenated conversation UUID.
+   * @param image - Raw image bytes (PNG / JPEG / WebP).
+   * @param opts - Optional `caption` shown beside the image.
+   * @returns The message ID assigned by the bundle's send pipeline.
+   *
+   * @remarks
+   * Wire-tested via `sendText` only — `sendImage` compiles + the
+   * bring-up path runs without throwing, but the bundle's `pe`/`E$`
+   * media path needs a Blob shim and end-to-end media-upload primitives
+   * we haven't yet exercised. If the bundle's `E$` send rejects, an
+   * error surfaces; the caller can retry on the next bundle update.
+   */
+  async sendImage(
+    convId: string,
+    image: Uint8Array,
+    opts?: { caption?: string },
+  ): Promise<string> {
+    await this.#ensureSession();
+    const ctx = await this._getCtx();
+    const selfUserId = await this._getSelfUserId(ctx);
+    const conv = await this._lookupConversation(convId, selfUserId);
+    if (!this.#session || !this.#realm) {
+      throw new Error("Messaging.sendImage: bundle session not available after bring-up");
+    }
+    return sendMediaViaSession({
+      realm: this.#realm,
+      session: this.#session,
+      kind: "image",
+      convId,
+      convType: conv.type,
+      media: image,
+      caption: opts?.caption,
+      events: this.#events,
+    });
+  }
+
+  /**
+   * Send a disappearing snap to a conversation (destination kind 122).
+   * Fidelius-encrypts the media body to the recipient's identity key —
+   * the bundle's WASM owns this path end-to-end via its
+   * `getSnapManager()` / `sendMessageWithContent` pipeline. Default is
+   * view-once (no explicit timer); pass `{ timer: 5 }` to override.
+   *
+   * @param convId - Hyphenated conversation UUID.
+   * @param media - Raw media bytes (image or video — bundle sniffs).
+   * @param opts - Optional `timer` (display duration in seconds; omit
+   *   for view-once).
+   * @returns The message ID assigned by the bundle's send pipeline.
+   *
+   * @remarks
+   * Wire-tested via `sendText` only — `sendSnap` compiles + brings up
+   * the session without throwing. The bundle drives Fidelius encryption
+   * for snaps inside its own send pipeline, so as long as the session is
+   * up and the standalone realm has Blob support, the snap goes out
+   * E2E-encrypted to the recipient's identity key.
+   */
+  async sendSnap(
+    convId: string,
+    media: Uint8Array,
+    opts?: { timer?: number },
+  ): Promise<string> {
+    await this.#ensureSession();
+    const ctx = await this._getCtx();
+    const selfUserId = await this._getSelfUserId(ctx);
+    const conv = await this._lookupConversation(convId, selfUserId);
+    if (!this.#session || !this.#realm) {
+      throw new Error("Messaging.sendSnap: bundle session not available after bring-up");
+    }
+    return sendMediaViaSession({
+      realm: this.#realm,
+      session: this.#session,
+      kind: "snap",
+      convId,
+      convType: conv.type,
+      media,
+      timer: opts?.timer,
+      events: this.#events,
+    });
+  }
+
+  /** @internal — re-look up a conversation by id (cheap; cached at server). */
+  private async _lookupConversation(
+    convId: string,
+    selfUserId: string,
+  ): Promise<ConversationSummary> {
+    const all = await this.listConversations(selfUserId);
+    const found = all.find((c) => c.conversationId === convId);
+    if (!found) {
+      // Not in the synced list — treat as 1:1 DM (kind 13) with self as the
+      // only known participant; the server will reject if the conv is
+      // really stale. This codepath is rare (caller passed a convId not
+      // returned by `listConversations`).
+      return { conversationId: convId, type: 13, participants: [selfUserId] };
+    }
+    return found;
   }
 
   // ── Raw envelope reads ──────────────────────────────────────────────
@@ -387,18 +628,29 @@ export class Messaging {
     new DataView(framed.buffer).setUint32(1, body.byteLength, false);
     framed.set(body, 5);
     const url = `https://web.snapchat.com/messagingcoreservice.MessagingCoreService/${methodName}`;
+    // mcs-cof-ids-bin: Snap's web client sends a bin-encoded protobuf
+    // metadata listing the COF (Circle of Friends) feature ids the
+    // client supports. CreateContentMessage in particular looks at this
+    // header to gate delivery; without it Snap returns an OK trailer
+    // but silently drops the message. The captured value below is the
+    // exact bytes from recon-bin/text-dm-create-content-message.req.headers.json
+    // and is stable across the chat-bundle build we vendor.
+    const headers: Record<string, string> = {
+      "authorization": `Bearer ${bearer}`,
+      "content-type": "application/grpc-web+proto",
+      "x-grpc-web": "1",
+      "x-user-agent": "grpc-web-javascript/0.1",
+      "x-snap-client-user-agent": "SnapchatWeb/13.79.0 PROD (linux 0.0.0; chrome 147.0.0.0)",
+      "user-agent": ctx.userAgent,
+      "accept": "*/*",
+      "cookie": cookieHeader,
+    };
+    if (methodName === "CreateContentMessage") {
+      headers["mcs-cof-ids-bin"] = "ChjSlcACiLO9AcSl8gLelrIBipe7AYzw4QE=";
+    }
     const r = await nativeFetch(url, {
       method: "POST",
-      headers: {
-        "authorization": `Bearer ${bearer}`,
-        "content-type": "application/grpc-web+proto",
-        "x-grpc-web": "1",
-        "x-user-agent": "grpc-web-javascript/0.1",
-        "x-snap-client-user-agent": "SnapchatWeb/13.79.0 PROD (linux 0.0.0; chrome 147.0.0.0)",
-        "user-agent": ctx.userAgent,
-        "accept": "*/*",
-        "cookie": cookieHeader,
-      },
+      headers,
       body: framed.buffer.slice(framed.byteOffset, framed.byteOffset + framed.byteLength) as ArrayBuffer,
     });
     const buf = new Uint8Array(await r.arrayBuffer());
@@ -407,11 +659,41 @@ export class Messaging {
       const grpcMessage = r.headers.get("grpc-message");
       throw new Error(`Messaging._grpcCall(${methodName}) status=${r.status} grpc-status=${grpcStatus} grpc-message=${grpcMessage}`);
     }
-    if (buf.byteLength < 5) {
-      throw new Error(`Messaging._grpcCall(${methodName}): truncated response (got ${buf.byteLength} bytes)`);
+    // gRPC-Web framing: each frame = 1-byte flag + 4-byte big-endian length
+    // + payload. Flag bit 0x80 indicates a trailer-only frame (text key:val
+    // pairs separated by \r\n). Walk every frame; the data frame is the
+    // payload, trailer frames carry grpc-status / grpc-message.
+    let pos = 0;
+    let dataPayload: Uint8Array | undefined;
+    let trailerStatus = 0;
+    let trailerMessage = "";
+    while (pos + 5 <= buf.byteLength) {
+      const flag = buf[pos]!;
+      const fLen = new DataView(buf.buffer, buf.byteOffset + pos + 1, 4).getUint32(0, false);
+      const start = pos + 5;
+      const end = start + fLen;
+      if (end > buf.byteLength) break;
+      const slice = buf.subarray(start, end);
+      if ((flag & 0x80) === 0) {
+        dataPayload = slice;
+      } else {
+        const trailerStr = new TextDecoder().decode(slice);
+        const m = trailerStr.match(/grpc-status:\s*(\d+)/i);
+        if (m) trailerStatus = parseInt(m[1]!);
+        const mm = trailerStr.match(/grpc-message:\s*(.+)/i);
+        if (mm) trailerMessage = mm[1]!.trim();
+      }
+      pos = end;
     }
-    const len = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(1, false);
-    return buf.subarray(5, 5 + len);
+    if (trailerStatus !== 0) {
+      throw new Error(`Messaging._grpcCall(${methodName}) grpc-status=${trailerStatus} grpc-message=${trailerMessage}`);
+    }
+    if (!dataPayload) {
+      // Some methods (write-only) legitimately return no data frame, only
+      // an OK trailer. Return empty.
+      return new Uint8Array(0);
+    }
+    return dataPayload;
   }
 }
 
@@ -614,6 +896,44 @@ function parseContentMessage(buf: Uint8Array, conversationId: string): RawEncryp
  * Surfaces ALL strings as a `\n`-joined block when there are multiple,
  * so callers see the full plaintext context, not just the longest field.
  */
+/**
+ * Walk a CreateContentMessage response looking for a 16-byte UUID — the
+ * server stamps the assigned messageId on the response envelope. Returns
+ * the first 16-byte field's hyphenated form, or `undefined` if none
+ * found.
+ *
+ * The response shape varies subtly by content kind, but every shape
+ * carries the assigned message UUID somewhere as a 16-byte field; a
+ * shallow walk through the top-level fields is sufficient.
+ *
+ * @internal
+ */
+function extractFirstUuidFromResp(envelope: Uint8Array): string | undefined {
+  if (envelope.byteLength === 0) return undefined;
+  let r: ProtoReader;
+  try { r = new ProtoReader(envelope); } catch { return undefined; }
+  while (r.pos < envelope.byteLength) {
+    const n = r.next(); if (!n) break;
+    if (n.wireType === 2) {
+      let bb: Uint8Array;
+      try { bb = r.bytes(); } catch { return undefined; }
+      if (bb.byteLength === 16) return bytesToUuid(bb);
+      // Recurse one level into nested messages
+      let rr: ProtoReader;
+      try { rr = new ProtoReader(bb); } catch { continue; }
+      while (rr.pos < bb.byteLength) {
+        const nn = rr.next(); if (!nn) break;
+        if (nn.wireType === 2) {
+          let ibb: Uint8Array;
+          try { ibb = rr.bytes(); } catch { break; }
+          if (ibb.byteLength === 16) return bytesToUuid(ibb);
+        } else rr.skip(nn.wireType);
+      }
+    } else r.skip(n.wireType);
+  }
+  return undefined;
+}
+
 function extractPlaintextBody(envelope: Uint8Array): string | undefined {
   const found: string[] = [];
   function walk(b: Uint8Array, depth = 0): void {

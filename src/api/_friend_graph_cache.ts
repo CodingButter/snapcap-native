@@ -39,9 +39,25 @@ export interface FriendGraphSnapshot {
  * DataStore key the snapshot is persisted under. Single key per logical
  * client — the cache is global to the Friends manager, not per-event.
  *
+ * Carries the bundle-localStorage `local_` prefix even though the SDK
+ * writes it directly: keeps key-naming uniform with the bundle's other
+ * persisted slots (`local_rwk_blob`, `local_uds.*`, `local_snapcap_self`)
+ * so a future migration to the actual localStorage shim is just a route
+ * change with no rename. Old key (`snapcap:friend_graph_cache`) is migrated
+ * lazily on the first {@link loadGraphCache} call — see implementation.
+ *
  * @internal
  */
-export const FRIEND_GRAPH_CACHE_KEY = "snapcap:friend_graph_cache";
+export const FRIEND_GRAPH_CACHE_KEY = "local_snapcap:friend_graph_cache";
+
+/**
+ * Legacy DataStore key the snapshot was persisted under prior to the
+ * `local_` prefix migration. Used by {@link loadGraphCache} for one-shot
+ * read + copy + delete on first run after the rename. Not written to.
+ *
+ * @internal
+ */
+export const FRIEND_GRAPH_CACHE_KEY_LEGACY = "snapcap:friend_graph_cache";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -64,6 +80,19 @@ export async function loadGraphCache(
     raw = await ds.get(FRIEND_GRAPH_CACHE_KEY);
   } catch {
     return undefined;
+  }
+  // Lazy legacy-key migration: if the new prefixed key is missing AND a
+  // pre-migration cache exists under the old key, copy it forward and
+  // delete the old slot. Backward-compatible single-shot.
+  if (!raw || raw.byteLength === 0) {
+    try {
+      const legacy = await ds.get(FRIEND_GRAPH_CACHE_KEY_LEGACY);
+      if (legacy && legacy.byteLength > 0) {
+        try { await ds.set(FRIEND_GRAPH_CACHE_KEY, legacy); } catch { /* tolerate */ }
+        try { await ds.delete(FRIEND_GRAPH_CACHE_KEY_LEGACY); } catch { /* tolerate */ }
+        raw = legacy;
+      }
+    } catch { /* tolerate */ }
   }
   if (!raw || raw.byteLength === 0) return undefined;
   try {
@@ -102,6 +131,18 @@ export async function saveGraphCache(
   } catch {
     /* persistence failures shouldn't poison live emit fan-out */
   }
+}
+
+/**
+ * `true` iff `s` carries no ids in any of the three slots. Used by the
+ * persist call sites to avoid clobbering a previously-good cache when the
+ * bundle's `state.user` slice hasn't fully synced yet (the empty-snapshot
+ * tick during boot was previously wiping the cache between runs).
+ *
+ * @internal
+ */
+export function isEmptyGraphSnapshot(s: FriendGraphSnapshot): boolean {
+  return s.mutuals.length === 0 && s.outgoing.length === 0 && s.incoming.length === 0;
 }
 
 /**

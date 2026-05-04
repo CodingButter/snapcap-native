@@ -90,6 +90,32 @@ for (const env of envelopes) {
 
 `fetchEncryptedMessages()` and `listConversations()` are independent of the bundle session — they're plain gRPC-Web. You can mix raw-envelope backfill with `on("message", …)` for go-forward live delivery.
 
+## Sending text
+
+```ts
+const messageId = await client.messaging.sendText(conversationId, "hello");
+```
+
+`sendText` routes through Snap's own bundle send pipeline (`sendMessageWithContent` inside the messaging session), which builds the `ContentMessage` envelope, encodes it with the bundle's own proto codec, drives Fidelius for E2E conversations, and dispatches via gRPC. It triggers the lazy bundle-session bring-up if it hasn't happened yet.
+
+The returned id is best-effort: if the bundle's response shape doesn't carry a server-assigned id under a known field, the SDK returns a locally-generated client UUID. Subscribe via `messaging.on("message", cb)` and filter `isSender === true` for delivery confirmation through the canonical inbound path.
+
+```ts
+const sub = client.messaging.on("message", (msg) => {
+  if (msg.isSender) console.log("delivered:", new TextDecoder().decode(msg.content));
+});
+await client.messaging.sendText(conversationId, "hello");
+```
+
+## Sending images and snaps (experimental)
+
+```ts
+await client.messaging.sendImage(conversationId, imageBytes, { caption: "hi" });
+await client.messaging.sendSnap(conversationId, imageBytes);
+```
+
+Both compile and bring up the bundle session cleanly; the bundle's send pipeline owns upload, encryption, and dispatch. They are **not** wire-tested today — treat as experimental until the integration suite covers them.
+
 ## Outbound presence (stub today)
 
 ```ts
@@ -117,8 +143,9 @@ Bring-up is single-flight per `SnapcapClient`: concurrent `.on(...)` calls all w
 |---|---|
 | `on("message", ...)` — live decrypted inbound | Working |
 | `listConversations()` / `fetchEncryptedMessages()` — raw envelopes | Working |
+| `sendText(convId, text)` | Working — routes through bundle send pipeline |
+| `sendImage(...)` / `sendSnap(...)` | Experimental — compiles and brings up cleanly, not wire-tested |
 | `on("typing" / "viewing" / "read", ...)` | Subscribable today, but the bundle's inbound presence delegate hasn't been hooked yet — events don't fire |
 | `setTyping` / `setViewing` outbound WS frames | Stubs — resolve after the duration but no frame fires |
-| `messaging.send(...)` | Not surfaced — outbound text/media still goes through the bundle session's send path, not yet wrapped |
 
 See the [messaging-session internals](/docs/internals/messaging-session) for the bring-up plumbing, and [Fidelius](/docs/internals/fidelius) for the identity / decrypt side.

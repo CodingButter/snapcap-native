@@ -1,9 +1,9 @@
 ---
 title: '@snapcap/native'
-description: 'Browser-free Snap client. Native Node bridge to web.snapchat.com — no Playwright, no Frida, no rooted phone.'
+description: 'Unofficial TypeScript SDK for Snapchat Web. Runs Snap''s own bundle and WASM modules inside an isolated Node vm.Context — no Playwright, no Frida, no rooted phone.'
 ---
 
-A Node SDK that talks directly to `web.snapchat.com`'s gRPC-Web API the same way the browser does — by running Snap's actual JavaScript bundle in an isolated Node `vm.Context`. You get an idiomatic TypeScript class with a small auth surface and per-domain managers (`client.friends`, etc.).
+`@snapcap/native` is an unofficial TypeScript SDK for Snapchat Web that runs Snap's own JavaScript bundle and WASM modules inside an isolated Node `vm.Context`. It exposes a browser-free, typed client for authentication, friends, messaging, persistence, throttling, network observability, and multi-account automation — without Playwright, Puppeteer, Selenium, Frida, emulators, or rooted phones.
 
 ```ts
 import { SnapcapClient, FileDataStore } from "@snapcap/native";
@@ -11,7 +11,7 @@ import { SnapcapClient, FileDataStore } from "@snapcap/native";
 const client = new SnapcapClient({
   dataStore: new FileDataStore("./auth.json"),
   credentials: {
-    username: process.env.SNAP_USER,
+    username: process.env.SNAP_USER!,
     password: process.env.SNAP_PASS!,
   },
   browser: {
@@ -25,34 +25,91 @@ const friends = await client.friends.list();
 console.log(friends.map((f) => f.username));
 ```
 
+This is **research and developer tooling**, not affiliated with Snap Inc. Read [Safety & risk](/docs/safety) before pointing this at production accounts.
+
 ## Where to go next
 
 <Cards>
   <Card title="Get started" href="/docs/guide/getting-started" description="Install, authenticate, and make your first call in under five minutes." />
-  <Card title="API reference" href="/docs/api" description="Every public method on SnapcapClient and the per-domain managers, with signatures and examples." />
-  <Card title="How it works" href="/docs/internals/architecture" description="For the curious: vm sandbox, shim layer, kameleon, SSO, bundle session." />
+  <Card title="Architecture" href="/docs/architecture" description="Layered overview — Sandbox, bundle, WASM, shims, transport." />
+  <Card title="Safety & risk" href="/docs/safety" description="ToS posture, account risk, what this project will not be used for." />
+  <Card title="API reference" href="/docs/api" description="Every public method on SnapcapClient and the per-domain managers." />
 </Cards>
+
+## Why this is different
+
+Most Snapchat-automation projects fall into one of these buckets. `@snapcap/native` deliberately doesn't.
+
+| Approach | Shape | Why this is different |
+|---|---|---|
+| Playwright / Puppeteer / Selenium | Full Chromium per account | We don't drive a browser at all. Per-account cost is a `vm.Context` instead of a Chromium process. |
+| Frida / rooted Android / iOS | Native Snap binary + instrumentation | Snap's mobile risk engine is aggressive. The web target is durable; the mobile target wasn't. |
+| Old "private API" wrappers | Hand-rolled protobuf calls | We run Snap's own bundle and WASM, not a reimplementation. When Snap rebuilds, the shapes shift but behaviour is the same. |
+| Snap Kit / Login Kit | Official, sanctioned | Too narrow — no friend graph, no message send, no story posting. |
+| Userscripts / browser extensions | One Chrome tab | Single-account, single-tab, no headless, no multi-tenant. |
+
+Concretely, `@snapcap/native`:
+
+- Runs in **native Node** (≥ 22 or Bun ≥ 1.3) — no headless browser at runtime.
+- Loads Snap's web JS + WASM into a **per-instance `vm.Context`** with a happy-dom Window projected on top.
+- **Calls Snap's own WASM** for kameleon attestation, the chat session, and Fidelius E2E. We drive the primitives, not reimplement them.
+- Exposes an **idiomatic TypeScript surface** with per-domain managers (`client.friends`, `client.messaging`, …).
+- **Multi-tenant in-process.** Every `SnapcapClient` owns its own sandbox, DataStore, and bundle bring-up caches.
+- **Pluggable persistence.** `localStorage`, `sessionStorage`, `IndexedDB`, and the cookie jar all route through a small `DataStore` interface — file, memory, or your own backend.
 
 ## What this is not
 
-- It's **not** a wrapper around an emulator, Frida, or a rooted phone — those approaches were tried and failed against Snap's mobile risk engine.
-- It's **not** Snap's official Login Kit or Snap Kit — those don't expose friend management or story posting.
-- It's **not** Playwright-driven. There is zero headless browser at runtime.
+- **Not** a wrapper around an emulator, Frida, or a rooted phone — those approaches were tried and don't survive Snap's mobile risk engine.
+- **Not** Snap's official Login Kit or Snap Kit — those don't expose friend management or story posting.
+- **Not** Playwright-driven. There is zero headless browser at runtime.
+- **Not** affiliated with Snap Inc. Unofficial, MIT-licensed, research tooling.
 
 ## Status
 
-Working today, exercised by the smoke test on a real account:
+The source of truth for what's wired today. See the [capability matrix in the README](https://github.com/codingbutter/snapcap-native#capability-matrix) for the complete table; the headline groups:
 
-| Capability | Status |
-|---|---|
-| `authenticate()` — warm cookies + cold WebLogin | Working |
-| `client.friends` — `list` / `search` / `sendRequest` / `acceptRequest` / `rejectRequest` / `block` / `unblock` / `getUsers` / `snapshot` / `refresh` | Working |
-| `client.friends.on(...)` — typed graph events (`friend:added`, `friend:removed`, `request:received`, `request:cancelled`, `request:accepted`, `change`) with offline-replay | Working |
-| `client.messaging.listConversations` / `fetchEncryptedMessages` (raw envelopes) | Working |
-| `client.messaging.on("message", ...)` — live decrypted inbound stream | Working |
-| Per-instance `Sandbox` (multi-tenant in one process) | Working |
-| Opt-in HTTP throttling (per-instance + shared gates) | Working |
-| Structured network observability (`SNAP_NETLOG=1`, `setLogger`) | Working |
-| `client.messaging.setTyping` / `setViewing`, plus `client.presence` / `stories` / `media` | Stub — bringing up the bundle session works, outbound presence frames pending |
+### Working
 
-The bundle-native messaging session (lazy-brought-up by the SDK on the first `messaging.on(...)` / `setTyping` / `setViewing` call) owns Fidelius E2E identity — there is no SDK-side identity to manage. See [Messaging session](/docs/internals/messaging-session) for the implementation story, and [Multi-tenant](/docs/guide/multi-tenant) for running many accounts in one process.
+- `SnapcapClient` construction, `authenticate()`, `logout()`, `refreshAuthToken()`, `isAuthenticated()`.
+- `client.friends` — `list` / `search` / `getUsers` / `snapshot` / `refresh` / `sendRequest` / `acceptRequest` / `rejectRequest` / `block` / `unblock`.
+- `client.friends.on(...)` — typed graph events with offline replay.
+- `client.messaging.listConversations()` / `fetchEncryptedMessages()` — direct gRPC-Web, no decrypt cost.
+- `client.messaging.on("message", cb)` — live decrypted inbound (cached history pump on first subscribe).
+- `client.messaging.sendText(convId, text)` — outbound text DM via Snap's own bundle send path.
+- Fidelius identity mint + register, per-instance and isolated.
+- Per-instance Sandbox (multi-tenant in one process) — verified by `scripts/test-isolation.ts`.
+- `DataStore`-backed sandbox persistence (cookies, `local_*`, `session_*`, `indexdb_*`).
+- Opt-in HTTP throttling (per-instance + shared gates).
+- Structured network observability (`setLogger`, `SNAP_NETLOG=1`).
+
+### Experimental
+
+- **Live-message push** — the persistent duplex WS receives frames, but the bundle's inbound delegate hook is inconsistent across runs. Tracked by `tests/api/messaging-multi-account.test.ts`.
+- `client.messaging.sendImage(...)` / `sendSnap(...)` — scaffolded through the bundle session; compile and bring up cleanly, not wire-tested.
+- `client.stories.post(media)` — same shape as `sendImage`; not wire-tested.
+
+### Planned
+
+- `client.messaging.setTyping(...)` / `setViewing(...)` — currently resolve after the requested duration; the outbound WS frame is not yet wired.
+- `client.messaging.on("typing" | "viewing" | "read", cb)` — declared on the bus, the bundle's delegate slots are not yet mapped.
+- Per-instance proxy / outbound IP rotation (TODO — `BrowserContext.httpAgent` reserved for an undici `Dispatcher`).
+
+## Architecture, in one diagram
+
+```
+SnapcapClient (public TypeScript SDK)
+  └─ Sandbox (per-instance vm.Context)
+      ├─ happy-dom Window projection
+      ├─ Patched webpack runtime + chat bundle JS
+      ├─ Snap's WASM modules
+      │    · kameleon attestation
+      │    · chat session worker
+      │    · Fidelius E2E (~12 MB + 814 KB)
+      ├─ Browser API shims
+      │    fetch / XHR / WebSocket / Storage / IndexedDB / cookies
+      └─ DataStore-backed persistence
+  └─ Native transport (Node fetch + tough-cookie jar — bypasses sandbox)
+      └─ gRPC-Web → web.snapchat.com / accounts.snapchat.com / aws.duplex.snapchat.com
+```
+
+See [Architecture overview](/docs/architecture) for a paragraph on each layer, or jump straight into the [internals chapters](/docs/internals/architecture) for the long-form story.

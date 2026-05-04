@@ -240,7 +240,25 @@ export class SnapcapClient implements ISnapcapClient {
       );
     }
     const ctx = await this._getCtx();
-    return authBundle(ctx, { credentials: this.opts.credentials });
+    await authBundle(ctx, { credentials: this.opts.credentials });
+
+    // Warm + persist the friend-graph cache. Calling friends.list() routes
+    // through Friends.snapshot() which writes the cache key to the
+    // DataStore and seeds the diff-bridge baseline so any later
+    // subscriber's first replay correctly identifies "new since last
+    // session" mutuals/requests instead of treating every existing
+    // entry as added. Best-effort: a friends fetch failure must not
+    // poison the auth result — the auth slice is already populated
+    // and consumers can retry friends.list() on demand.
+    try {
+      await this.friends.list();
+    } catch (e) {
+      // Surface for diagnostics but don't propagate.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[snapcap] post-auth friends.list() failed (non-fatal): ${(e as Error).message ?? e}`,
+      );
+    }
   }
 
   /** {@inheritDoc ISnapcapClient.logout} */

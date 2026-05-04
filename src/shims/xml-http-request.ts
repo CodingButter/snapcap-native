@@ -231,7 +231,7 @@ function createNativeFetchXhr(opts: {
     getAllResponseHeaders(): string {
       if (!this.responseHeaders) return "";
       const lines: string[] = [];
-      for (const [name, value] of this.responseHeaders.entries()) {
+      for (const [name, value] of (this.responseHeaders as unknown as Iterable<[string, string]>)) {
         const lc = name.toLowerCase();
         if (lc === "set-cookie" || lc === "set-cookie2") continue;
         lines.push(`${name}: ${value}`);
