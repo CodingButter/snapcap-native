@@ -69,16 +69,16 @@ await client.authenticate();
 const friends = await client.friends.list();
 console.log(`${friends.length} mutual friends`);
 
-// Search Snap's user index, then add the first hit by user id.
+// Search Snap's user index, then send a friend request to the first hit.
 const hits = await client.friends.search("perdyjamie");
 if (hits.length > 0) {
-  await client.friends.add(hits[0].userId);
-  console.log(`added ${hits[0].username}`);
+  await client.friends.sendRequest(hits[0].userId);
+  console.log(`requested ${hits[0].username}`);
 }
 
 // Subscribe to real-time graph changes.
 const unsub = client.friends.onChange((snap) => {
-  console.log(`mutuals=${snap.mutuals.length} incoming=${snap.incoming.length}`);
+  console.log(`mutuals=${snap.mutuals.length} received=${snap.received.length}`);
 });
 
 // ...later
@@ -163,6 +163,8 @@ See [Multi-tenant](/docs/guide/multi-tenant) for the recommended layout, includi
 
 - [Auth model](/docs/guide/auth) — what `authenticate()` actually does, the auth-state enum, refresh paths.
 - [Persistence](/docs/guide/persistence) — the DataStore key layout and how to plug in a custom backend.
+- [Friends](/docs/guide/friends) — graph reads, typed events, refresh cadence, offline replay.
+- [Messaging](/docs/guide/messaging) — live decrypted inbound, conversation listing, raw envelope backfill.
 - [Multi-tenant](/docs/guide/multi-tenant) — running many accounts in one process.
 - [Throttling](/docs/guide/throttle) — opt-in HTTP rate limiting, per-instance and shared gates.
 - [Logging](/docs/guide/logging) — structured network observability via `SNAP_NETLOG=1` and `setLogger`.

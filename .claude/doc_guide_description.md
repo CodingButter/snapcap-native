@@ -217,5 +217,9 @@ compounds.
 
 ### Entries
 
-(populate this as you go)
+- [2026-05-04] Before drafting new pages, grep all existing guide+internals .mdx files for stale method names (e.g. `friends.add`, `client.inbox`, `MessagingSession.events`) — staleness from API renames is the highest-value fix and easy to miss if you only read the diff.
+- [2026-05-04] Internals pages frequently cite `src/auth/<file>.ts:<line>` ranges; verify those paths still exist (`ls src/auth/`) before trusting them — files get split/renamed and source-map sections are the most fragile part of internals.
+- [2026-05-04] When adding a new page under `docs/content/docs/guide/`, also update `guide/meta.json` AND any "What's next" link list in `getting-started.mdx`. The latter is easy to forget and breaks the natural reader journey.
+- [2026-05-04] `index.mdx` has a status table — update it when manager methods graduate from "placeholder" to working. It's the first thing consumers see and stale rows look worse than missing ones.
+- [2026-05-04] Skip the Next.js landing page (`docs/app/(home)/page.tsx`) unless its inline snippet references a renamed/removed API — check via `grep` once, then move on. It rarely needs changes.
 

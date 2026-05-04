@@ -54,7 +54,8 @@ description: 'The mental model: layered architecture from consumer API down thro
 │   ─ accounts bundle (~5 MB JS) + kameleon WASM (814 KB)                 │
 │   ─ chat bundle (~1.5 MB JS) + Fidelius WASMs (12 MB + 814 KB)          │
 │   ─ webpack runtimes patched to leak __webpack_require__ (=__snapcap_p) │
-│   ─ MessagingSession brings up createMessagingSession harness           │
+│   ─ Bundle session (createMessagingSession) brought up lazily on first  │
+│     messaging.on(...) — drives Fidelius decrypt + duplex WS             │
 └─────────────────────────────────────────────────────────────────────────┘
         │                                              │
         ▼                                              ▼
@@ -131,5 +132,5 @@ A single process can drive many accounts simultaneously — see [Multi-tenant](/
 
 ## What's deferred
 
-- **Per-domain manager interfaces beyond Friends.** `client.messaging` / `presence` / `stories` / `inbox` / `media` are stub classes today — the surfaces are designed at migration time, not pre-emptively.
-- **Public inbound-message API.** The bundle session already pumps decrypted messages through `MessagingSession.events`; surfacing this as a stable `client.onMessage(...)` is in flight.
+- **Outbound message send + real presence frames.** `client.messaging.on("message", ...)` is wired end-to-end (the bundle session decrypts inbound through Fidelius and emits plaintext via `TypedEventBus`); `setTyping` / `setViewing` resolve correctly but don't yet fire a WS frame, and there's no `messaging.send(...)` yet. Both gated on mapping the bundle session's outbound delegate slots.
+- **Per-domain manager surfaces for `presence` / `stories` / `media`.** Stub classes today — the surfaces are designed at migration time, not pre-emptively.

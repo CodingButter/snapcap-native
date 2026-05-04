@@ -46,11 +46,13 @@ Working today, exercised by the smoke test on a real account:
 | Capability | Status |
 |---|---|
 | `authenticate()` — warm cookies + cold WebLogin | Working |
-| `client.friends` — `list` / `search` / `add` / `remove` / `block` / `unblock` / `ignore` / `snapshot` | Working |
-| `client.friends.onChange()` — real-time graph subscription | Working |
+| `client.friends` — `list` / `search` / `sendRequest` / `acceptRequest` / `rejectRequest` / `block` / `unblock` / `getUsers` / `snapshot` / `refresh` | Working |
+| `client.friends.on(...)` — typed graph events (`friend:added`, `friend:removed`, `request:received`, `request:cancelled`, `request:accepted`, `change`) with offline-replay | Working |
+| `client.messaging.listConversations` / `fetchEncryptedMessages` (raw envelopes) | Working |
+| `client.messaging.on("message", ...)` — live decrypted inbound stream | Working |
 | Per-instance `Sandbox` (multi-tenant in one process) | Working |
 | Opt-in HTTP throttling (per-instance + shared gates) | Working |
 | Structured network observability (`SNAP_NETLOG=1`, `setLogger`) | Working |
-| `client.messaging` / `presence` / `stories` / `inbox` / `media` | Placeholder — interface stubs, no public methods yet |
+| `client.messaging.setTyping` / `setViewing`, plus `client.presence` / `stories` / `media` | Stub — bringing up the bundle session works, outbound presence frames pending |
 
-The bundle-native messaging session (lazy-brought-up by the SDK) owns Fidelius E2E identity now — there is no SDK-side identity to manage. See [Messaging session](/docs/internals/messaging-session) for the implementation story, and [Multi-tenant](/docs/guide/multi-tenant) for running many accounts in one process.
+The bundle-native messaging session (lazy-brought-up by the SDK on the first `messaging.on(...)` / `setTyping` / `setViewing` call) owns Fidelius E2E identity — there is no SDK-side identity to manage. See [Messaging session](/docs/internals/messaging-session) for the implementation story, and [Multi-tenant](/docs/guide/multi-tenant) for running many accounts in one process.

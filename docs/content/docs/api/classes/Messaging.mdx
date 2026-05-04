@@ -4,14 +4,169 @@ title: Messaging
 
 # Class: Messaging
 
-Defined in: [api/messaging.ts:18](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L18)
+Defined in: [api/messaging.ts:142](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L142)
 
-Placeholder for the upcoming Messaging domain manager.
-
-Held as [SnapcapClient.messaging](SnapcapClient.mdx#messaging). No methods are exposed yet —
-any call site like `client.messaging.send(...)` is a TypeScript compile
-error.
+Messaging manager — inbox enumeration + live decrypt + presence.
 
 ## See
 
-[SnapcapClient](SnapcapClient.mdx)
+[SnapcapClient.messaging](SnapcapClient.mdx#messaging)
+
+## Methods
+
+### fetchEncryptedMessages()
+
+```ts
+fetchEncryptedMessages(conversations: ConversationSummary[], selfUserId?: string): Promise<RawEncryptedMessage[]>;
+```
+
+Defined in: [api/messaging.ts:345](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L345)
+
+Fetch raw encrypted message envelopes for the given conversations
+via `BatchDeltaSync`.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `conversations` | [`ConversationSummary`](../interfaces/ConversationSummary.mdx)[] |
+| `selfUserId?` | `string` |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`RawEncryptedMessage`](../interfaces/RawEncryptedMessage.mdx)[]\>
+
+***
+
+### listConversations()
+
+```ts
+listConversations(selfUserId?: string): Promise<ConversationSummary[]>;
+```
+
+Defined in: [api/messaging.ts:329](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L329)
+
+Fetch the user's full conversation list via `SyncConversations`.
+Returns one entry per conversation — the same set the SPA shows on
+its left panel.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `selfUserId?` | `string` | Optional override for the calling user's UUID. When omitted, resolved from the chat-bundle's auth slice. |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`ConversationSummary`](../interfaces/ConversationSummary.mdx)[]\>
+
+***
+
+### on()
+
+```ts
+on<K>(
+   event: K, 
+   cb: MessagingEvents[K], 
+   opts?: {
+  signal?: AbortSignal;
+}): Subscription;
+```
+
+Defined in: [api/messaging.ts:178](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L178)
+
+Subscribe to a messaging event. First subscription triggers the
+bundle session bring-up (~3s cold; subsequent subscriptions are free).
+
+#### Type Parameters
+
+| Type Parameter |
+| ------ |
+| `K` *extends* keyof [`MessagingEvents`](../type-aliases/MessagingEvents.mdx) |
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `event` | `K` | One of [MessagingEvents](../type-aliases/MessagingEvents.mdx). |
+| `cb` | [`MessagingEvents`](../type-aliases/MessagingEvents.mdx)\[`K`\] | Callback invoked with the event payload. |
+| `opts?` | \{ `signal?`: [`AbortSignal`](https://developer.mozilla.org/docs/Web/API/AbortSignal); \} | Optional `signal`; aborting it unsubscribes. |
+| `opts.signal?` | [`AbortSignal`](https://developer.mozilla.org/docs/Web/API/AbortSignal) | - |
+
+#### Returns
+
+[`Subscription`](../type-aliases/Subscription.mdx)
+
+#### Example
+
+```ts
+client.messaging.on("message", (msg) => {
+  const text = new TextDecoder().decode(msg.content);
+  console.log(`${msg.isSender ? "->" : "<-"} ${text}`);
+});
+```
+
+***
+
+### setTyping()
+
+```ts
+setTyping(convId: string, durationMs: number): Promise<void>;
+```
+
+Defined in: [api/messaging.ts:208](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L208)
+
+Show typing indicator in `convId` for `durationMs`. Returns a
+Promise resolving when `durationMs` elapses, so consumers can
+compose:
+
+```ts
+await messaging.setTyping(convId, 1500);
+await messaging.send(convId, "hello");
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `convId` | `string` |
+| `durationMs` | `number` |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Remarks
+
+Stub today — the underlying WS frame isn't yet wired (the bundle's
+outbound presence path lives on a sibling manager off the session
+object; mapping pending). Resolves after `durationMs` so the
+compose-await pattern works without firing a real frame.
+
+***
+
+### setViewing()
+
+```ts
+setViewing(convId: string, durationMs: number): Promise<void>;
+```
+
+Defined in: [api/messaging.ts:222](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L222)
+
+Mark `convId` as actively viewed for `durationMs`. Same compose-await
+pattern as [Messaging.setTyping](#settyping).
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `convId` | `string` |
+| `durationMs` | `number` |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
+
+#### Remarks
+
+Stub today — see [Messaging.setTyping](#settyping) note.

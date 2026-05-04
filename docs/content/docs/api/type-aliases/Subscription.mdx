@@ -1,0 +1,23 @@
+---
+title: Subscription
+---
+
+# Type Alias: Subscription
+
+```ts
+type Subscription = () => void & {
+  signal: AbortSignal;
+};
+```
+
+Defined in: [lib/typed-event-bus.ts:102](https://github.com/CodingButter/snapcap-native/blob/main/src/lib/typed-event-bus.ts#L102)
+
+A live subscription — callable thunk that tears down when invoked,
+with `.signal` exposing the subscription's combined lifetime
+(fires on `sub()` OR on an externally-passed `opts.signal` abort).
+
+## Type Declaration
+
+| Name | Type | Defined in |
+| ------ | ------ | ------ |
+| `signal` | [`AbortSignal`](https://developer.mozilla.org/docs/Web/API/AbortSignal) | [lib/typed-event-bus.ts:102](https://github.com/CodingButter/snapcap-native/blob/main/src/lib/typed-event-bus.ts#L102) |

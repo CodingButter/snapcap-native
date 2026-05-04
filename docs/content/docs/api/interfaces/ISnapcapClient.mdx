@@ -4,7 +4,7 @@ title: ISnapcapClient
 
 # Interface: ISnapcapClient
 
-Defined in: [client.interface.ts:25](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L25)
+Defined in: [client.interface.ts:24](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L24)
 
 The public contract that [SnapcapClient](../classes/SnapcapClient.mdx) implements.
 
@@ -22,10 +22,9 @@ accepts a client.
 
 | Property | Modifier | Type | Description | Defined in |
 | ------ | ------ | ------ | ------ | ------ |
-| <a id="friends"></a> `friends` | `readonly` | [`Friends`](../classes/Friends.mdx) | Friend-graph manager — see [IFriendsManager](IFriendsManager.mdx) for the full surface (mutations, reads, search, subscriptions). | [client.interface.ts:115](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L115) |
-| <a id="inbox"></a> `inbox` | `readonly` | [`Inbox`](../classes/Inbox.mdx) | Placeholder for the upcoming Inbox manager. No methods today. | [client.interface.ts:136](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L136) |
-| <a id="media"></a> `media` | `readonly` | [`Media`](../classes/Media.mdx) | Placeholder for the upcoming Media manager. No methods today. | [client.interface.ts:141](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L141) |
-| <a id="messaging"></a> `messaging` | `readonly` | [`Messaging`](../classes/Messaging.mdx) | Placeholder for the upcoming Messaging manager. No methods today — `client.messaging.send(...)` is a compile-time error. | [client.interface.ts:121](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L121) |
+| <a id="friends"></a> `friends` | `readonly` | [`Friends`](../classes/Friends.mdx) | Friend-graph manager — see [IFriendsManager](IFriendsManager.mdx) for the full surface (mutations, reads, search, subscriptions). | [client.interface.ts:114](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L114) |
+| <a id="media"></a> `media` | `readonly` | [`Media`](../classes/Media.mdx) | Placeholder for the upcoming Media manager. No methods today. | [client.interface.ts:136](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L136) |
+| <a id="messaging"></a> `messaging` | `readonly` | [`Messaging`](../classes/Messaging.mdx) | Messaging manager — inbox enumeration, raw envelope reads, live decrypted message stream, and outbound presence (typing/viewing). See [Messaging](../classes/Messaging.mdx) for the surface. | [client.interface.ts:121](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L121) |
 | <a id="presence"></a> `presence` | `readonly` | [`Presence`](../classes/Presence.mdx) | Placeholder for the upcoming Presence manager. No methods today. | [client.interface.ts:126](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L126) |
 | <a id="stories"></a> `stories` | `readonly` | [`Stories`](../classes/Stories.mdx) | Placeholder for the upcoming Stories manager. No methods today. | [client.interface.ts:131](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L131) |
 
@@ -37,7 +36,7 @@ accepts a client.
 authenticate(): Promise<void>;
 ```
 
-Defined in: [client.interface.ts:48](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L48)
+Defined in: [client.interface.ts:47](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L47)
 
 Bring up the bundles, run warm-or-cold WebLogin, and populate the
 Zustand auth slice.
@@ -74,7 +73,7 @@ console.log(client.isAuthenticated()); // true
 getAuthState(): number;
 ```
 
-Defined in: [client.interface.ts:99](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L99)
+Defined in: [client.interface.ts:98](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L98)
 
 Live read: `state.auth.authState` enum value.
 
@@ -93,7 +92,7 @@ Live read: `state.auth.authState` enum value.
 getAuthToken(): string;
 ```
 
-Defined in: [client.interface.ts:91](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L91)
+Defined in: [client.interface.ts:90](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L90)
 
 Live read: current SSO bearer string from the Zustand auth slice.
 
@@ -111,7 +110,7 @@ The bearer token (suitable for use as `Authorization: Bearer ...`).
 hasEverLoggedIn(): boolean;
 ```
 
-Defined in: [client.interface.ts:107](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L107)
+Defined in: [client.interface.ts:106](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L106)
 
 Live read: the `hasEverLoggedIn` marker.
 
@@ -130,7 +129,7 @@ signed-out returning user.
 isAuthenticated(): boolean;
 ```
 
-Defined in: [client.interface.ts:84](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L84)
+Defined in: [client.interface.ts:83](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L83)
 
 Live read: `true` iff the Zustand auth slice currently reports
 `LoggedIn`.
@@ -151,7 +150,7 @@ has been called).
 logout(force?: boolean): Promise<void>;
 ```
 
-Defined in: [client.interface.ts:61](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L61)
+Defined in: [client.interface.ts:60](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L60)
 
 Tear down the bundle-side auth state.
 
@@ -179,7 +178,7 @@ Resolves when local auth state has been cleared.
 refreshAuthToken(): Promise<void>;
 ```
 
-Defined in: [client.interface.ts:74](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L74)
+Defined in: [client.interface.ts:73](https://github.com/CodingButter/snapcap-native/blob/main/src/client.interface.ts#L73)
 
 Refresh the bearer in-place via Snap's own `state.auth.refreshToken`.
 

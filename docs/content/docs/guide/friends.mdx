@@ -1,0 +1,103 @@
+---
+title: 'Friends'
+description: 'Reading the social graph, pending request inboxes, typed events with offline replay, and the refresh cadence consumers must drive themselves.'
+---
+
+`client.friends` exposes the social graph as a snapshot, individual reads, mutations, and a typed event bus. The full surface is in the [API reference](/docs/api/interfaces/IFriendsManager); this page covers the consumer-facing patterns you'll hit immediately.
+
+## Reads
+
+```ts
+const snap = await client.friends.snapshot();
+console.log(`mutuals=${snap.mutuals.length} received=${snap.received.length} sent=${snap.sent.length}`);
+```
+
+[`FriendsSnapshot`](/docs/api/interfaces/FriendsSnapshot) is the single source of truth — `list()`, `receivedRequests()`, and `sentRequests()` all project off it.
+
+```ts
+const friends = await client.friends.list();          // mutuals only
+const received = await client.friends.receivedRequests();
+const sent = await client.friends.sentRequests();
+```
+
+`Friend.username` is sometimes empty when the bundle's `publicUsers` cache hasn't been populated yet for that id. Match by `userId` and backfill when needed:
+
+```ts
+const ids = friends.filter((f) => !f.username).map((f) => f.userId);
+const resolved = await client.friends.getUsers(ids);
+```
+
+`getUsers()` is cache-first — only IDs that miss the bundle's `publicUsers` cache hit `GetSnapchatterPublicInfo`. Pass `{ refresh: true }` to force a fresh RPC for every id. Server-confirmed misses (deleted accounts, blocks) come back with `notFound: true`.
+
+## Mutations
+
+```ts
+import { FriendSource } from "@snapcap/native";
+
+await client.friends.sendRequest(userId);                         // default: ADDED_BY_USERNAME
+await client.friends.sendRequest(userId, { source: FriendSource.ADDED_BY_SEARCH });
+await client.friends.acceptRequest(req.fromUserId);
+await client.friends.rejectRequest(req.fromUserId);
+await client.friends.block(userId);
+await client.friends.unblock(userId);
+```
+
+<Callout type="warn">
+**`client.friends.remove(userId)` is a no-op against `web.snapchat.com`.** The RPC reaches the server (HTTP 200, gRPC status 0), but the friendship is not severed — Snap restricts unfriend at the policy layer to mobile clients. The method is kept on the interface for symmetry; production logic should not depend on it. To actually unfriend an account, the user must do it from the official mobile app.
+</Callout>
+
+## Typed events
+
+```ts
+const sub = client.friends.on("request:received", (req) => {
+  console.log(`new request from ${req.fromUsername}`);
+});
+
+client.friends.on("friend:added", (friend) => console.log(`+ ${friend.username}`));
+client.friends.on("friend:removed", (userId) => console.log(`- ${userId}`));
+client.friends.on("change", (snap) => console.log(`graph changed (${snap.mutuals.length} mutuals)`));
+```
+
+The full event map is in [`FriendsEvents`](/docs/api/interfaces/FriendsEvents). Each `on(...)` returns a [`Subscription`](/docs/api/type-aliases/Subscription) — a callable unsubscribe with a `.signal` you can chain into other lifetimes:
+
+```ts
+const ctrl = new AbortController();
+client.friends.on("request:received", onReq, { signal: ctrl.signal });
+client.friends.on("change", onChange, { signal: ctrl.signal });
+ctrl.abort();   // tears down both
+```
+
+### You must drive the refresh cadence
+
+The bundle does **not** auto-poll for fresh state — the SPA's React layer normally drives that, and the SDK doesn't load React. So events like `request:received` and `friend:added` fire when the bundle's user-slice changes, but the user-slice doesn't change unless something pulls fresh data from Snap.
+
+```ts
+// Drive the cadence yourself — every 30s for inbox-style monitoring:
+setInterval(() => client.friends.refresh(), 30_000);
+
+client.friends.on("request:received", (req) => { /* ... */ });
+```
+
+`refresh()` cascades through Snap's own `syncFriends` (one wire call drives both `SyncFriendData` for mutuals + outgoing AND `IncomingFriendSync` for inbound requests). Calling either endpoint yourself on top of `refresh()` is redundant and races the bundle's delta-token bookkeeping.
+
+### Offline replay
+
+The five diff-style events (`friend:added`, `friend:removed`, `request:received`, `request:cancelled`, `request:accepted`) are powered by a watcher that diffs the live graph against a snapshot persisted in the `DataStore`. **Deltas that happened while the SDK was offline replay on the next state tick after startup.**
+
+What this means in practice:
+
+- Subscribers should be **idempotent over redeliveries**. Treat the event as "this id is now in / out of slot X" rather than "this just happened on the wire".
+- The watcher is install-once-per-instance: it lives for the lifetime of the `Friends` manager even after every subscriber unsubscribes, so the persisted snapshot stays fresh and a future subscriber doesn't replay the entire interim window as "new" deltas.
+- First-ever boot (no cached snapshot) seeds silently from the live slice — no replay storm on a fresh DataStore.
+
+## `onChange` vs `on("change", ...)`
+
+Both surfaces fan out the full [`FriendsSnapshot`](/docs/api/interfaces/FriendsSnapshot) on every graph mutation. `onChange(cb)` returns a plain unsubscribe thunk; `on("change", cb)` returns the same `Subscription` shape as the other typed events. Use whichever fits your callsite — they share the underlying bridge.
+
+## Search
+
+```ts
+const hits = await client.friends.search("alice");
+```
+
+Returns matching [`User`](/docs/api/interfaces/Friend) records with just `userId` / `username` / `displayName` populated — Snap's search index doesn't return the richer flags. Run the hits through `getUsers()` if you need bitmoji or profile-tier data.

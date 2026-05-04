@@ -78,27 +78,31 @@ setLogger(defaultTextLogger);
 | [CookieJarStore](classes/CookieJarStore.mdx) | DataStore-backed wrapper around a tough-cookie `CookieJar`. |
 | [FileDataStore](classes/FileDataStore.mdx) | File-backed [DataStore](interfaces/DataStore.mdx) implementation. |
 | [Friends](classes/Friends.mdx) | Concrete [IFriendsManager](interfaces/IFriendsManager.mdx) implementation. |
-| [Inbox](classes/Inbox.mdx) | Placeholder for the upcoming Inbox domain manager. |
 | [Media](classes/Media.mdx) | Placeholder for the upcoming Media domain manager. |
 | [MemoryDataStore](classes/MemoryDataStore.mdx) | In-memory [DataStore](interfaces/DataStore.mdx) implementation — useful for tests and ephemeral sandboxes. |
-| [Messaging](classes/Messaging.mdx) | Placeholder for the upcoming Messaging domain manager. |
+| [Messaging](classes/Messaging.mdx) | Messaging manager — inbox enumeration + live decrypt + presence. |
 | [Presence](classes/Presence.mdx) | Placeholder for the upcoming Presence domain manager. |
 | [SnapcapClient](classes/SnapcapClient.mdx) | Concrete [ISnapcapClient](interfaces/ISnapcapClient.mdx) implementation — main SDK entry point. |
 | [StorageShim](classes/StorageShim.mdx) | Web Storage API (`localStorage` / `sessionStorage`) implementation backed by a [DataStore](interfaces/DataStore.mdx). |
 | [Stories](classes/Stories.mdx) | Placeholder for the upcoming Stories domain manager. |
+| [TypedEventBus](classes/TypedEventBus.mdx) | Typed event bus — the shared subscription primitive every domain manager (Friends, Messaging, Stories, Presence) composes. |
 
 ## Interfaces
 
 | Interface | Description |
 | ------ | ------ |
+| [BitmojiPublicInfo](interfaces/BitmojiPublicInfo.mdx) | Bitmoji avatar identifiers. Used to render a user's bitmoji via Snap's `images.bitmoji.com` CDN — the avatar id pairs with a sticker / pose id to construct the URL. |
+| [ConversationSummary](interfaces/ConversationSummary.mdx) | Per-conversation summary returned by [Messaging.listConversations](classes/Messaging.mdx#listconversations). |
 | [DataStore](interfaces/DataStore.mdx) | Persistent key-value storage interface — the SDK's pluggable persistence backbone. |
 | [Friend](interfaces/Friend.mdx) | A friend in the logged-in user's social graph. |
-| [FriendRequest](interfaces/FriendRequest.mdx) | An inbound friend request — someone has added the logged-in user and is waiting for [IFriendsManager.acceptRequest](interfaces/IFriendsManager.mdx#acceptrequest) or [IFriendsManager.rejectRequest](interfaces/IFriendsManager.mdx#rejectrequest). |
+| [FriendsEvents](interfaces/FriendsEvents.mdx) | Map of event name → callback signature for [IFriendsManager.on](interfaces/IFriendsManager.mdx#on). The callback's argument type narrows automatically per event key via TypeScript's keyof inference. |
 | [FriendsSnapshot](interfaces/FriendsSnapshot.mdx) | A point-in-time view of the entire friend graph — mutuals + pending requests in both directions. |
-| [FriendsUser](interfaces/FriendsUser.mdx) | A user surfaced from search / lookup. Carries no friend-graph metadata (use [Friend](interfaces/Friend.mdx) for that). |
+| [FriendsUser](interfaces/FriendsUser.mdx) | A user surfaced from search / lookup / friends list. Mirrors the shape of Snap's `GetSnapchatterPublicInfo` response — every public field Snap returns is typed here, with the same camel-cased names. |
 | [IFriendsManager](interfaces/IFriendsManager.mdx) | Friends domain manager — all friend-graph operations live here. |
 | [ISnapcapClient](interfaces/ISnapcapClient.mdx) | The public contract that [SnapcapClient](classes/SnapcapClient.mdx) implements. |
-| [OutgoingRequest](interfaces/OutgoingRequest.mdx) | An outbound friend request — the logged-in user has added this account and is waiting for them to accept. |
+| [RawEncryptedMessage](interfaces/RawEncryptedMessage.mdx) | One message envelope as captured from BatchDeltaSync. |
+| [ReceivedRequest](interfaces/ReceivedRequest.mdx) | An inbound friend request — someone has added the logged-in user and is waiting for [IFriendsManager.acceptRequest](interfaces/IFriendsManager.mdx#acceptrequest) or [IFriendsManager.rejectRequest](interfaces/IFriendsManager.mdx#rejectrequest). |
+| [SentRequest](interfaces/SentRequest.mdx) | An outbound friend request — the logged-in user has added this account and is waiting for them to accept. |
 
 ## Type Aliases
 
@@ -110,7 +114,10 @@ setLogger(defaultTextLogger);
 | [FriendSource](type-aliases/FriendSource.mdx) | String-keyed enum form of [FriendSource](variables/FriendSource.mdx) — the type of any value read off the const object. |
 | [LogEvent](type-aliases/LogEvent.mdx) | All emitted log events. Closed discriminated union — switch on `event.kind` to narrow. |
 | [Logger](type-aliases/Logger.mdx) | Handler signature passed to [setLogger](functions/setLogger.mdx). |
+| [MessagingEvents](type-aliases/MessagingEvents.mdx) | Event map for [Messaging.on](classes/Messaging.mdx#on). |
+| [PlaintextMessage](type-aliases/PlaintextMessage.mdx) | Plaintext message handed to the consumer's `onPlaintext` callback. |
 | [SnapcapClientOpts](type-aliases/SnapcapClientOpts.mdx) | Public constructor options for [SnapcapClient](classes/SnapcapClient.mdx). |
+| [Subscription](type-aliases/Subscription.mdx) | A live subscription — callable thunk that tears down when invoked, with `.signal` exposing the subscription's combined lifetime (fires on `sub()` OR on an externally-passed `opts.signal` abort). |
 | [ThrottleConfig](type-aliases/ThrottleConfig.mdx) | Throttle configuration accepted by `SnapcapClient`'s `throttle` option. |
 | [ThrottleGate](type-aliases/ThrottleGate.mdx) | Function shape that throttles outbound requests. Awaited once per wire request, immediately before the SDK calls into the underlying fetch / XHR layer. |
 | [ThrottleRule](type-aliases/ThrottleRule.mdx) | One throttle rule. Matches outbound URLs and gates them at a minimum inter-call interval, with optional burst headroom. |
@@ -122,7 +129,7 @@ setLogger(defaultTextLogger);
 | Variable | Description |
 | ------ | ------ |
 | [defaultTextLogger](variables/defaultTextLogger.mdx) | Built-in human-readable formatter. One line per event, no embedded newlines. Tag column is fixed-width (15 chars) so the output aligns regardless of which event variant is being logged. |
-| [FriendSource](variables/FriendSource.mdx) | Attribution source for [IFriendsManager.add](interfaces/IFriendsManager.mdx#add). |
+| [FriendSource](variables/FriendSource.mdx) | Attribution source for [IFriendsManager.sendRequest](interfaces/IFriendsManager.mdx#sendrequest). |
 | [RECOMMENDED\_THROTTLE\_RULES](variables/RECOMMENDED_THROTTLE_RULES.mdx) | Recommended starter rules tuned for human-cadence anti-spam friendliness against Snap's web endpoints. |
 
 ## Functions

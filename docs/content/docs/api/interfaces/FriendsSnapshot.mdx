@@ -4,7 +4,7 @@ title: FriendsSnapshot
 
 # Interface: FriendsSnapshot
 
-Defined in: [api/friends.ts:180](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L180)
+Defined in: [api/friends.ts:267](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L267)
 
 A point-in-time view of the entire friend graph — mutuals + pending
 requests in both directions.
@@ -13,8 +13,8 @@ requests in both directions.
 
 Returned by [IFriendsManager.snapshot](IFriendsManager.mdx#snapshot) (canonical) and the
 underlying source for [IFriendsManager.list](IFriendsManager.mdx#list),
-[IFriendsManager.incomingRequests](IFriendsManager.mdx#incomingrequests), and
-[IFriendsManager.outgoingRequests](IFriendsManager.mdx#outgoingrequests). The same object shape is
+[IFriendsManager.receivedRequests](IFriendsManager.mdx#receivedrequests), and
+[IFriendsManager.sentRequests](IFriendsManager.mdx#sentrequests). The same object shape is
 delivered to [IFriendsManager.onChange](IFriendsManager.mdx#onchange) subscribers whenever any
 of the three slots mutates.
 
@@ -22,6 +22,6 @@ of the three slots mutates.
 
 | Property | Type | Description | Defined in |
 | ------ | ------ | ------ | ------ |
-| <a id="incoming"></a> `incoming` | [`FriendRequest`](FriendRequest.mdx)[] | Pending inbound friend requests (others adding the logged-in user). | [api/friends.ts:184](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L184) |
-| <a id="mutuals"></a> `mutuals` | [`Friend`](Friend.mdx)[] | All mutually-confirmed friends. | [api/friends.ts:182](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L182) |
-| <a id="outgoing"></a> `outgoing` | [`OutgoingRequest`](OutgoingRequest.mdx)[] | Pending outbound friend requests (the logged-in user's adds). | [api/friends.ts:186](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L186) |
+| <a id="mutuals"></a> `mutuals` | [`Friend`](Friend.mdx)[] | All mutually-confirmed friends. | [api/friends.ts:269](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L269) |
+| <a id="received"></a> `received` | [`ReceivedRequest`](ReceivedRequest.mdx)[] | Pending inbound friend requests (others adding the logged-in user). | [api/friends.ts:271](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L271) |
+| <a id="sent"></a> `sent` | [`SentRequest`](SentRequest.mdx)[] | Pending outbound friend requests (the logged-in user's adds). | [api/friends.ts:273](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L273) |

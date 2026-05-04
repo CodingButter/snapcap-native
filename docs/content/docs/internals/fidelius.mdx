@@ -9,26 +9,26 @@ The current architecture: **the bundle owns identity bootstrap, mint, registrati
 
 ## What changed
 
-An earlier version of the SDK pre-minted a Fidelius identity during login, serialized it to the DataStore at `indexdb_snapcap__fidelius__identity`, and re-read it on warm boots. That code path is **removed**. There is no consumer-facing `client.fidelius` field — Fidelius identity is an internal detail of the `MessagingSession` and lands in the DataStore as opaque wrapped bytes under `local_uds_uds.e2eeIdentityKey.shared`.
+An earlier version of the SDK pre-minted a Fidelius identity during login, serialized it to the DataStore at `indexdb_snapcap__fidelius__identity`, and re-read it on warm boots. That code path is **removed**. There is no consumer-facing `client.fidelius` field — Fidelius identity is an internal detail of the bundle's messaging session (lazily brought up on the first `client.messaging.on(...)` call) and lands in the DataStore as opaque wrapped bytes under `local_uds_uds.e2eeIdentityKey.shared`.
 
 ## What the bundle does on first login
 
-The bring-up flow is in `src/auth/messaging-session.ts:bringUpOnce`. The phases that touch identity:
+The session bring-up lives in `src/auth/fidelius-decrypt.ts:setupBundleSession` and is invoked from `src/api/messaging.ts:#bringUpSession`. The phases that touch identity:
 
-1. **`mintFideliusIdentity`** is called purely to boot the chat-bundle WASM and expose its Module on the sandbox global. The minted-identity return value is discarded; we only need the Module — the bundle does its own minting later.
-2. **`En.createMessagingSession` is called with slot 11 (`loadUserWrappedIdentityKeys`) returning `[]`** (`src/auth/messaging-session.ts:585`). An empty array signals to the bundle: "no cached identity, please mint and register one yourself."
+1. **`mintFideliusIdentity`** (`src/auth/fidelius-mint.ts`) is called purely to boot the chat-bundle WASM into the standalone realm and expose its `Module` for downstream slots. Its minted-identity return value is discarded; we only need the realm — the bundle does its own minting once `createMessagingSession` runs.
+2. **`En.createMessagingSession` is called with slot 11 (`loadUserWrappedIdentityKeys`) returning `[]`.** An empty array signals to the bundle: "no cached identity, please mint and register one yourself."
 3. **The bundle runs `constructPostLogin` internally.** The C++ side calls `e2ee_E2EEKeyManager.generateKeyInitializationRequest(1)` to mint a fresh P-256 keypair + RWK + identityKeyId locally (the WASM uses its own CSPRNG).
-4. **The bundle calls `InitializeWebKey` server-side** via the gRPC factory we registered (`src/auth/messaging-session.ts:354`). This is the `/snapchat.fidelius.FideliusIdentityService/InitializeWebKey` call in real traffic. The server returns a **wrapped** form of the identity — RWK-encrypted private key + identity metadata.
+4. **The bundle calls `InitializeWebKey` server-side** via the gRPC factory `setupBundleSession` registers on the realm's `GrpcManager`. This is the `/snapchat.fidelius.FideliusIdentityService/InitializeWebKey` call in real traffic. The server returns a **wrapped** form of the identity — RWK-encrypted private key + identity metadata.
 5. **The bundle persists the wrapped result through slot 8** (`e2eeIdentityKeyStore`) — the SDK's DataStore-backed UDS store under prefix `local_uds_`. The key it writes to is `local_uds_uds.e2eeIdentityKey.shared`.
 
 After step 5, the wrapped identity lives in the consumer's DataStore. The plaintext private key has never crossed back from the WASM — only the wrapped form is observable from JS.
 
 ## What the bundle does on warm boot
 
-When `bringUpMessagingSession` is called on a process that already has a populated DataStore:
+When `setupBundleSession` runs on a process that already has a populated DataStore:
 
 1. The Sandbox boots, the `LocalStorageShim` rehydrates from DataStore.
-2. `bringUpOnce` runs, `createMessagingSession` is called.
+2. `setupBundleSession` runs, `createMessagingSession` is called.
 3. Slot 8's `getItem("uds.e2eeIdentityKey.shared")` (resolved against `local_uds_` prefix) returns the wrapped bytes the bundle persisted previously.
 4. The bundle's C++ side unwraps and rehydrates the in-memory key state.
 5. No `InitializeWebKey` round-trip; no fresh mint.
@@ -37,11 +37,10 @@ When `bringUpMessagingSession` is called on a process that already has a populat
 
 | Concept | Code reference |
 |---|---|
-| Slot 8 (`e2eeIdentityKeyStore`) UDS-backed store | `src/auth/messaging-session.ts:549-572` |
-| Slot 11 (`loadUserWrappedIdentityKeys`) returning `[]` | `src/auth/messaging-session.ts:585` |
-| The `pr()`-compatible UDS adapter | inline in `makeUds()` (`src/auth/messaging-session.ts:552-571`) |
-| WASM Module exposure | `src/auth/fidelius-mint.ts:155-157` (only when `SNAPCAP_EXPOSE_FIDELIUS_MODULE=1`) |
-| GrpcManager factory backing `InitializeWebKey` | `src/auth/messaging-session.ts:354-450` |
+| Lazy session bring-up | `src/api/messaging.ts:#bringUpSession` |
+| Slot 8 (`e2eeIdentityKeyStore`) UDS-backed store + slot 11 returning `[]` | `src/auth/fidelius-decrypt.ts:setupBundleSession` |
+| Standalone-WASM realm boot (mint discarded) | `src/auth/fidelius-mint.ts:getStandaloneChatRealm` |
+| GrpcManager factory backing `InitializeWebKey` | `src/auth/fidelius-decrypt.ts:setupBundleSession` |
 
 ## Why this is better than what the SDK used to do
 
@@ -56,7 +55,7 @@ The cost of the new flow is that the bundle must be brought up before any Fideli
 ## What's still in flight
 
 - **Snap-send via bundle session.** The bundle's `getSnapManager()` does outbound snaps — that includes Fidelius envelope encryption for kind 122. Migration off the legacy direct-gRPC path is in progress.
-- **Inbound message bodies surfaced as a public API.** `MessagingSession.events.on("message", ...)` already fires for every received message envelope (decrypted by the bundle); a stable `client.onMessage(...)` is the next API surfacing.
+- **Outbound text/media send.** Inbound is wired (`client.messaging.on("message", ...)` fires plaintext today via the bundle's wrapped `messagingDelegate`); the matching outbound surface still needs the right Embind class on the live session identified.
 
 ## What this chapter used to say
 

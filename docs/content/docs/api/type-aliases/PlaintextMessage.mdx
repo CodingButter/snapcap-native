@@ -1,0 +1,32 @@
+---
+title: PlaintextMessage
+---
+
+# Type Alias: PlaintextMessage
+
+```ts
+type PlaintextMessage = {
+  content: Uint8Array;
+  contentType: number | undefined;
+  isSender: boolean | undefined;
+  raw: Record<string, unknown>;
+};
+```
+
+Defined in: [auth/fidelius-decrypt.ts:60](https://github.com/CodingButter/snapcap-native/blob/main/src/auth/fidelius-decrypt.ts#L60)
+
+Plaintext message handed to the consumer's `onPlaintext` callback.
+
+`content` is the decrypted bytes the WASM produced for `t.content`
+inside the messagingDelegate. For text DMs it's a UTF-8 string of the
+sent text. For media messages it's a small protobuf header pointing
+at the encrypted CDN blob.
+
+## Properties
+
+| Property | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ |
+| <a id="content"></a> `content` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Decrypted message bytes the WASM produced. | [auth/fidelius-decrypt.ts:62](https://github.com/CodingButter/snapcap-native/blob/main/src/auth/fidelius-decrypt.ts#L62) |
+| <a id="contenttype"></a> `contentType` | `number` \| `undefined` | Snap's contentType enum (2 = text, 3 = media, …). | [auth/fidelius-decrypt.ts:66](https://github.com/CodingButter/snapcap-native/blob/main/src/auth/fidelius-decrypt.ts#L66) |
+| <a id="issender"></a> `isSender` | `boolean` \| `undefined` | True iff WE are the sender (outbound); false for inbound from peer. | [auth/fidelius-decrypt.ts:64](https://github.com/CodingButter/snapcap-native/blob/main/src/auth/fidelius-decrypt.ts#L64) |
+| <a id="raw"></a> `raw` | [`Record`](https://www.typescriptlang.org/docs/handbook/utility-types.html#recordkeys-type)\<`string`, `unknown`\> | Raw delegate object for advanced callers — keys vary by build. | [auth/fidelius-decrypt.ts:68](https://github.com/CodingButter/snapcap-native/blob/main/src/auth/fidelius-decrypt.ts#L68) |

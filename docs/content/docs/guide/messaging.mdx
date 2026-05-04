@@ -1,0 +1,124 @@
+---
+title: 'Messaging'
+description: 'Inbox enumeration, raw envelope reads, and the live decrypted message stream — driven by Snap''s own bundle session.'
+---
+
+`client.messaging` exposes two layers in one manager:
+
+- **Raw envelope reads** — `listConversations()` and `fetchEncryptedMessages()` are direct gRPC-Web calls against `MessagingCoreService`. Useful for inbox enumeration and historical backfill that doesn't need decrypt.
+- **Live decrypted stream + presence** — `on("message", …)`, `setTyping`, `setViewing`. The first call to any of these lazily brings up Snap's own bundle session inside the per-instance Sandbox; subsequent calls reuse it.
+
+The bring-up is **lazy** because it costs ~3s cold (mint/register Fidelius identity if needed, eval the worker chunk, open the duplex WebSocket). Consumers that only want raw envelope reads shouldn't pay for it.
+
+## Live decrypted inbound
+
+```ts
+import { SnapcapClient, FileDataStore } from "@snapcap/native";
+
+const client = new SnapcapClient({
+  dataStore: new FileDataStore("./auth.json"),
+  credentials: { username, password },
+  browser: { userAgent },
+});
+
+await client.authenticate();
+
+// First .on(...) call triggers the ~3s bundle-session bring-up.
+const sub = client.messaging.on("message", (msg) => {
+  const text = new TextDecoder().decode(msg.content);
+  console.log(`${msg.isSender ? "->" : "<-"} (type ${msg.contentType}) ${text}`);
+});
+
+// Later — tear down the subscription:
+sub();
+```
+
+`msg` is a [`PlaintextMessage`](/docs/api/type-aliases/PlaintextMessage):
+
+| Field | Meaning |
+|---|---|
+| `content` | Decrypted bytes the WASM produced. UTF-8 string for text DMs; a small protobuf header pointing at the encrypted CDN blob for media. |
+| `isSender` | `true` iff the logged-in user sent the message; `false` for inbound from a peer. |
+| `contentType` | Snap's contentType enum — `2` = text, `3` = media, etc. |
+| `raw` | The unwrapped delegate object the bundle handed to its `messagingDelegate.onMessageReceived`. Keys vary across bundle builds; use defensively. |
+
+Tie the subscription's life to anything that takes an `AbortSignal`:
+
+```ts
+const ctrl = new AbortController();
+client.messaging.on("message", onMessage, { signal: ctrl.signal });
+ctrl.abort();   // tears the subscription down
+```
+
+<Callout type="warn">
+On the first subscription per process, the SDK pumps history for every conversation it knows about so the WASM can decrypt cached messages. Expect a burst of `message` events for already-seen messages, with `isSender` and `contentType` populated. Subscribers should be idempotent — match on `(conversationId, messageId)` if you need to dedupe across restarts.
+</Callout>
+
+## Conversation list
+
+```ts
+const convs = await client.messaging.listConversations();
+for (const c of convs) {
+  console.log(`${c.conversationId} type=${c.type} ${c.participants.length} participants`);
+}
+```
+
+[`ConversationSummary`](/docs/api/interfaces/ConversationSummary) carries `conversationId`, `type` (5 = DM, 13 = group, 420 = MOB friends, …), and the full `participants` UUID list (including self). No decrypt — this is a direct gRPC call.
+
+If you call `listConversations()` *before* any `on(...)` subscription, the bundle session hasn't been brought up yet, so the SDK reads `selfUserId` from the chat-bundle auth slice. Pass `selfUserId` explicitly if you need to bypass that lookup.
+
+## Historical backfill (raw envelopes)
+
+```ts
+const convs = await client.messaging.listConversations();
+const dmsOnly = convs.filter((c) => c.type === 5);
+const envelopes = await client.messaging.fetchEncryptedMessages(dmsOnly);
+
+for (const env of envelopes) {
+  if (env.cleartextBody) {
+    // Non-E2E content (AI bot replies, MEMORIES) carries plaintext directly.
+    console.log(`[${env.conversationId}] ${env.cleartextBody}`);
+  } else {
+    // E2E body — opaque bytes here. Subscribe to `messaging.on("message", ...)`
+    // to see the decrypted form once the bundle session is live.
+    console.log(`[${env.conversationId}] (encrypted, ${env.envelope.byteLength}B)`);
+  }
+}
+```
+
+[`RawEncryptedMessage`](/docs/api/interfaces/RawEncryptedMessage) gives you `conversationId`, `senderUserId`, `messageId`, `serverTimestampMs`, the raw `envelope` bytes, and an opportunistic `cleartextBody` field — Snap embeds plaintext metadata (media URLs, snap IDs, AI bot replies) alongside the E2E-wrapped body, so the SDK surfaces whatever is readable without decrypt.
+
+`fetchEncryptedMessages()` and `listConversations()` are independent of the bundle session — they're plain gRPC-Web. You can mix raw-envelope backfill with `on("message", …)` for go-forward live delivery.
+
+## Outbound presence (stub today)
+
+```ts
+await client.messaging.setTyping(convId, 1500);
+await client.messaging.setViewing(convId, 5000);
+```
+
+These resolve after the requested duration, so the compose-await pattern works. They do **not** yet fire a real WebSocket frame to peers — the bundle session's outbound presence delegate is still being mapped. Calling them does trigger the bundle-session bring-up if it hasn't happened yet.
+
+## When does the session come up?
+
+The first call to any of these brings up the bundle session:
+
+- `client.messaging.on(event, …)` (any event)
+- `client.messaging.setTyping(...)`
+- `client.messaging.setViewing(...)`
+
+`listConversations()` and `fetchEncryptedMessages()` do **not** — they're plain gRPC-Web and stay cheap. If you only need inbox enumeration, you'll never pay for the bundle session.
+
+Bring-up is single-flight per `SnapcapClient`: concurrent `.on(...)` calls all wait on the same in-flight promise. If bring-up fails, the next subscription / presence call retries from scratch.
+
+## What's not (yet) wired
+
+| Capability | Status |
+|---|---|
+| `on("message", ...)` — live decrypted inbound | Working |
+| `listConversations()` / `fetchEncryptedMessages()` — raw envelopes | Working |
+| `on("typing" / "viewing" / "read", ...)` | Subscribable today, but the bundle's inbound presence delegate hasn't been hooked yet — events don't fire |
+| `setTyping` / `setViewing` outbound WS frames | Stubs — resolve after the duration but no frame fires |
+| `messaging.send(...)` | Not surfaced — outbound text/media still goes through the bundle session's send path, not yet wrapped |
+
+See the [messaging-session internals](/docs/internals/messaging-session) for the bring-up plumbing, and [Fidelius](/docs/internals/fidelius) for the identity / decrypt side.

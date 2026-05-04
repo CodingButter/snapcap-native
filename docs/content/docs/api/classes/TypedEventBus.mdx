@@ -1,0 +1,83 @@
+---
+title: TypedEventBus
+---
+
+# Class: TypedEventBus\<TEvents\>
+
+Defined in: [lib/typed-event-bus.ts:25](https://github.com/CodingButter/snapcap-native/blob/main/src/lib/typed-event-bus.ts#L25)
+
+Typed event bus — the shared subscription primitive every domain
+manager (Friends, Messaging, Stories, Presence) composes.
+
+Built on the standard `EventTarget` so AbortSignal-based cleanup is
+native — listeners auto-unsubscribe when the externally-passed
+`opts.signal` aborts. Consumers never see `addEventListener`; the
+public surface is `on(event, cb, opts?)` returning a [Subscription](../type-aliases/Subscription.mdx).
+
+## Example
+
+```ts
+type MyEvents = { tick: (n: number) => void };
+const bus = new TypedEventBus<MyEvents>();
+
+const sub = bus.on("tick", (n) => console.log(n));
+bus.emit("tick", 1);   // logs 1
+sub();                 // unsubscribe
+bus.emit("tick", 2);   // no log
+```
+
+## Type Parameters
+
+| Type Parameter | Description |
+| ------ | ------ |
+| `TEvents` *extends* `object` | Event name → callback signature map. The keys become the valid event names; the callback's argument type narrows automatically on the event key passed to `on`. |
+
+## Constructors
+
+### Constructor
+
+```ts
+new TypedEventBus<TEvents>(): TypedEventBus<TEvents>;
+```
+
+#### Returns
+
+`TypedEventBus`\<`TEvents`\>
+
+## Methods
+
+### on()
+
+```ts
+on<K>(
+   event: K, 
+   cb: TEvents[K], 
+   opts?: {
+  signal?: AbortSignal;
+}): Subscription;
+```
+
+Defined in: [lib/typed-event-bus.ts:45](https://github.com/CodingButter/snapcap-native/blob/main/src/lib/typed-event-bus.ts#L45)
+
+Subscribe to an event. Returns a [Subscription](../type-aliases/Subscription.mdx) — call to
+unsubscribe, or use `.signal` to wire the subscription's lifetime
+into anything that takes an `AbortSignal`.
+
+#### Type Parameters
+
+| Type Parameter |
+| ------ |
+| `K` *extends* `string` |
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `event` | `K` | One of the keys of `TEvents`. |
+| `cb` | `TEvents`\[`K`\] | Callback invoked with the event payload. |
+| `opts?` | \{ `signal?`: [`AbortSignal`](https://developer.mozilla.org/docs/Web/API/AbortSignal); \} | Optional `signal`; aborting it tears down the subscription. |
+| `opts.signal?` | [`AbortSignal`](https://developer.mozilla.org/docs/Web/API/AbortSignal) | - |
+
+#### Returns
+
+[`Subscription`](../type-aliases/Subscription.mdx)

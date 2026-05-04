@@ -51,14 +51,14 @@ What works today:
 
 - **Send messages** (text, image, image-with-caption) — text flows through the legacy direct-gRPC path; image goes through `getUploadLocations` + S3 + `CreateContentMessage`.
 - **Send stories** — same image pipeline, recipient is the magic MY_STORY UUID.
-- **Receive message bodies** — the bundle decrypts; `MessagingSession.events.on("message", ...)` fires.
+- **Receive message bodies** — the bundle decrypts; `client.messaging.on("message", ...)` fires plaintext through a typed event bus.
 - **Manage friends** — AtlasGw isn't Fidelius-gated.
 - **Search**, **presence**, **typing**, **kick detection** on the duplex WS.
 
 In flight:
 
 - Migration of `sendImage` / `postStory` to the bundle session's `getSnapManager()` and `getFeedManager()` paths (the legacy direct-gRPC path works; the migration is a cleanup).
-- Public `client.onMessage(...)` API (the events emitter exists internally; surfacing it on `SnapcapClient` is the next API addition).
+- Outbound text/media via `messaging.send(...)` (the bundle's send path on the live session is the missing piece; inbound is wired).
 
 ## Why mobile pivot was the right call
 

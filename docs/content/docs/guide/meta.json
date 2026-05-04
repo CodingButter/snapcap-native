@@ -1,5 +1,5 @@
 {
   "title": "Guide",
   "defaultOpen": true,
-  "pages": ["getting-started", "auth", "persistence", "multi-tenant", "throttle", "logging"]
+  "pages": ["getting-started", "auth", "persistence", "friends", "messaging", "multi-tenant", "throttle", "logging"]
 }

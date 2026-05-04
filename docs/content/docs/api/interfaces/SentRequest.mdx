@@ -1,0 +1,24 @@
+---
+title: SentRequest
+---
+
+# Interface: SentRequest
+
+Defined in: [api/friends.ts:246](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L246)
+
+An outbound friend request — the logged-in user has added this account
+and is waiting for them to accept.
+
+## Remarks
+
+`toUsername` / `toDisplayName` are best-effort: populated only when
+the recipient is already in the `publicUsers` cache (mutuals lookups,
+prior search, etc.). Callers can always match on `toUserId`.
+
+## Properties
+
+| Property | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ |
+| <a id="todisplayname"></a> `toDisplayName?` | `string` | Recipient's display name — only present when the public-users cache holds them. | [api/friends.ts:252](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L252) |
+| <a id="touserid"></a> `toUserId` | `string` | Hyphenated UUID of the recipient. | [api/friends.ts:248](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L248) |
+| <a id="tousername"></a> `toUsername?` | `string` | Recipient's Snap username — only present when the public-users cache holds them. | [api/friends.ts:250](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L250) |

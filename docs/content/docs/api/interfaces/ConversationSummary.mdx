@@ -1,0 +1,17 @@
+---
+title: ConversationSummary
+---
+
+# Interface: ConversationSummary
+
+Defined in: [api/messaging.ts:83](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L83)
+
+Per-conversation summary returned by [Messaging.listConversations](../classes/Messaging.mdx#listconversations).
+
+## Properties
+
+| Property | Type | Description | Defined in |
+| ------ | ------ | ------ | ------ |
+| <a id="conversationid"></a> `conversationId` | `string` | Hyphenated UUID. | [api/messaging.ts:85](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L85) |
+| <a id="participants"></a> `participants` | `string`[] | Hyphenated UUIDs of all participants (includes self). | [api/messaging.ts:89](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L89) |
+| <a id="type"></a> `type` | `number` | Conversation kind code from MCS — 5 = DM, 13 = group, 420 = MOB friends, etc. | [api/messaging.ts:87](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L87) |
