@@ -103,6 +103,53 @@ async function loggingFetch(
   const reqBytes = bodyByteLength(init?.body ?? null);
   const tStart = performance.now();
   log({ kind: "net.fetch.open", method, url });
+
+  // ─── FIDELIUS_TRACE diagnostic probe (host-realm path) ────────────
+  // Mirror the sandbox fetch shim's probe — both code paths can fire
+  // /FideliusIdentityService/InitializeWebKey: the bundle WASM goes
+  // through the sandbox shim, and our SDK's `src/api/fidelius.ts`
+  // goes through here directly. Capturing the JS stack at both sites
+  // tells us which trigger ultimately drove the call.
+  if (
+    process.env.SNAPCAP_FIDELIUS_TRACE === "1" &&
+    (url.includes("FideliusIdentityService") || url.includes("InitializeWebKey"))
+  ) {
+    try {
+      const stack = new Error("FIDELIUS_TRACE_NATIVE").stack ?? "<no stack>";
+      const hdrDump: Record<string, string> = {};
+      try {
+        const h = init?.headers;
+        if (h && typeof (h as Headers).forEach === "function") {
+          (h as Headers).forEach((v, k) => { hdrDump[k] = v; });
+        } else if (h && typeof h === "object") {
+          for (const [k, v] of Object.entries(h as Record<string, string>)) hdrDump[k] = v;
+        }
+      } catch { /* best-effort */ }
+      let bodyHex = "<none>";
+      const body = init?.body;
+      if (body !== null && body !== undefined) {
+        try {
+          if (body instanceof ArrayBuffer) {
+            const u8 = new Uint8Array(body, 0, Math.min(200, body.byteLength));
+            bodyHex = Array.from(u8).map(b => b.toString(16).padStart(2, "0")).join(" ");
+          } else if (ArrayBuffer.isView(body)) {
+            const view = body as Uint8Array;
+            const u8 = new Uint8Array(view.buffer, view.byteOffset, Math.min(200, view.byteLength));
+            bodyHex = Array.from(u8).map(b => b.toString(16).padStart(2, "0")).join(" ");
+          }
+        } catch { /* best-effort */ }
+      }
+      process.stderr.write(
+        `\n[FIDELIUS_TRACE_NATIVE] ${method} ${url}\n` +
+        `[FIDELIUS_TRACE_NATIVE] headers: ${JSON.stringify(hdrDump)}\n` +
+        `[FIDELIUS_TRACE_NATIVE] body.hex(<=200B): ${bodyHex}\n` +
+        `[FIDELIUS_TRACE_NATIVE] stack:\n${stack}\n` +
+        `[FIDELIUS_TRACE_NATIVE_END]\n\n`,
+      );
+    } catch (probeErr) {
+      process.stderr.write(`[FIDELIUS_TRACE_NATIVE] probe failed: ${(probeErr as Error).message}\n`);
+    }
+  }
   let res: Response;
   try {
     res = await snapshotFetch(input, init);

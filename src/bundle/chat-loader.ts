@@ -80,6 +80,37 @@ export async function ensureChatBundle(sandbox: Sandbox, opts: ChatBundleOpts = 
   mainSrc = mainSrc.replace("91903(){}", "91903(e,t){t.Buffer=globalThis.__snapcap_node_buffer.Buffer}");
   mainSrc = mainSrc.replace("36675(){}", "36675(e,t){Object.assign(t,globalThis.__snapcap_node_fs)}");
 
+  // Expose the Emscripten Module instance built by webpack module 86818's
+  // factory. The bundle's wasm slice (module 51867's `N(e)`) calls this
+  // factory once during top-level init bring-up; the resulting Module is
+  // what holds all 74 Embind classes (talkcorev3_AsyncTask, e2ee_E2EEKeyManager,
+  // messaging_Session, ...). We need a handle to it so `bootChatWasm` can
+  // poll for runtime-init and return it for downstream messaging API calls
+  // — without calling the factory ourselves (a second call would re-register
+  // every Embind class in the realm and abort with "Cannot register public
+  // name 'X' twice").
+  //
+  // Same `globalThis.__SNAPCAP_X = …` pattern as the other patches above.
+  // Inserted at the very top of the factory body so the reference lands
+  // before any `_embind_register_class` calls fire and stays stable for
+  // the lifetime of the realm.
+  if (mainSrc.includes("o=void 0!==(e=e||{})?e:{};o.ready=new Promise(")) {
+    // Capture Module reference, AND inject a printErr hook so subsequent
+    // Embind calls that abort surface a real diagnostic (Emscripten's
+    // default printErr writes to stderr inside happy-dom which is dropped).
+    // Only set if the bundle hasn't already installed one.
+    mainSrc = mainSrc.replace(
+      "o=void 0!==(e=e||{})?e:{};o.ready=new Promise(",
+      "o=void 0!==(e=e||{})?e:{};" +
+      "globalThis.__SNAPCAP_CHAT_MODULE=o;" +
+      "if(!o.printErr)o.printErr=function(s){if(globalThis.__SNAPCAP_WASM_TRACE)console.error('[wasm-err]',s);};" +
+      "if(!o.print)o.print=function(s){if(globalThis.__SNAPCAP_WASM_TRACE)console.error('[wasm-out]',s);};" +
+      "o.ready=new Promise(",
+    );
+  } else {
+    throw new Error("chat-bundle: Emscripten Module 86818 factory entry source-patch site missing — bundle version may have shifted");
+  }
+
   // Expose closure-private symbols `Fi` (mediaUploadDelegate) and `Ni`
   // (MediaDeliveryService rpc client) from module 76877 to globalThis.
   // `Fi` is what the SPA installs as slot 4 (Comlink-wrapped) of

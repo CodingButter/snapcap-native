@@ -378,6 +378,64 @@ function createNativeFetchShim(opts: {
     const reqBytes = byteLengthOf(body);
     log({ kind: "net.fetch.open", method, url });
 
+    // ─── FIDELIUS_TRACE diagnostic probe ──────────────────────────────
+    // When SNAPCAP_FIDELIUS_TRACE=1 is set in the environment, capture
+    // and dump the JS call stack + headers + body bytes for any fetch
+    // whose URL mentions FideliusIdentityService or InitializeWebKey.
+    //
+    // Why: the endpoint string lives ENTIRELY inside the chat-bundle
+    // WASM binary (e4fa…wasm); it's never built in JS. The WASM's
+    // C++ code constructs the request and calls back into JS via
+    // Embind for the actual fetch(). Capturing the stack at the JS
+    // fetch site reveals which JS-level trigger drove the WASM into
+    // its identity-refresh path, so we can replicate that trigger
+    // on cold path. Probe-only — gated by env var, no side effects.
+    if (
+      process.env.SNAPCAP_FIDELIUS_TRACE === "1" &&
+      (url.includes("FideliusIdentityService") || url.includes("InitializeWebKey"))
+    ) {
+      try {
+        const stack = new Error("FIDELIUS_TRACE").stack ?? "<no stack>";
+        // Header dump — host-realm Headers, simple iteration.
+        const hdrDump: Record<string, string> = {};
+        try {
+          headers.forEach((v, k) => { hdrDump[k] = v; });
+        } catch { /* best-effort */ }
+        // Body hex dump — first 200 bytes max. Body may be a Uint8Array,
+        // ArrayBuffer, string, URLSearchParams, FormData, etc. We only
+        // try the binary cases here (the bundle's gRPC-Web payloads are
+        // binary frames). For string/JSON bodies, dump as text instead.
+        let bodyHex = "<none>";
+        let bodyText = "";
+        if (body !== null && body !== undefined) {
+          try {
+            if (body instanceof ArrayBuffer) {
+              const u8 = new Uint8Array(body, 0, Math.min(200, body.byteLength));
+              bodyHex = Array.from(u8).map(b => b.toString(16).padStart(2, "0")).join(" ");
+            } else if (ArrayBuffer.isView(body)) {
+              const view = body as Uint8Array;
+              const u8 = new Uint8Array(view.buffer, view.byteOffset, Math.min(200, view.byteLength));
+              bodyHex = Array.from(u8).map(b => b.toString(16).padStart(2, "0")).join(" ");
+            } else if (typeof body === "string") {
+              bodyText = body.slice(0, 400);
+            }
+          } catch { /* best-effort */ }
+        }
+        // Use stderr-direct write so the dump survives any logger
+        // filtering and lands in the test's `tee` capture.
+        process.stderr.write(
+          `\n[FIDELIUS_TRACE] ${method} ${url}\n` +
+          `[FIDELIUS_TRACE] headers: ${JSON.stringify(hdrDump)}\n` +
+          `[FIDELIUS_TRACE] body.hex(<=200B): ${bodyHex}\n` +
+          (bodyText ? `[FIDELIUS_TRACE] body.text(<=400c): ${bodyText}\n` : "") +
+          `[FIDELIUS_TRACE] stack:\n${stack}\n` +
+          `[FIDELIUS_TRACE_END]\n\n`,
+        );
+      } catch (probeErr) {
+        process.stderr.write(`[FIDELIUS_TRACE] probe failed: ${(probeErr as Error).message}\n`);
+      }
+    }
+
     // Fire the underlying fetch. Errors (network, abort, redirect with
     // mode:"error") propagate as-is — caller does `.catch()` per spec.
     let res: Response;

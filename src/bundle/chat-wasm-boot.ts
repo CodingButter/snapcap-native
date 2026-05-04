@@ -1,27 +1,24 @@
 /**
  * Boot the chat-bundle Emscripten WASM in the sandbox realm.
  *
- * Direct main-thread instantiation via webpack module 86818's factory,
- * mirroring `accounts-loader.ts`. Pre-fetched `e4fa…wasm` bytes are fed
- * through the Emscripten `instantiateWasm` hook so we never need
- * `WebAssembly.instantiateStreaming` (sandbox doesn't ship it) and never
- * spawn a Web Worker (we don't have one).
+ * Capture-only: the chat bundle's own top-level eval drives webpack
+ * module 51867's `N(e)` → module 86818's factory `o`, which fetches
+ * `e4fa90570c4c2d9e59c1.wasm`, instantiates it, and registers ~74 Embind
+ * classes (`messaging_Session`, `messaging_StatelessSession`,
+ * `messaging_IdentityDelegate`, `messaging_RecipientProvider`,
+ * `e2ee_E2EEKeyManager`, etc.) onto its Module instance. We source-patch
+ * 86818's factory in `chat-loader.ts` to expose that Module as
+ * `globalThis.__SNAPCAP_CHAT_MODULE`; here we just wait for the
+ * runtime-initialized flag to flip and hand the populated reference back.
  *
- * Resurrected from commit 2aa89ca:src/auth/fidelius-mint.ts. The legacy
- * file additionally minted a Fidelius identity via
- * `e2ee_E2EEKeyManager.generateKeyInitializationRequest(1)`; we don't do
- * that here because Snap's own bundle code, once the WASM is up, drives
- * Fidelius identity generation as part of session bring-up.
- *
- * Side-effects: 74 Embind classes register on `moduleEnv` (messaging_
- * Session, messaging_StatelessSession, messaging_IdentityDelegate,
- * messaging_RecipientProvider, e2ee_E2EEKeyManager, etc.). The Module
- * factory's preRun / onRuntimeInitialized / postRun all fire.
+ * Why we don't call the factory ourselves anymore: a second factory call
+ * inside the same realm re-runs every `_embind_register_class` against
+ * the realm-global Embind registry and aborts with
+ * `Cannot register public name 'talkcorev3_AsyncTask' twice` — the
+ * registry doesn't tolerate duplicates.
  *
  * Idempotent: cached after first call.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { Sandbox } from "../shims/sandbox.ts";
 import { installWebpackCapture } from "../shims/webpack-capture.ts";
 import { ensureChatBundle } from "./chat-loader.ts";
@@ -51,8 +48,8 @@ export type ChatWasmBootOpts = {
  * @param sandbox - the per-instance {@link Sandbox} that will host the WASM instance
  * @param opts - optional bundle directory override
  * @returns the Emscripten `moduleEnv` containing the registered Embind classes
- * @throws when chat-bundle module 86818 doesn't yield a factory, when
- *   the WASM aborts, or when init exceeds the 30s timeout
+ * @throws when the bundle never auto-instantiates a Module or runtime init
+ *   exceeds the 30s timeout
  */
 export async function bootChatWasm(
   sandbox: Sandbox,
@@ -68,76 +65,60 @@ export async function bootChatWasm(
 
 async function bootOnce(
   sandbox: Sandbox,
-  opts: ChatWasmBootOpts,
+  _opts: ChatWasmBootOpts,
 ): Promise<{ moduleEnv: Record<string, unknown> }> {
-  const bundleDir = opts.bundleDir ?? defaultBundleDir();
-  const chatDw = join(bundleDir, "cf-st.sc-cdn.net", "dw");
-  const wasmPath = join(chatDw, "e4fa90570c4c2d9e59c1.wasm");
-
   installWebpackCapture(sandbox);
 
-  ensureChatBundle(sandbox, { bundleDir });
+  // Trigger the bundle's top-level eval; this is what kicks off the
+  // bundle's own webpack module 51867 → 86818 factory call.
+  await ensureChatBundle(sandbox);
 
-  const wreq = sandbox.getGlobal<{ (id: string): unknown; m: Record<string, Function> }>("__snapcap_chat_p");
-  if (!wreq) {
-    throw new Error("chat-bundle webpack runtime did not expose __snapcap_chat_p — ensureChatBundle must run first");
-  }
-
-  const factoryMod = wreq("86818") as { A?: Function };
-  const factory = factoryMod.A;
-  if (typeof factory !== "function") {
-    throw new Error("chat-bundle module 86818 did not yield Emscripten factory");
-  }
-
-  const wasmBytes = readFileSync(wasmPath);
-
-  let runtimeInitDone = false;
-  let abortReason: string | null = null;
-  const moduleEnv: Record<string, unknown> = {
-    onRuntimeInitialized: () => {
-      runtimeInitDone = true;
-    },
-    instantiateWasm: (
-      imports: WebAssembly.Imports,
-      successCallback: (instance: WebAssembly.Instance, mod?: WebAssembly.Module) => void,
-    ): unknown => {
-      WebAssembly.instantiate(wasmBytes, imports).then((res) => {
-        successCallback(res.instance, res.module);
-      });
-      return {};
-    },
-    onAbort: (reason: unknown) => {
-      abortReason = String(reason);
-    },
-    print: () => {},
-    printErr: () => {},
-    locateFile: (name: string) => name,
-  };
-
-  factory(moduleEnv);
-
-  // Module.ready Promise doesn't always resolve through our shim env;
-  // poll the flag onRuntimeInitialized sets. Embind classes are fully
-  // registered on moduleEnv by then.
+  // Poll for the captured Module reference + runtime-initialized flag.
+  // Embind class registration completes inside the WASM init path that
+  // ends in the factory's `Yn()` (run) call; `calledRun` is the
+  // Emscripten flag that flips when run() finishes successfully.
   const startedAt = Date.now();
-  while (!runtimeInitDone) {
-    if (abortReason !== null) {
-      throw new Error(`chat WASM aborted: ${abortReason}`);
+  while (true) {
+    const captured = sandbox.getGlobal<Record<string, unknown> | undefined>(
+      "__SNAPCAP_CHAT_MODULE",
+    );
+    if (captured && (captured.calledRun || captured.messaging_Session)) {
+      defangDeprecationGetters(captured);
+      return { moduleEnv: captured };
     }
     if (Date.now() - startedAt > 30_000) {
-      throw new Error("chat WASM init timed out (>30s)");
+      throw new Error(
+        "chat WASM init timed out (>30s) — bundle did not finish populating __SNAPCAP_CHAT_MODULE",
+      );
     }
     await new Promise((r) => setTimeout(r, 50));
   }
-
-  // Expose for debug/probe scripts.
-  if (process.env.SNAPCAP_EXPOSE_CHAT_WASM_MODULE) {
-    sandbox.setGlobal("__snapcap_chat_wasm_module", moduleEnv);
-  }
-
-  return { moduleEnv };
 }
 
-function defaultBundleDir(): string {
-  return join(import.meta.dirname, "..", "..", "vendor", "snap-bundle");
+/**
+ * After Emscripten startup completes, the Module gets a set of
+ * deprecation getters defined as `Object.defineProperty(o, X, { get: abort })`
+ * for legacy names (`arguments`, `thisProgram`, `quit`, etc.). Reading
+ * any of them aborts the program. The bundle's own code never touches
+ * these names, so the bundle is fine — but downstream consumers that
+ * enumerate the Module (e.g. Zustand's `setState` deep-copying the
+ * `wasm.module` slot) will hit the abort. Replace each guarded name with
+ * a plain `undefined` value so enumeration is harmless.
+ */
+function defangDeprecationGetters(m: Record<string, unknown>): void {
+  for (const k of Object.getOwnPropertyNames(m)) {
+    const desc = Object.getOwnPropertyDescriptor(m, k);
+    if (desc && typeof desc.get === "function" && desc.configurable && !desc.set) {
+      // Heuristic: Emscripten's deprecation guards are configurable
+      // get-only accessors that throw `abort(...)` when read. Replace
+      // each with a plain `undefined` value so consumers (Zustand's
+      // setState, JSON.stringify probes, etc.) can enumerate the Module
+      // without aborting.
+      try {
+        Object.defineProperty(m, k, { value: undefined, writable: true, configurable: true, enumerable: false });
+      } catch {
+        /* tolerate — leave as-is if redefinition refused */
+      }
+    }
+  }
 }

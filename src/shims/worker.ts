@@ -33,13 +33,20 @@
  *      the realm `globalThis`, which is fine — nobody else iterates
  *      it after this point.
  *
- * Outer ↔ inner postMessage:
- *   - `worker.postMessage(data)` → enqueue a microtask that invokes
- *     `scope.onmessage({ data })` and any scope listeners registered
- *     via `addEventListener("message", h)`.
- *   - `scope.postMessage(data)` → enqueue a microtask that fires
- *     listeners registered on the OUTER worker via
- *     `worker.addEventListener("message", h)` (and any `worker.onmessage`).
+ * Outer ↔ inner postMessage — SYNCHRONOUS in-call delivery:
+ *   - `worker.postMessage(data)` → directly invokes `scope.onmessage({ data })`
+ *     and any inner listeners in the same call stack.
+ *   - `scope.postMessage(data)` → directly invokes outer listeners and
+ *     `worker.onmessage` in the same call stack.
+ *
+ *   The bundle was written for browser Workers where postMessage is
+ *   async, but synchronous is a strict subset of async behavior — the
+ *   bundle cannot observe the difference unless it deliberately checks,
+ *   which webpack-emitted code never does. An earlier version deferred
+ *   each delivery via `queueMicrotask`; the chunk's init code registered
+ *   its message handler in a microtask that fired AFTER the main thread
+ *   had already sent the boot message, so the boot reply never arrived.
+ *   Synchronous delivery eliminates that race entirely.
  *
  * Comlink's protocol is request/response over `postMessage` keyed by
  * an `id` field in the data envelope; it does not require structured
@@ -109,23 +116,21 @@ export class FakeWorker {
     // means the chunk's `s.p+s.u(...)` chunk-loader can resolve
     // sibling chunks if it tries.
     const scope: Record<string, unknown> = {
-      // Inner postMessage → outer listeners.
+      // Inner postMessage → outer listeners. Synchronous: invoked in
+      // the same call stack as the inner code that called postMessage.
       postMessage: (data: unknown, _transfer?: unknown) => {
         if (this.terminated) return;
         if (process.env.SNAPCAP_DEBUG_WORKER) {
           // eslint-disable-next-line no-console
           console.error(`[worker→outer]`, JSON.stringify(data).slice(0, 200));
         }
-        queueMicrotask(() => {
-          if (this.terminated) return;
-          const ev = { data };
-          if (this.onmessage) {
-            try { this.onmessage(ev); } catch (e) { this.fireOuterError(e); }
-          }
-          for (const l of this.outerListeners) {
-            try { l(ev); } catch (e) { this.fireOuterError(e); }
-          }
-        });
+        const ev = { data };
+        if (this.onmessage) {
+          try { this.onmessage(ev); } catch (e) { this.fireOuterError(e); }
+        }
+        for (const l of this.outerListeners) {
+          try { l(ev); } catch (e) { this.fireOuterError(e); }
+        }
       },
       // Recursive importScripts: resolve each URL the same way and
       // eval in the SAME worker scope. The chunk's own webpack
@@ -211,23 +216,23 @@ export class FakeWorker {
     }
   }
 
-  /** Outer postMessage → inner onmessage + inner listeners. */
+  /**
+   * Outer postMessage → inner onmessage + inner listeners. Synchronous:
+   * invoked in the same call stack as the outer caller.
+   */
   postMessage(data: unknown, _transfer?: unknown): void {
     if (this.terminated) return;
     if (process.env.SNAPCAP_DEBUG_WORKER) {
       // eslint-disable-next-line no-console
       console.error(`[outer→worker]`, JSON.stringify(data).slice(0, 200), `(handlers: onmessage=${this.innerOnmessage ? "1" : "0"}, listeners=${this.innerListeners.size})`);
     }
-    queueMicrotask(() => {
-      if (this.terminated) return;
-      const ev = { data };
-      if (this.innerOnmessage) {
-        try { this.innerOnmessage(ev); } catch (e) { this.fireOuterError(e); }
-      }
-      for (const l of this.innerListeners) {
-        try { l(ev); } catch (e) { this.fireOuterError(e); }
-      }
-    });
+    const ev = { data };
+    if (this.innerOnmessage) {
+      try { this.innerOnmessage(ev); } catch (e) { this.fireOuterError(e); }
+    }
+    for (const l of this.innerListeners) {
+      try { l(ev); } catch (e) { this.fireOuterError(e); }
+    }
   }
 
   addEventListener(type: string, listener: unknown): void {
@@ -416,34 +421,53 @@ function patchUrlCreateObjectURL(sandbox: Sandbox): void {
  * Install the Worker shim onto the sandbox realm.
  *
  * After install:
- *   - `globalThis.Worker` inside the sandbox is {@link FakeWorker}.
- *   - `URL.createObjectURL` is patched to record blob payloads so the
- *     Worker constructor can recover the real chunk URL synchronously.
+ *   - `globalThis.Worker` inside the sandbox is a no-op stub: the
+ *     constructor records nothing and never loads/eval's the worker
+ *     chunk. `postMessage` / `addEventListener` / `onmessage` /
+ *     `terminate` are present so the bundle's `new Worker(...)` +
+ *     Comlink-wrap path doesn't throw, but every call silently swallows.
+ *   - `URL.createObjectURL` is left patched (harmless and shared with
+ *     other shims).
+ *
+ * Why neutered: the worker chunk (`f16f14e3…chunk.js` + its
+ * `importScripts("06c27f3b…chunk.js")`) bundles a SECOND Emscripten
+ * Module whose top-level `_embind_register_class` calls collide with the
+ * already-registered classes from the main-thread module 86818 factory
+ * (we capture that one via `globalThis.__SNAPCAP_CHAT_MODULE` —
+ * see `bundle/chat-wasm-boot.ts`). Loading the worker chunk in the same
+ * realm aborts with "Cannot register public name X twice". We don't need
+ * the worker either: the `state.wasm.workerProxy` facade installed in
+ * `api/auth.ts` forwards messaging calls straight to the main-thread
+ * Embind classes.
  *
  * Idempotent.
  *
  * @internal
  * @param sandbox - target {@link Sandbox} to install into
  * @param opts.bundleDir - filesystem path to the on-disk vendored
- *   Snap bundle (`vendor/snap-bundle`). Worker chunk lookups resolve
- *   to `<bundleDir>/cf-st.sc-cdn.net/dw/<basename>`.
+ *   Snap bundle (`vendor/snap-bundle`). Unused now that the Worker is a
+ *   no-op stub; kept in the signature so call sites don't change.
  */
-export function installWorkerShim(sandbox: Sandbox, opts: { bundleDir: string }): void {
+export function installWorkerShim(sandbox: Sandbox, _opts: { bundleDir: string }): void {
   if (sandbox.getGlobal("__SNAPCAP_WORKER_SHIM_INSTALLED")) return;
   patchUrlCreateObjectURL(sandbox);
-  const { bundleDir } = opts;
-  // Constructor wrapper that pins the sandbox + bundleDir into the
-  // class without exposing them as ctor args (matches the real
-  // Worker(url, opts) signature the bundle calls with).
-  class Worker extends FakeWorker {
-    constructor(url: URL | string, options?: { name?: string; type?: string; credentials?: string }) {
-      super(url, options, sandbox, bundleDir);
+  class Worker {
+    onmessage: MessageListener | null = null;
+    onerror: ((ev: { error: unknown }) => void) | null = null;
+    constructor(_url: URL | string, _options?: { name?: string; type?: string; credentials?: string }) {
+      /* no-op: chunk load + eval intentionally skipped */
     }
+    postMessage(_data: unknown, _transfer?: unknown): void { /* swallow */ }
+    addEventListener(_type: string, _listener: unknown): void { /* swallow */ }
+    removeEventListener(_type: string, _listener: unknown): void { /* swallow */ }
+    terminate(): void { /* swallow */ }
   }
   sandbox.setGlobal("Worker", Worker);
   sandbox.setGlobal("__SNAPCAP_WORKER_SHIM_INSTALLED", true);
   // Suppress an unused vm import warning if tree-shaken — vm is used
   // transitively via Sandbox.runInContext, but importing it at the
-  // top keeps types tight.
+  // top keeps types tight. FakeWorker is retained for call sites that
+  // import it directly (none currently after neutering).
   void vm;
+  void FakeWorker;
 }
