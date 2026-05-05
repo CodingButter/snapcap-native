@@ -43,13 +43,13 @@ Knip config: `knip.json` v6, entry = `src/index.ts` + all test files + all shell
 - **Verification:** `grep -r "sharp" src/ tests/ scripts/` → zero results. Not imported anywhere.
 - **Resolution:** `src/api/stories.ts:68` documents that auto-normalization to 1080×1920 RGBA PNG is the bundle's responsibility once it sniffs the Blob — the SDK passes raw bytes through. `sharp` was a leftover from an abandoned SDK-side normalization path. Removed from `dependencies`. Test suite unchanged (562 pass / 14 pre-existing fails).
 
-### `makeConversationRef` — `src/api/_helpers.ts:127`
+### ~~`makeConversationRef` — `src/api/_helpers.ts:127`~~ ✅ removed
 
 - **Knip:** unused export (function).
 - **Verification:** `rg -rn "makeConversationRef" src/ tests/ scripts/` → only the definition line. Not called anywhere.
 - **Note:** Marked `@internal` in JSDoc. `_media_upload.ts` duplicates its logic inline rather than calling it. This is a candidate for deletion, OR for replacing the inline duplicate in `_media_upload.ts` with a call to this function (the cleaner fix). Either way, the exported symbol is currently dead.
 
-### `listConfiguredUsers` — `tests/lib/user-locker.ts:158`
+### ~~`listConfiguredUsers` — `tests/lib/user-locker.ts:158`~~ ✅ removed
 
 - **Knip:** unused export (function).
 - **Verification:** `rg -rn "listConfiguredUsers" tests/ src/ scripts/` → only the definition line.
@@ -67,7 +67,7 @@ Knip config: `knip.json` v6, entry = `src/index.ts` + all test files + all shell
 - **Verification:** `rg -rn "bootKameleon" src/ tests/ scripts/` → only definition + two JSDoc references in the same file.
 - **Ambiguity:** The function is `@internal` (not part of public `src/index.ts`). Its sibling `getKameleon` is what callers actually use. `bootKameleon` is a thin convenience wrapper that strips the `BootedKameleon` wrapper and returns just the `KameleonContext`. It may have been retained as a cleaner API seam for future direct callers (e.g. `scripts/mint-attestation.ts` might want it). Recommend checking whether any forthcoming scripting surface needs the lighter `bootKameleon` vs `getKameleon` API before removing.
 
-### `getStandaloneChatModule` — `src/bundle/chat/standalone/realm.ts:61`
+### ~~`getStandaloneChatModule` — `src/bundle/chat/standalone/realm.ts:61`~~ ✅ removed
 
 - **Knip:** unused export (function).
 - **Verification:** `grep -rn "getStandaloneChatModule" src/ tests/` → only definition + re-export in `standalone/index.ts`. No callers.

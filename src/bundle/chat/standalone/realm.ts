@@ -46,28 +46,9 @@ import type {
 } from "./types.ts";
 
 /**
- * Get a handle to the cached standalone-WASM `moduleEnv` (the populated
- * Emscripten Module dictionary), booting it on first call. Same instance
- * returned to `mintFideliusIdentity`; reusing it for the messaging
- * session avoids a second 12 MB WASM compile + 1488-module register cycle.
- *
- * Cached per-{@link Sandbox} on `sandbox.fideliusMintBoot`, so two
- * `SnapcapClient` instances each get their own mint realm.
- *
- * @internal — used by `session/setup.ts`. Public consumers should call
- * `mintFideliusIdentity` (which boots if needed) before reaching for this
- * helper.
- */
-export async function getStandaloneChatModule(sandbox: Sandbox): Promise<StandaloneChatModule> {
-  const { moduleEnv } = await getOrBootKeyManager(sandbox);
-  return moduleEnv;
-}
-
-/**
  * Get the full mint-realm payload — moduleEnv, vm.Context, and the
  * webpack require leaked onto that context's global. Lazy-boots on first
- * call (same cached promise as `mintFideliusIdentity` /
- * {@link getStandaloneChatModule}).
+ * call (same cached promise as `mintFideliusIdentity`).
  *
  * Cached per-{@link Sandbox} on `sandbox.fideliusMintBoot` — each
  * `SnapcapClient` instance owns its own mint realm; multi-tenant runners

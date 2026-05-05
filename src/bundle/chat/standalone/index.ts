@@ -27,7 +27,7 @@
  * @see https://github.com/CodingButter/snapcap-native/issues — file an
  * issue for the de-duplication work if it becomes a priority.
  */
-export { getStandaloneChatRealm, getStandaloneChatModule } from "./realm.ts";
+export { getStandaloneChatRealm } from "./realm.ts";
 export { mintFideliusIdentity } from "./identity-mint.ts";
 export type {
   KeyManagerStatics,

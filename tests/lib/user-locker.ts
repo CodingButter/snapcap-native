@@ -152,15 +152,6 @@ export async function withLockedUser<T>(
 }
 
 /**
- * List the usernames of all configured accounts. Useful for diagnostics
- * or for tests that need to enumerate accounts directly (rare).
- */
-export function listConfiguredUsers(projectRoot?: string): string[] {
-  const root = projectRoot ?? findProjectRoot();
-  return readUsersFromConfigs(root);
-}
-
-/**
  * Manual checkout for tests that need lifecycle control beyond a single
  * `withLockedUser` callback (e.g. bun's `beforeAll`/`afterAll`).
  *

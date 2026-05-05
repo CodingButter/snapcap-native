@@ -25,7 +25,7 @@
  * (used by the api layer to bridge bundle-shape parameters into the
  * registry).
  */
-import type { ConversationRef, DecodedSearchUserResult, Uuid64Pair } from "../bundle/types/index.ts";
+import type { DecodedSearchUserResult, Uuid64Pair } from "../bundle/types/index.ts";
 
 /**
  * Convert a hyphenated UUID string into its 16-byte representation.
@@ -110,30 +110,6 @@ export function highLowToUuid(high: bigint | string, low: bigint | string): stri
   dv.setBigUint64(0, typeof high === "bigint" ? high : BigInt(high), false);
   dv.setBigUint64(8, typeof low === "bigint" ? low : BigInt(low), false);
   return bytesToUuid(out);
-}
-
-/**
- * UUID-string → `{id: bytes16, str: uuid}` envelope. This is the canonical
- * `ConversationRef` shape every send/lifecycle bundle method expects.
- *
- * @param conversationId - Hyphenated 16-byte UUID string.
- * @returns `ConversationRef` envelope ready to pass to bundle methods.
- * @throws If `conversationId` isn't a valid hyphenated UUID. A misshapen
- * conversation id surfaces as a friendlier error here than as an opaque
- * WASM marshalling failure inside the bundle.
- *
- * @internal
- */
-export function makeConversationRef(conversationId: string): ConversationRef {
-  const cleaned = conversationId.replace(/-/g, "").toLowerCase();
-  if (cleaned.length !== 32) {
-    throw new Error(
-      `makeConversationRef: invalid conversationId "${conversationId}" — expected hyphenated 16-byte UUID`,
-    );
-  }
-  const id = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) id[i] = parseInt(cleaned.slice(i * 2, i * 2 + 2), 16);
-  return { id, str: conversationId };
 }
 
 /**
