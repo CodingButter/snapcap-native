@@ -4,7 +4,7 @@ title: Friends
 
 # Class: Friends
 
-Defined in: [api/friends.ts:957](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L957)
+Defined in: [api/friends/manager.ts:57](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L57)
 
 Concrete [IFriendsManager](../interfaces/IFriendsManager.mdx) implementation.
 
@@ -28,11 +28,11 @@ full method-level documentation.
 acceptRequest(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:1003](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1003)
+Defined in: [api/friends/manager.ts:108](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L108)
 
 Accept an incoming friend request.
 
-Equivalent on the wire to [IFriendsManager.sendRequest](../interfaces/IFriendsManager.mdx#sendrequest) with
+Equivalent on the wire to [IFriendsMutations.sendRequest](../interfaces/IFriendsManager.mdx#sendrequest) with
 `source: ADDED_BY_ADDED_ME_BACK` — the SPA path. Surfaced as a named
 verb because the inbox flow has its own consumer mental model;
 `acceptRequest(req.fromUserId)` reads more clearly than
@@ -60,7 +60,7 @@ verb because the inbox flow has its own consumer mental model;
 block(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:991](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L991)
+Defined in: [api/friends/manager.ts:98](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L98)
 
 Block a user — also removes any existing friend link.
 
@@ -88,7 +88,7 @@ getUsers(userIds: string[], opts?: {
 }): Promise<FriendsUser[]>;
 ```
 
-Defined in: [api/friends.ts:1118](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1118)
+Defined in: [api/friends/manager.ts:145](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L145)
 
 Resolve a list of user IDs to [User](../interfaces/FriendsUser.mdx) records (username +
 display name).
@@ -126,7 +126,7 @@ appear with `notFound: true`.
 list(): Promise<Friend[]>;
 ```
 
-Defined in: [api/friends.ts:1103](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1103)
+Defined in: [api/friends/manager.ts:130](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L130)
 
 All friends in the logged-in user's social graph (excluding self).
 
@@ -153,7 +153,7 @@ on<K>(
 }): Subscription;
 ```
 
-Defined in: [api/friends.ts:1228](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1228)
+Defined in: [api/friends/manager.ts:168](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L168)
 
 Subscribe to a typed friends event. Returns a [Subscription](../type-aliases/Subscription.mdx)
 — call it to unsubscribe, or use `sub.signal` to tie the
@@ -193,15 +193,14 @@ A [Subscription](../type-aliases/Subscription.mdx) — a callable unsubscribe th
 onChange(cb: (snap: FriendsSnapshot) => void): Unsubscribe;
 ```
 
-Defined in: [api/friends.ts:1214](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1214)
+Defined in: [api/friends/manager.ts:163](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L163)
 
 Fire `cb` whenever any part of the friend graph changes — mutuals,
 incoming requests, or outgoing requests.
 
 The callback receives a full [FriendsSnapshot](../interfaces/FriendsSnapshot.mdx) reflecting the
 new state. Initial state is NOT replayed — call
-[IFriendsManager.snapshot](../interfaces/IFriendsManager.mdx#snapshot) once after subscribing if you need
-a baseline.
+`snapshot()` once after subscribing if you need a baseline.
 
 #### Parameters
 
@@ -227,7 +226,7 @@ An `Unsubscribe` thunk; idempotent on repeat calls.
 receivedRequests(): Promise<ReceivedRequest[]>;
 ```
 
-Defined in: [api/friends.ts:1108](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1108)
+Defined in: [api/friends/manager.ts:135](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L135)
 
 All pending received friend requests.
 
@@ -250,7 +249,7 @@ reject / ignore.
 refresh(): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:1086](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1086)
+Defined in: [api/friends/manager.ts:125](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L125)
 
 Force an explicit re-sync from the server — pulls the latest mutuals
 + outgoing requests (via `SyncFriendData`) AND incoming requests (via
@@ -264,8 +263,9 @@ Force an explicit re-sync from the server — pulls the latest mutuals
 
 The bundle does NOT auto-poll for fresh state — the SPA's React layer
 normally drives that cadence, and we don't load React. So consumers
-who want event subscriptions like [IFriendsManager.on](../interfaces/IFriendsManager.mdx#on)(`"request:received"`)
-to actually fire must drive their own refresh cadence. Common patterns:
+who want event subscriptions like
+IFriendsSubscriptions.on(`"request:received"`) to actually fire
+must drive their own refresh cadence. Common patterns:
 
 - Call `refresh()` in a `setInterval` (every 10–30s for inbox-style
   monitoring, every 60s+ for less time-sensitive use cases).
@@ -286,13 +286,13 @@ pattern). Subsequent reads return whatever is in cache.
 rejectRequest(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:1009](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1009)
+Defined in: [api/friends/manager.ts:113](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L113)
 
 Reject (ignore) an incoming friend request.
 
 Maps to Snap's `IgnoreFriends` RPC — the same path the SPA's
 "Ignore" button uses. Once rejected, the request disappears from
-[IFriendsManager.receivedRequests](../interfaces/IFriendsManager.mdx#receivedrequests).
+IFriendsReads.receivedRequests.
 
 #### Parameters
 
@@ -316,7 +316,7 @@ Maps to Snap's `IgnoreFriends` RPC — the same path the SPA's
 remove(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:985](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L985)
+Defined in: [api/friends/manager.ts:93](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L93)
 
 Remove a friend from the social graph.
 
@@ -347,9 +347,9 @@ and the server enforces this at the policy layer. We verified empirically:
 - After the call, `friends.list()` still returns the supposedly-removed
   account as mutual on both sides (we tested symmetric removes too).
 
-**What does work:** [IFriendsManager.sendRequest](../interfaces/IFriendsManager.mdx#sendrequest) (web supports
-AddFriends), [IFriendsManager.acceptRequest](../interfaces/IFriendsManager.mdx#acceptrequest),
-[IFriendsManager.rejectRequest](../interfaces/IFriendsManager.mdx#rejectrequest).
+**What does work:** [IFriendsMutations.sendRequest](../interfaces/IFriendsManager.mdx#sendrequest) (web supports
+AddFriends), [IFriendsMutations.acceptRequest](../interfaces/IFriendsManager.mdx#acceptrequest),
+[IFriendsMutations.rejectRequest](../interfaces/IFriendsManager.mdx#rejectrequest).
 
 **Workarounds:** none from web. To actually unfriend an account, the
 user must do it from the official mobile app.
@@ -366,7 +366,7 @@ user must do it from the official mobile app.
 search(query: string): Promise<FriendsUser[]>;
 ```
 
-Defined in: [api/friends.ts:1181](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1181)
+Defined in: [api/friends/manager.ts:150](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L150)
 
 Search Snap's user index by username / display-name fragment.
 
@@ -397,7 +397,7 @@ sendRequest(userId: string, opts?: {
 }): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:979](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L979)
+Defined in: [api/friends/manager.ts:88](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L88)
 
 Send a friend request / add a user to the friend list.
 
@@ -427,7 +427,7 @@ Resolves once the server acknowledges.
 sentRequests(): Promise<SentRequest[]>;
 ```
 
-Defined in: [api/friends.ts:1113](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1113)
+Defined in: [api/friends/manager.ts:140](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L140)
 
 All pending sent friend requests (the logged-in user's adds
 waiting for the recipient to accept).
@@ -450,7 +450,7 @@ Outbound [SentRequest](../interfaces/SentRequest.mdx) records.
 snapshot(): Promise<FriendsSnapshot>;
 ```
 
-Defined in: [api/friends.ts:1044](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1044)
+Defined in: [api/friends/manager.ts:120](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L120)
 
 Canonical point-in-time view of the friend graph — mutuals + pending
 requests in both directions.
@@ -463,9 +463,9 @@ A [FriendsSnapshot](../interfaces/FriendsSnapshot.mdx) with all three slots popu
 
 #### Remarks
 
-The split read accessors ([IFriendsManager.list](../interfaces/IFriendsManager.mdx#list),
-[IFriendsManager.receivedRequests](../interfaces/IFriendsManager.mdx#receivedrequests),
-[IFriendsManager.sentRequests](../interfaces/IFriendsManager.mdx#sentrequests)) all project from this.
+The split read accessors ([IFriendsReads.list](../interfaces/IFriendsManager.mdx#list),
+[IFriendsReads.receivedRequests](../interfaces/IFriendsManager.mdx#receivedrequests),
+[IFriendsReads.sentRequests](../interfaces/IFriendsManager.mdx#sentrequests)) all project from this.
 
 #### Implementation of
 
@@ -479,7 +479,7 @@ The split read accessors ([IFriendsManager.list](../interfaces/IFriendsManager.m
 unblock(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:997](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L997)
+Defined in: [api/friends/manager.ts:103](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends/manager.ts#L103)
 
 Unblock a previously-blocked user.
 

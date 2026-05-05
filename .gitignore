@@ -39,5 +39,6 @@ scripts/test-bundle-auth.ts
 .claude/settings.local.json
 .claude/sessions/
 .claude/.cache/
+.claude/worktrees/
 .claude/.last-conversation
 

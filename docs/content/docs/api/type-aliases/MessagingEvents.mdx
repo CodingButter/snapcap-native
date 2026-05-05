@@ -26,22 +26,22 @@ type MessagingEvents = {
 };
 ```
 
-Defined in: [api/messaging.ts:132](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L132)
+Defined in: [api/messaging/interface.ts:20](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/interface.ts#L20)
 
-Event map for [Messaging.on](../classes/Messaging.mdx#on).
+Event map for `Messaging.on`.
 
 `message` is the only event currently wired end-to-end — it fires
 whenever the bundle's WASM produces a plaintext message via the
 messaging delegate. The presence events (`typing`, `viewing`, `read`)
 are declared so consumers can subscribe today; the inbound delegate
 slots that drive them are still being mapped — see TODO inside
-Messaging.#bringUpSession.
+`bringup.ts#bringUpSession`.
 
 ## Properties
 
 | Property | Type | Description | Defined in |
 | ------ | ------ | ------ | ------ |
-| <a id="message"></a> `message` | (`msg`: [`PlaintextMessage`](PlaintextMessage.mdx)) => `void` | A decrypted plaintext message arrived. | [api/messaging.ts:134](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L134) |
-| <a id="read"></a> `read` | (`ev`: \{ `at`: `number`; `convId`: `string`; `messageId`: `string`; `userId`: `string`; \}) => `void` | Peer marked `messageId` read at `at` (ms epoch). | [api/messaging.ts:140](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L140) |
-| <a id="typing"></a> `typing` | (`ev`: \{ `convId`: `string`; `until`: `number`; `userId`: `string`; \}) => `void` | Peer started typing in `convId` until `until` (ms epoch). | [api/messaging.ts:136](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L136) |
-| <a id="viewing"></a> `viewing` | (`ev`: \{ `convId`: `string`; `until`: `number`; `userId`: `string`; \}) => `void` | Peer is viewing `convId` until `until` (ms epoch). | [api/messaging.ts:138](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L138) |
+| <a id="message"></a> `message` | (`msg`: [`PlaintextMessage`](PlaintextMessage.mdx)) => `void` | A decrypted plaintext message arrived. | [api/messaging/interface.ts:22](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/interface.ts#L22) |
+| <a id="read"></a> `read` | (`ev`: \{ `at`: `number`; `convId`: `string`; `messageId`: `string`; `userId`: `string`; \}) => `void` | Peer marked `messageId` read at `at` (ms epoch). | [api/messaging/interface.ts:28](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/interface.ts#L28) |
+| <a id="typing"></a> `typing` | (`ev`: \{ `convId`: `string`; `until`: `number`; `userId`: `string`; \}) => `void` | Peer started typing in `convId` until `until` (ms epoch). | [api/messaging/interface.ts:24](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/interface.ts#L24) |
+| <a id="viewing"></a> `viewing` | (`ev`: \{ `convId`: `string`; `until`: `number`; `userId`: `string`; \}) => `void` | Peer is viewing `convId` until `until` (ms epoch). | [api/messaging/interface.ts:26](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/interface.ts#L26) |

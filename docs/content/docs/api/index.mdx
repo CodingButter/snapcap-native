@@ -92,7 +92,7 @@ setLogger(defaultTextLogger);
 | Interface | Description |
 | ------ | ------ |
 | [BitmojiPublicInfo](interfaces/BitmojiPublicInfo.mdx) | Bitmoji avatar identifiers. Used to render a user's bitmoji via Snap's `images.bitmoji.com` CDN — the avatar id pairs with a sticker / pose id to construct the URL. |
-| [ConversationSummary](interfaces/ConversationSummary.mdx) | Per-conversation summary returned by [Messaging.listConversations](classes/Messaging.mdx#listconversations). |
+| [ConversationSummary](interfaces/ConversationSummary.mdx) | Per-conversation summary returned by `Messaging.listConversations`. |
 | [DataStore](interfaces/DataStore.mdx) | Persistent key-value storage interface — the SDK's pluggable persistence backbone. |
 | [Friend](interfaces/Friend.mdx) | A friend in the logged-in user's social graph. |
 | [FriendsEvents](interfaces/FriendsEvents.mdx) | Map of event name → callback signature for [IFriendsManager.on](interfaces/IFriendsManager.mdx#on). The callback's argument type narrows automatically per event key via TypeScript's keyof inference. |
@@ -114,7 +114,7 @@ setLogger(defaultTextLogger);
 | [FriendSource](type-aliases/FriendSource.mdx) | String-keyed enum form of [FriendSource](variables/FriendSource.mdx) — the type of any value read off the const object. |
 | [LogEvent](type-aliases/LogEvent.mdx) | All emitted log events. Closed discriminated union — switch on `event.kind` to narrow. |
 | [Logger](type-aliases/Logger.mdx) | Handler signature passed to [setLogger](functions/setLogger.mdx). |
-| [MessagingEvents](type-aliases/MessagingEvents.mdx) | Event map for [Messaging.on](classes/Messaging.mdx#on). |
+| [MessagingEvents](type-aliases/MessagingEvents.mdx) | Event map for `Messaging.on`. |
 | [PlaintextMessage](type-aliases/PlaintextMessage.mdx) | Plaintext message handed to the consumer's `onPlaintext` callback. |
 | [PresenceStatus](type-aliases/PresenceStatus.mdx) | Presence status — what the client reports for the active session's global "I'm here" / "I'm away" slot. |
 | [SnapcapClientOpts](type-aliases/SnapcapClientOpts.mdx) | Public constructor options for [SnapcapClient](classes/SnapcapClient.mdx). |

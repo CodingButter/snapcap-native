@@ -4,7 +4,7 @@ title: Messaging
 
 # Class: Messaging
 
-Defined in: [api/messaging.ts:148](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L148)
+Defined in: [api/messaging/manager.ts:67](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L67)
 
 Messaging manager — inbox enumeration + live decrypt + presence.
 
@@ -20,7 +20,7 @@ Messaging manager — inbox enumeration + live decrypt + presence.
 fetchEncryptedMessages(conversations: ConversationSummary[], selfUserId?: string): Promise<RawEncryptedMessage[]>;
 ```
 
-Defined in: [api/messaging.ts:1091](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L1091)
+Defined in: [api/messaging/manager.ts:296](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L296)
 
 Fetch raw encrypted message envelopes for the given conversations
 via `BatchDeltaSync`.
@@ -44,7 +44,7 @@ via `BatchDeltaSync`.
 listConversations(selfUserId?: string): Promise<ConversationSummary[]>;
 ```
 
-Defined in: [api/messaging.ts:1075](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L1075)
+Defined in: [api/messaging/manager.ts:287](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L287)
 
 Fetch the user's full conversation list via `SyncConversations`.
 Returns one entry per conversation — the same set the SPA shows on
@@ -73,7 +73,7 @@ on<K>(
 }): Subscription;
 ```
 
-Defined in: [api/messaging.ts:230](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L230)
+Defined in: [api/messaging/manager.ts:177](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L177)
 
 Subscribe to a messaging event. First subscription triggers the
 bundle session bring-up (~3s cold; subsequent subscriptions are free).
@@ -119,13 +119,10 @@ sendImage(
 }): Promise<string>;
 ```
 
-Defined in: [api/messaging.ts:980](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L980)
+Defined in: [api/messaging/manager.ts:253](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L253)
 
 Send a persistent image attachment into a conversation. Image stays
-in chat history (not ephemeral). Routes through the bundle's
-messaging session — `sendMessageWithContent` builds the
-`CreateContentMessage` envelope and the upload pipeline runs from
-inside the WASM via the `mediaUploadDelegate`.
+in chat history (not ephemeral).
 
 #### Parameters
 
@@ -140,16 +137,6 @@ inside the WASM via the `mediaUploadDelegate`.
 
 [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`string`\>
 
-The message ID assigned by the bundle's send pipeline.
-
-#### Remarks
-
-Wire-tested via `sendText` only — `sendImage` compiles + the
-bring-up path runs without throwing, but the bundle's `pe`/`E$`
-media path needs a Blob shim and end-to-end media-upload primitives
-we haven't yet exercised. If the bundle's `E$` send rejects, an
-error surfaces; the caller can retry on the next bundle update.
-
 ***
 
 ### sendSnap()
@@ -163,36 +150,23 @@ sendSnap(
 }): Promise<string>;
 ```
 
-Defined in: [api/messaging.ts:1024](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L1024)
+Defined in: [api/messaging/manager.ts:269](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L269)
 
 Send a disappearing snap to a conversation (destination kind 122).
-Fidelius-encrypts the media body to the recipient's identity key —
-the bundle's WASM owns this path end-to-end via its
-`getSnapManager()` / `sendMessageWithContent` pipeline. Default is
-view-once (no explicit timer); pass `{ timer: 5 }` to override.
+Default is view-once; pass `{ timer: 5 }` to override.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `convId` | `string` | Hyphenated conversation UUID. |
-| `media` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Raw media bytes (image or video — bundle sniffs). |
-| `opts?` | \{ `timer?`: `number`; \} | Optional `timer` (display duration in seconds; omit for view-once). |
+| `media` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Raw media bytes. |
+| `opts?` | \{ `timer?`: `number`; \} | Optional `timer` (display duration in seconds). |
 | `opts.timer?` | `number` | - |
 
 #### Returns
 
 [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`string`\>
-
-The message ID assigned by the bundle's send pipeline.
-
-#### Remarks
-
-Wire-tested via `sendText` only — `sendSnap` compiles + brings up
-the session without throwing. The bundle drives Fidelius encryption
-for snaps inside its own send pipeline, so as long as the session is
-up and the standalone realm has Blob support, the snap goes out
-E2E-encrypted to the recipient's identity key.
 
 ***
 
@@ -202,33 +176,24 @@ E2E-encrypted to the recipient's identity key.
 sendText(convId: string, text: string): Promise<string>;
 ```
 
-Defined in: [api/messaging.ts:904](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L904)
+Defined in: [api/messaging/manager.ts:241](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L241)
 
 Send a plain text DM into a conversation. Awaits messaging-session
 bring-up before dispatching (so the first send pays the ~3s cold
 cost; subsequent sends are free).
-
-Path: direct gRPC `MessagingCoreService.CreateContentMessage` with
-the captured wire shape from recon. Snap's web client sends text DMs
-with the body in plaintext at this layer — no Fidelius wrap on the
-`CreateContentMessage` request envelope. Same wire shape as the
-recon HAR `text-dm-create-content-message.req.bin`.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `convId` | `string` | Hyphenated conversation UUID (from `listConversations`). |
-| `text` | `string` | UTF-8 message body. Snap's UI line-breaks ~250 chars; server accepts longer but truncated rendering may apply. |
+| `text` | `string` | UTF-8 message body. |
 
 #### Returns
 
 [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`string`\>
 
-The message ID Snap assigned (UUID string from the response,
-  OR our locally-generated client UUID if the response shape doesn't
-  carry it under a known field — caller can dedupe on the inbound
-  `message` event with `isSender === true`).
+The message ID Snap assigned (or a locally-generated client UUID).
 
 ***
 
@@ -238,22 +203,17 @@ The message ID Snap assigned (UUID string from the response,
 setRead(convId: string, messageId: string | bigint): Promise<void>;
 ```
 
-Defined in: [api/messaging.ts:490](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L490)
+Defined in: [api/messaging/manager.ts:226](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L226)
 
 Mark `messageId` in `convId` as read (fires a read-receipt frame).
 Resolves once the bundle has dispatched the notification.
-
-Wires through module 56639 export `cr` (displayedMessages wrapper) →
-`convMgr.displayedMessages(convRef, messageIds, cb)`. The bundle's
-WASM batches the IDs and pushes the read state over the duplex so the
-sender's UI flips to "Opened" / removes the unread badge.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `convId` | `string` | Hyphenated conversation UUID. |
-| `messageId` | `string` \| `bigint` | Server message id (bigint) or its decimal-string form. From a `RawEncryptedMessage`, this is the `messageId: bigint` field; from a live inbound `message` event, the underlying delegate record carries it as well. |
+| `messageId` | `string` \| `bigint` | Server message id (bigint) or its decimal-string form. |
 
 #### Returns
 
@@ -267,7 +227,7 @@ sender's UI flips to "Opened" / removes the unread badge.
 setTyping(convId: string, durationMs: number): Promise<void>;
 ```
 
-Defined in: [api/messaging.ts:275](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L275)
+Defined in: [api/messaging/manager.ts:206](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L206)
 
 Show typing indicator in `convId` for `durationMs`, then auto-clear.
 
@@ -292,19 +252,7 @@ pulse loop, and the recipient's idle timer takes the state to
 
 [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
 
-#### Remarks
-
-Drives **both** the legacy convMgr path (`sendTypingNotification`
-via module 56639 export `zM`) AND the modern presence path
-(`state.presence.initializePresenceServiceTs` + per-conv
-`createPresenceSession` + `presenceSession.onUserAction({type:
-"chatVisible"})` priming, then `broadcastTypingActivity`). Modern
-Snap clients gate the typing indicator on the presence
-`chat_visible` state — without priming, the WASM logs
-`propagateTypingStateChange called while not in chat_visible state`
-and recipients see nothing. Presence priming is best-effort: if
-init fails (e.g. auth slice not ready), we fall through to the
-convMgr-only path which still works for older peers.
+#### Example
 
 ```ts
 await messaging.setTyping(convId, 1500);
@@ -319,16 +267,10 @@ await messaging.sendText(convId, "hello");
 setViewing(convId: string, durationMs: number): Promise<void>;
 ```
 
-Defined in: [api/messaging.ts:429](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L429)
+Defined in: [api/messaging/manager.ts:214](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L214)
 
 Mark `convId` as actively viewed (chat-open / focused) for `durationMs`,
 then auto-clear with an `exitConversation` pulse.
-
-Wires through module 56639 export `Mw` (enterConversation) →
-`convMgr.enterConversation(convRef, source, cb)`. Snap propagates the
-"active in chat" state to the peer's UI as the viewing indicator;
-pairing it with `ON` (exitConversation) on teardown clears the state.
-`try/finally` guarantees exit fires even on abort.
 
 #### Parameters
 
@@ -340,12 +282,3 @@ pairing it with `ON` (exitConversation) on teardown clears the state.
 #### Returns
 
 [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
-
-#### Remarks
-
-Same dual-path treatment as [Messaging.setTyping](#settyping):
-primes `state.presence.presenceSession.onUserAction({type:
-"chatVisible"})` so modern recipients honor the convMgr
-`enterConversation` frame, and fires `chatHidden` on teardown so
-the indicator clears immediately rather than waiting on the
-recipient's idle timer.
