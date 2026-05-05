@@ -8,7 +8,7 @@
  *
  * @internal
  */
-import type { PublicUserRecord, UserSlice } from "../../bundle/types.ts";
+import type { PublicUserRecord, UserSlice } from "../../bundle/types/index.ts";
 import type { DataStore } from "../../storage/data-store.ts";
 import {
   type FriendGraphSnapshot,

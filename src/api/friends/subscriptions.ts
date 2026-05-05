@@ -24,7 +24,7 @@ import type {
   IncomingFriendRequestRecord,
   PublicUserRecord,
   UserSlice,
-} from "../../bundle/types.ts";
+} from "../../bundle/types/index.ts";
 import type { TypedEventBus } from "../../lib/typed-event-bus.ts";
 import { makeFriend, makeReceivedRequest } from "./mappers.ts";
 import {

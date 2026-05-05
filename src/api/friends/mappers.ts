@@ -15,7 +15,7 @@ import type {
   IncomingFriendRequestRecord,
   PublicUserRecord,
   SnapchatterPublicInfo,
-} from "../../bundle/types.ts";
+} from "../../bundle/types/index.ts";
 import { bytesToUuid } from "../_helpers.ts";
 import type {
   Friend,

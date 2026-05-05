@@ -8,7 +8,7 @@
  */
 import type { ClientContext } from "../_context.ts";
 import { atlasClient, userSlice } from "../../bundle/register.ts";
-import type { PublicUserRecord } from "../../bundle/types.ts";
+import type { PublicUserRecord } from "../../bundle/types/index.ts";
 import { bytesToUuid, uuidToBytes } from "../_helpers.ts";
 import { makeUserFromCache, makeUserFromSnapchatter } from "./mappers.ts";
 import type { User, UserId } from "./types.ts";

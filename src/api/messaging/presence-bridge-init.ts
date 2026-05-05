@@ -15,7 +15,7 @@
  */
 import { uuidToBytes } from "../_helpers.ts";
 import { createPresenceBridge } from "../../bundle/presence-bridge.ts";
-import type { BundlePresenceSession } from "../../bundle/types.ts";
+import type { BundlePresenceSession } from "../../bundle/types/index.ts";
 import type { MessagingInternal } from "./internal.ts";
 import { listConversations, getSelfUserId } from "./reads.ts";
 

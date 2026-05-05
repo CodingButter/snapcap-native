@@ -45,7 +45,7 @@ import type {
   BundleMessagingSession,
 } from "../../auth/fidelius-decrypt.ts";
 import type { StandaloneChatRealm } from "../../auth/fidelius-mint.ts";
-import type { BundlePresenceSession } from "../../bundle/types.ts";
+import type { BundlePresenceSession } from "../../bundle/types/index.ts";
 import type { MessagingInternal, Cell } from "./internal.ts";
 import type { MessagingEvents } from "./interface.ts";
 import type { ConversationSummary, RawEncryptedMessage } from "./types.ts";

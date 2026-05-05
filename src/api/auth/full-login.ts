@@ -20,7 +20,7 @@
 import { getKameleon } from "../../bundle/accounts-loader.ts";
 import { loginClient } from "../../bundle/register.ts";
 import { getOrCreateJar } from "../../shims/cookie-jar.ts";
-import type { UnaryFn, WebLoginRequest, WebLoginResponse } from "../../bundle/types.ts";
+import type { UnaryFn, WebLoginRequest, WebLoginResponse } from "../../bundle/types/index.ts";
 import type { ClientContext } from "../_context.ts";
 import { activeIdentifier, type Credentials } from "../../types.ts";
 
