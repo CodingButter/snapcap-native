@@ -14,7 +14,7 @@
 import { describe, expect, test } from "bun:test";
 import * as vm from "node:vm";
 import { buildConvRef, fireBundleCall } from "../../../src/api/messaging/conv-ref.ts";
-import type { StandaloneChatRealm } from "../../../src/auth/fidelius-mint.ts";
+import type { StandaloneChatRealm } from "../../../src/bundle/chat/standalone/index.ts";
 
 // ── Fixture ────────────────────────────────────────────────────────────────────
 

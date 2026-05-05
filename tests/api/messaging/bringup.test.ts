@@ -87,7 +87,9 @@ function freshBag(): MockBag {
   };
 }
 
-mock.module("../../../src/auth/fidelius-mint.ts", () => ({
+// `bringup.ts` pulls all three of these from the standalone barrel —
+// mock.module needs to match that single import target.
+mock.module("../../../src/bundle/chat/standalone/index.ts", () => ({
   mintFideliusIdentity: async (_sb: unknown) => {
     bag.mintCalls++;
     return { /* identity blob — bringup doesn't read it */ };
@@ -96,9 +98,6 @@ mock.module("../../../src/auth/fidelius-mint.ts", () => ({
     bag.realmCalls++;
     return bag.realmShape;
   },
-}));
-
-mock.module("../../../src/auth/fidelius-decrypt.ts", () => ({
   setupBundleSession: async (opts: Record<string, unknown>) => {
     bag.setupCalls.push(opts);
     if (bag.emitPlaintext) {
