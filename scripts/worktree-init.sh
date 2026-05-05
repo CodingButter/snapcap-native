@@ -36,7 +36,13 @@
 #     soft-blocks).
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Use git's worktree resolution rather than BASH_SOURCE-relative — the
+# latter resolves against the SCRIPT's location, which is wrong when an
+# agent invokes the script via the main repo's absolute path from inside
+# a worktree (the script's location is on main, but PWD is the worktree).
+# git rev-parse --show-toplevel always returns the toplevel of the
+# worktree containing CWD, regardless of how the script was invoked.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 VENDOR_PATH="${1:-}"
