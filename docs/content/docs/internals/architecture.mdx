@@ -83,14 +83,14 @@ All three run in the sandbox. The host realm's `globalThis` is never modified �
 
 The SDK no longer hand-rolls protobuf encoders or gRPC-Web framing for outbound calls. Instead, every public method calls into Snap's webpack methods directly through a two-tier registry:
 
-- **Tier 1 — `src/bundle/register.ts`.** Flat exports that pass through to webpack-resolved functions in the chat or accounts bundle (`authSlice`, `loginClient`, `chatWreq`, etc.). Pure pass-through, no consumer-shape adaptation.
-- **Tier 2 — `src/api/*.ts`.** Each domain file (`auth.ts`, `friends.ts`, `messaging.ts`, …) composes tier-1 verbs and translates between consumer-friendly shapes (UUID strings, plain numbers) and the bundle-realm shapes the registry expects (16-byte buffers, `{highBits, lowBits}` pairs). Stateless — every export takes a `ClientContext` first arg.
+- **Tier 1 — `src/bundle/register/`.** Per-domain files (`auth.ts`, `friends.ts`, `messaging.ts`, …) export late-bound `reach()` getters around webpack-resolved bundle functions (`authSlice`, `loginClient`, `chatWreq`, etc.). Pure pass-through, no consumer-shape adaptation. The barrel `register/index.ts` is the entry point.
+- **Tier 2 — `src/api/<domain>/`.** Each domain has its own folder (`api/auth/`, `api/friends/`, `api/messaging/`) with a manager (e.g. `Friends`, `Messaging`), per-concern siblings, and an `index.ts` barrel. Managers compose tier-1 verbs and translate between consumer-friendly shapes (UUID strings, plain numbers) and the bundle-realm shapes the registry expects (16-byte buffers, `{highBits, lowBits}` pairs). Helpers in `api/_helpers.ts`. Per-instance state lives on `ClientContext` (`_context.ts`); managers are stateless beyond a `ClientContext` getter.
 
-Inbound decryption flows through the bundle session naturally because it's Snap's own code. The migration off hand-rolled gRPC is complete — `src/transport/grpc-web.ts` and `src/transport/proto-encode.ts` have been retired.
+Inbound decryption flows through the bundle session naturally because it's Snap's own code. The migration off hand-rolled gRPC is complete — the old `src/transport/grpc-web.ts` and most of `src/transport/proto-encode.ts` have been retired.
 
 ## Real network I/O leaves the sandbox
 
-`src/transport/native-fetch.ts` snapshots Node's `fetch` at module load. Outgoing requests go straight to Node, with cookies attached by `transport/cookies.ts`. The bundle's own `fetch` is shimmed to route through `nativeFetch` too — the bundle's `GrpcManager.registerWebFactory` is wired so its outbound gRPC traffic uses the same path. See [I/O overrides](/docs/internals/io-overrides).
+`src/transport/native-fetch.ts` resolves Node's `fetch` per call. Outgoing requests go straight to Node, with cookies attached by `transport/cookies.ts`. The bundle's own `fetch` is shimmed to route through `nativeFetch` too — the bundle's `GrpcManager.registerWebFactory` is wired so its outbound gRPC traffic uses the same path. See [I/O overrides](/docs/internals/io-overrides).
 
 ## The auth flow
 
