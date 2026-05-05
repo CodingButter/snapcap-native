@@ -17,7 +17,7 @@
  * 2. **Live decrypted stream + presence** (`on`, `setTyping`,
  *    `setViewing`, `setRead`) — boots Snap's own messaging session
  *    inside our standalone-WASM realm (`setupBundleSession` in
- *    `auth/fidelius-decrypt.ts`) and emits plaintext `message` events
+ *    `bundle/chat/standalone/session/setup.ts`) and emits plaintext `message` events
  *    through a `TypedEventBus`.
  *
  * # Lifecycle
@@ -43,8 +43,8 @@ import type { Subscription } from "../../lib/typed-event-bus.ts";
 import { TypedEventBus } from "../../lib/typed-event-bus.ts";
 import type {
   BundleMessagingSession,
-} from "../../auth/fidelius-decrypt.ts";
-import type { StandaloneChatRealm } from "../../auth/fidelius-mint.ts";
+  StandaloneChatRealm,
+} from "../../bundle/chat/standalone/index.ts";
 import type { BundlePresenceSession } from "../../bundle/types/index.ts";
 import type { MessagingInternal, Cell } from "./internal.ts";
 import type { MessagingEvents } from "./interface.ts";

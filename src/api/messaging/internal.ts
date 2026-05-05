@@ -21,8 +21,10 @@
  */
 import type { ClientContext } from "../_context.ts";
 import type { TypedEventBus } from "../../lib/typed-event-bus.ts";
-import type { BundleMessagingSession } from "../../auth/fidelius-decrypt.ts";
-import type { StandaloneChatRealm } from "../../auth/fidelius-mint.ts";
+import type {
+  BundleMessagingSession,
+  StandaloneChatRealm,
+} from "../../bundle/chat/standalone/index.ts";
 import type { BundlePresenceSession } from "../../bundle/types/index.ts";
 import type { MessagingEvents } from "./interface.ts";
 

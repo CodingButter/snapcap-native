@@ -28,7 +28,7 @@ import type {
   KeyManagerStatics,
   StandaloneChatModule,
   StandaloneChatWreq,
-} from "../auth/fidelius-mint.ts";
+} from "../bundle/chat/standalone/index.ts";
 import { createThrottle, type ThrottleConfig, type ThrottleGate } from "../transport/throttle.ts";
 import { getOrCreateJar } from "./cookie-jar.ts";
 import { SDK_SHIMS, type ShimContext } from "./index.ts";
@@ -213,7 +213,7 @@ export class Sandbox {
   /**
    * Resolved standalone Fidelius mint realm — a SECOND, isolated chat-WASM
    * instance booted in its own `vm.Context` with neutered browser stubs.
-   * Owned by `auth/fidelius-mint.ts`; cached here so two `SnapcapClient`
+   * Owned by `bundle/chat/standalone/realm.ts`; cached here so two `SnapcapClient`
    * instances each mint their own identity in their own realm instead of
    * sharing a process-singleton.
    *

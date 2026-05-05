@@ -5,7 +5,7 @@
  * `_media_upload.ts` — the outbound media pipeline emits the same
  * events as the inbound bridge so consumers see a uniform stream).
  */
-import type { PlaintextMessage } from "../../auth/fidelius-decrypt.ts";
+import type { PlaintextMessage } from "../../bundle/chat/standalone/index.ts";
 
 /**
  * Event map for `Messaging.on`.
