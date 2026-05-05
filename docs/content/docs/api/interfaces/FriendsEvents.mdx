@@ -4,7 +4,7 @@ title: FriendsEvents
 
 # Interface: FriendsEvents
 
-Defined in: [api/friends.ts:316](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L316)
+Defined in: [api/friends.ts:317](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L317)
 
 Map of event name → callback signature for [IFriendsManager.on](IFriendsManager.mdx#on).
 The callback's argument type narrows automatically per event key via
@@ -50,9 +50,9 @@ after startup — subscribers should be idempotent over redeliveries.
 
 | Property | Type | Defined in |
 | ------ | ------ | ------ |
-| <a id="change"></a> `change` | (`snapshot`: [`FriendsSnapshot`](FriendsSnapshot.mdx)) => `void` | [api/friends.ts:322](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L322) |
-| <a id="friendadded"></a> `friend:added` | (`friend`: [`Friend`](Friend.mdx)) => `void` | [api/friends.ts:320](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L320) |
-| <a id="friendremoved"></a> `friend:removed` | (`userId`: `string`) => `void` | [api/friends.ts:321](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L321) |
-| <a id="requestaccepted"></a> `request:accepted` | (`userId`: `string`) => `void` | [api/friends.ts:319](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L319) |
-| <a id="requestcancelled"></a> `request:cancelled` | (`userId`: `string`) => `void` | [api/friends.ts:318](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L318) |
-| <a id="requestreceived"></a> `request:received` | (`req`: [`ReceivedRequest`](ReceivedRequest.mdx)) => `void` | [api/friends.ts:317](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L317) |
+| <a id="change"></a> `change` | (`snapshot`: [`FriendsSnapshot`](FriendsSnapshot.mdx)) => `void` | [api/friends.ts:323](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L323) |
+| <a id="friendadded"></a> `friend:added` | (`friend`: [`Friend`](Friend.mdx)) => `void` | [api/friends.ts:321](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L321) |
+| <a id="friendremoved"></a> `friend:removed` | (`userId`: `string`) => `void` | [api/friends.ts:322](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L322) |
+| <a id="requestaccepted"></a> `request:accepted` | (`userId`: `string`) => `void` | [api/friends.ts:320](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L320) |
+| <a id="requestcancelled"></a> `request:cancelled` | (`userId`: `string`) => `void` | [api/friends.ts:319](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L319) |
+| <a id="requestreceived"></a> `request:received` | (`req`: [`ReceivedRequest`](ReceivedRequest.mdx)) => `void` | [api/friends.ts:318](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L318) |

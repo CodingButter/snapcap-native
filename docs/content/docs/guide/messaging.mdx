@@ -6,7 +6,7 @@ description: 'Inbox enumeration, raw envelope reads, and the live decrypted mess
 `client.messaging` exposes two layers in one manager:
 
 - **Raw envelope reads** — `listConversations()` and `fetchEncryptedMessages()` are direct gRPC-Web calls against `MessagingCoreService`. Useful for inbox enumeration and historical backfill that doesn't need decrypt.
-- **Live decrypted stream + presence** — `on("message", …)`, `setTyping`, `setViewing`. The first call to any of these lazily brings up Snap's own bundle session inside the per-instance Sandbox; subsequent calls reuse it.
+- **Live decrypted stream + outbound presence** — `on("message", …)`, `setTyping`, `setViewing`, `setRead`, plus the outbound sends (`sendText`, `sendImage`, `sendSnap`). The first call to any of these lazily brings up Snap's own bundle session inside the per-instance Sandbox; subsequent calls reuse it.
 
 The bring-up is **lazy** because it costs ~3s cold (mint/register Fidelius identity if needed, eval the worker chunk, open the duplex WebSocket). Consumers that only want raw envelope reads shouldn't pay for it.
 
@@ -111,29 +111,64 @@ await client.messaging.sendText(conversationId, "hello");
 
 ```ts
 await client.messaging.sendImage(conversationId, imageBytes, { caption: "hi" });
-await client.messaging.sendSnap(conversationId, imageBytes);
+await client.messaging.sendSnap(conversationId, imageBytes, { timer: 5 });
 ```
 
-Both compile and bring up the bundle session cleanly; the bundle's send pipeline owns upload, encryption, and dispatch. They are **not** wire-tested today — treat as experimental until the integration suite covers them.
+Both route through Snap's own bundle send pipeline. `sendImage` posts a persistent attachment that stays in chat history; `sendSnap` posts a disappearing snap (destination kind 122) — pass `timer` for a custom display duration in seconds, omit for view-once. The bundle owns upload, Fidelius encryption, and dispatch end-to-end. They compile and bring up the bundle session cleanly but are **not** yet wire-tested in the integration suite — treat as experimental.
 
-## Outbound presence (stub today)
+`client.stories.post(bytes, { caption })` shares the same pipeline targeted at `MY_STORY`. Same experimental status — see [`Stories`](/docs/api/classes/Stories).
+
+## Outbound presence
 
 ```ts
 await client.messaging.setTyping(convId, 1500);
 await client.messaging.setViewing(convId, 5000);
+await client.messaging.setRead(convId, messageId);
 ```
 
-These resolve after the requested duration, so the compose-await pattern works. They do **not** yet fire a real WebSocket frame to peers — the bundle session's outbound presence delegate is still being mapped. Calling them does trigger the bundle-session bring-up if it hasn't happened yet.
+`setTyping` shows a typing indicator in `convId` for the requested duration, then auto-clears. The pulse re-fires every 2s so the recipient's idle timer doesn't drop the indicator early; the `try/finally` teardown fires `chatHidden` on the bundle's presence session so the dot clears immediately rather than waiting on the recipient's ~3s idle window.
+
+`setViewing` marks the conversation as actively open for the requested duration, then dispatches `exitConversation` on teardown. Same dual-path treatment — primes the bundle's presence session so modern Snap clients honour the convMgr `enterConversation` frame.
+
+`setRead` fires a read-receipt frame for `messageId` in `convId`. Accepts the message id as `string` or `bigint` — coerced internally. From a `RawEncryptedMessage`, pass the `messageId: bigint` field; from a live `message` event, the underlying delegate record carries it.
+
+```ts
+const sub = client.messaging.on("message", async (msg) => {
+  if (!msg.isSender) {
+    const id = (msg.raw as { messageId?: bigint }).messageId;
+    if (id !== undefined) await client.messaging.setRead(msg.conversationId, id);
+  }
+});
+```
+
+All three calls trigger the lazy bundle-session bring-up if it hasn't happened yet.
+
+## Global presence — `client.setStatus` / `getStatus`
+
+Independent of any conversation, the bundle exposes a global `Present` / `Away` slot that gates outbound typing-pulse broadcasts. Use `setStatus` to mark the session idle without tearing down auth, and `getStatus` to read what the bundle currently holds.
+
+```ts
+await client.authenticate();
+
+client.setStatus("Away");    // suppress typing pulses (bundle gates broadcastTypingActivity)
+client.setStatus("Present"); // reopen the gate
+console.log(client.getStatus()); // "Present"
+```
+
+`"Present"` is the default after `authenticate()` (the chat-bundle loader patches `document.hasFocus = () => true` so the slice initializes there). `"AwaitingReactivate"` is a rare transitional value the bundle uses when the session is briefly paused; consumers can pass or read it but typically won't.
+
+See [`PresenceStatus`](/docs/api/type-aliases/PresenceStatus) for the type and [`setStatus`](/docs/api/interfaces/ISnapcapClient#setstatus) / [`getStatus`](/docs/api/interfaces/ISnapcapClient#getstatus) for the full surface.
 
 ## When does the session come up?
 
 The first call to any of these brings up the bundle session:
 
 - `client.messaging.on(event, …)` (any event)
-- `client.messaging.setTyping(...)`
-- `client.messaging.setViewing(...)`
+- `client.messaging.setTyping(...)` / `setViewing(...)` / `setRead(...)`
+- `client.messaging.sendText(...)` / `sendImage(...)` / `sendSnap(...)`
+- `client.stories.post(...)`
 
-`listConversations()` and `fetchEncryptedMessages()` do **not** — they're plain gRPC-Web and stay cheap. If you only need inbox enumeration, you'll never pay for the bundle session.
+`listConversations()` and `fetchEncryptedMessages()` do **not** — they're plain gRPC-Web and stay cheap. If you only need inbox enumeration, you'll never pay for the bundle session. `client.setStatus` / `getStatus` also stay cheap — they just read/write the existing bundle's Zustand slice and require `authenticate()` to have completed.
 
 Bring-up is single-flight per `SnapcapClient`: concurrent `.on(...)` calls all wait on the same in-flight promise. If bring-up fails, the next subscription / presence call retries from scratch.
 
@@ -144,8 +179,10 @@ Bring-up is single-flight per `SnapcapClient`: concurrent `.on(...)` calls all w
 | `on("message", ...)` — live decrypted inbound | Working |
 | `listConversations()` / `fetchEncryptedMessages()` — raw envelopes | Working |
 | `sendText(convId, text)` | Working — routes through bundle send pipeline |
+| `setTyping` / `setViewing` / `setRead` — outbound presence | Working — convMgr + presence-slice dual-path |
+| `client.setStatus` / `getStatus` — global Present/Away | Working |
 | `sendImage(...)` / `sendSnap(...)` | Experimental — compiles and brings up cleanly, not wire-tested |
+| `client.stories.post(media)` | Experimental — same shape as `sendImage`, not wire-tested |
 | `on("typing" / "viewing" / "read", ...)` | Subscribable today, but the bundle's inbound presence delegate hasn't been hooked yet — events don't fire |
-| `setTyping` / `setViewing` outbound WS frames | Stubs — resolve after the duration but no frame fires |
 
 See the [messaging-session internals](/docs/internals/messaging-session) for the bring-up plumbing, and [Fidelius](/docs/internals/fidelius) for the identity / decrypt side.

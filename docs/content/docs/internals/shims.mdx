@@ -141,7 +141,7 @@ export const SDK_SHIMS: readonly Shim[] = [
 
 Each shim is responsible for its own idempotency. Pattern: a `Symbol.for(...)` marker on the patched object. See `installCookieContainer` (`src/shims/cookie-container.ts:174`) and `installDocumentCookieShim` (`src/shims/document-cookie.ts:39`) — both mark the patched object with a symbol so repeated calls are safe but only mutate the active jar binding.
 
-This matters because `installShims()` is first-call-wins, but supporting code (the kameleon boot, the chat bundle loader, `mintFideliusIdentity`, `bringUpMessagingSession`) all call `installShims({})` defensively — and depending on test isolation, multiple Sandbox constructors can run in the same process across tests.
+This matters because every `SnapcapClient` constructs its own `Sandbox` (no process-wide singleton), and supporting code paths — the kameleon boot, the chat bundle loader, `mintFideliusIdentity`, `setupBundleSession` — all run the install pipeline against whichever `Sandbox` they are handed. Test runs can spin up many Sandboxes back-to-back; idempotent shim install keeps repeated wiring safe.
 
 ## Why a class hierarchy at all
 

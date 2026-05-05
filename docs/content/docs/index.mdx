@@ -71,11 +71,13 @@ The source of truth for what's wired today. See the [capability matrix in the RE
 ### Working
 
 - `SnapcapClient` construction, `authenticate()`, `logout()`, `refreshAuthToken()`, `isAuthenticated()`.
+- `client.setStatus(...)` / `client.getStatus()` — global `Present` / `Away` / `AwaitingReactivate` slot.
 - `client.friends` — `list` / `search` / `getUsers` / `snapshot` / `refresh` / `sendRequest` / `acceptRequest` / `rejectRequest` / `block` / `unblock`.
 - `client.friends.on(...)` — typed graph events with offline replay.
 - `client.messaging.listConversations()` / `fetchEncryptedMessages()` — direct gRPC-Web, no decrypt cost.
 - `client.messaging.on("message", cb)` — live decrypted inbound (cached history pump on first subscribe).
 - `client.messaging.sendText(convId, text)` — outbound text DM via Snap's own bundle send path.
+- `client.messaging.setTyping(...)` / `setViewing(...)` / `setRead(...)` — outbound presence via the bundle's convMgr + presence-slice dual path.
 - Fidelius identity mint + register, per-instance and isolated.
 - Per-instance Sandbox (multi-tenant in one process) — verified by `scripts/test-isolation.ts`.
 - `DataStore`-backed sandbox persistence (cookies, `local_*`, `session_*`, `indexdb_*`).
@@ -90,7 +92,6 @@ The source of truth for what's wired today. See the [capability matrix in the RE
 
 ### Planned
 
-- `client.messaging.setTyping(...)` / `setViewing(...)` — currently resolve after the requested duration; the outbound WS frame is not yet wired.
 - `client.messaging.on("typing" | "viewing" | "read", cb)` — declared on the bus, the bundle's delegate slots are not yet mapped.
 - Per-instance proxy / outbound IP rotation (TODO — `BrowserContext.httpAgent` reserved for an undici `Dispatcher`).
 

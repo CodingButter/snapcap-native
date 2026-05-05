@@ -1,0 +1,41 @@
+---
+title: PresenceStatus
+---
+
+# Type Alias: PresenceStatus
+
+```ts
+type PresenceStatus = "Present" | "Away" | "AwaitingReactivate";
+```
+
+Defined in: [types.ts:153](https://github.com/CodingButter/snapcap-native/blob/main/src/types.ts#L153)
+
+Presence status — what the client reports for the active session's
+global "I'm here" / "I'm away" slot.
+
+## Remarks
+
+Mirrors the bundle's own three-member presence enum (chat module 46471
+`O = {Present:0, Away:1, AwaitingReactivate:2}`) using the same names
+as canonical strings on the SDK's public surface — consumers don't have
+to know about the underlying numeric encoding.
+
+The most-common values are `"Present"` (active, typing/viewing pulses
+flow normally) and `"Away"` (idle; the bundle's
+`broadcastTypingActivity` is gated on `awayState === Present` and
+suppresses typing pulses from this side). `"AwaitingReactivate"` is a
+rare transitional value the bundle uses when the session is briefly
+paused mid-flight; consumers can pass or read it but typically won't.
+
+## Example
+
+```ts
+client.setStatus("Away");
+console.log(client.getStatus()); // "Away"
+client.setStatus("Present");
+```
+
+## See
+
+ - [ISnapcapClient.setStatus](../interfaces/ISnapcapClient.mdx#setstatus)
+ - [ISnapcapClient.getStatus](../interfaces/ISnapcapClient.mdx#getstatus)

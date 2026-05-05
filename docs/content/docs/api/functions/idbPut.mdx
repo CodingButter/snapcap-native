@@ -6,20 +6,22 @@ title: idbPut
 
 ```ts
 function idbPut(
+   sandbox: Sandbox, 
    dbName: string, 
    storeName: string, 
    key: string, 
 value: unknown): Promise<void>;
 ```
 
-Defined in: [storage/idb-utils.ts:189](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/idb-utils.ts#L189)
+Defined in: [storage/idb-utils.ts:196](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/idb-utils.ts#L196)
 
-Write `value` into the sandbox's IndexedDB at `(dbName, storeName, key)`.
+Write `value` into the given Sandbox's IndexedDB at `(dbName, storeName, key)`.
 
 ## Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
+| `sandbox` | `Sandbox` | The Sandbox whose IDB shim handles the write. |
 | `dbName` | `string` | IndexedDB database name. |
 | `storeName` | `string` | Object store name within the database. Created on first use if absent. |
 | `key` | `string` | Record key within the object store. |
@@ -32,7 +34,7 @@ Write `value` into the sandbox's IndexedDB at `(dbName, storeName, key)`.
 ## Example
 
 ```ts
-await idbPut("snapcap", "fidelius", "identity", { pub, priv });
+await idbPut(sandbox, "snapcap", "fidelius", "identity", { pub, priv });
 ```
 
 ## See

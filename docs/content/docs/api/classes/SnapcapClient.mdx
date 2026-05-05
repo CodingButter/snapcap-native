@@ -4,7 +4,7 @@ title: SnapcapClient
 
 # Class: SnapcapClient
 
-Defined in: [client.ts:142](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L142)
+Defined in: [client.ts:143](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L143)
 
 Concrete [ISnapcapClient](../interfaces/ISnapcapClient.mdx) implementation — main SDK entry point.
 
@@ -33,7 +33,7 @@ documented here.
 new SnapcapClient(opts: SnapcapClientOpts): SnapcapClient;
 ```
 
-Defined in: [client.ts:177](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L177)
+Defined in: [client.ts:178](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L178)
 
 Construct a new client.
 
@@ -57,11 +57,11 @@ signature.
 
 | Property | Modifier | Type | Description | Defined in |
 | ------ | ------ | ------ | ------ | ------ |
-| <a id="friends"></a> `friends` | `readonly` | [`Friends`](Friends.mdx) | Friend-graph manager — see [IFriendsManager](../interfaces/IFriendsManager.mdx) for the full surface (mutations, reads, search, subscriptions). | [client.ts:148](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L148) |
-| <a id="media"></a> `media` | `readonly` | [`Media`](Media.mdx) | Placeholder for the upcoming Media manager. No methods today. | [client.ts:156](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L156) |
-| <a id="messaging"></a> `messaging` | `readonly` | [`Messaging`](Messaging.mdx) | Messaging manager — inbox enumeration, raw envelope reads, live decrypted message stream, and outbound presence (typing/viewing). See [Messaging](Messaging.mdx) for the surface. | [client.ts:150](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L150) |
-| <a id="presence"></a> `presence` | `readonly` | [`Presence`](Presence.mdx) | Placeholder for the upcoming Presence manager. No methods today. | [client.ts:152](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L152) |
-| <a id="stories"></a> `stories` | `readonly` | [`Stories`](Stories.mdx) | Placeholder for the upcoming Stories manager. No methods today. | [client.ts:154](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L154) |
+| <a id="friends"></a> `friends` | `readonly` | [`Friends`](Friends.mdx) | Friend-graph manager — see [IFriendsManager](../interfaces/IFriendsManager.mdx) for the full surface (mutations, reads, search, subscriptions). | [client.ts:149](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L149) |
+| <a id="media"></a> `media` | `readonly` | [`Media`](Media.mdx) | Placeholder for the upcoming Media manager. No methods today. | [client.ts:157](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L157) |
+| <a id="messaging"></a> `messaging` | `readonly` | [`Messaging`](Messaging.mdx) | Messaging manager — inbox enumeration, raw envelope reads, live decrypted message stream, and outbound presence (typing/viewing). See [Messaging](Messaging.mdx) for the surface. | [client.ts:151](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L151) |
+| <a id="presence"></a> `presence` | `readonly` | [`Presence`](Presence.mdx) | Placeholder for the upcoming Presence manager. No methods today. | [client.ts:153](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L153) |
+| <a id="stories"></a> `stories` | `readonly` | [`Stories`](Stories.mdx) | Placeholder for the upcoming Stories manager. No methods today. | [client.ts:155](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L155) |
 
 ## Methods
 
@@ -71,7 +71,7 @@ signature.
 authenticate(): Promise<void>;
 ```
 
-Defined in: [client.ts:235](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L235)
+Defined in: [client.ts:236](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L236)
 
 Bring up the bundles, run warm-or-cold WebLogin, and populate the
 Zustand auth slice.
@@ -99,7 +99,7 @@ Resolves when the auth slice reports `LoggedIn`.
 getAuthState(): number;
 ```
 
-Defined in: [client.ts:284](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L284)
+Defined in: [client.ts:303](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L303)
 
 Live read: `state.auth.authState` enum value.
 
@@ -122,7 +122,7 @@ Live read: `state.auth.authState` enum value.
 getAuthToken(): string;
 ```
 
-Defined in: [client.ts:279](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L279)
+Defined in: [client.ts:298](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L298)
 
 Live read: current SSO bearer string from the Zustand auth slice.
 
@@ -138,13 +138,48 @@ The bearer token (suitable for use as `Authorization: Bearer ...`).
 
 ***
 
+### getStatus()
+
+```ts
+getStatus(): PresenceStatus;
+```
+
+Defined in: [client.ts:326](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L326)
+
+Live read of the global presence status — same Zustand slot driven by
+[ISnapcapClient.setStatus](../interfaces/ISnapcapClient.mdx#setstatus), plus whatever the bundle itself
+mutates in response to its own lifecycle events (focus / blur /
+presence-service signals).
+
+#### Returns
+
+[`PresenceStatus`](../type-aliases/PresenceStatus.mdx)
+
+the current [PresenceStatus](../type-aliases/PresenceStatus.mdx)
+
+#### Remarks
+
+Synchronous; reads `state.presence.awayState` and maps the underlying
+numeric enum value back to the canonical SDK string. If the slot
+holds an unrecognized value (future-bundle drift), returns
+`"AwaitingReactivate"` as the safest neutral fallback rather than
+throwing.
+
+Requires `client.authenticate()` to have completed first.
+
+#### Implementation of
+
+[`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`getStatus`](../interfaces/ISnapcapClient.mdx#getstatus)
+
+***
+
 ### hasEverLoggedIn()
 
 ```ts
 hasEverLoggedIn(): boolean;
 ```
 
-Defined in: [client.ts:289](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L289)
+Defined in: [client.ts:308](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L308)
 
 Live read: the `hasEverLoggedIn` marker.
 
@@ -167,7 +202,7 @@ signed-out returning user.
 isAuthenticated(): boolean;
 ```
 
-Defined in: [client.ts:270](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L270)
+Defined in: [client.ts:289](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L289)
 
 Live read: `true` iff the Zustand auth slice currently reports
 `LoggedIn`.
@@ -192,7 +227,7 @@ has been called).
 logout(force?: boolean): Promise<void>;
 ```
 
-Defined in: [client.ts:247](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L247)
+Defined in: [client.ts:266](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L266)
 
 Tear down the bundle-side auth state.
 
@@ -224,7 +259,7 @@ Resolves when local auth state has been cleared.
 refreshAuthToken(): Promise<void>;
 ```
 
-Defined in: [client.ts:260](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L260)
+Defined in: [client.ts:279](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L279)
 
 Refresh the bearer in-place via Snap's own `state.auth.refreshToken`.
 
@@ -242,3 +277,49 @@ Zustand auth slice.
 #### Implementation of
 
 [`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`refreshAuthToken`](../interfaces/ISnapcapClient.mdx#refreshauthtoken)
+
+***
+
+### setStatus()
+
+```ts
+setStatus(status: PresenceStatus): void;
+```
+
+Defined in: [client.ts:315](https://github.com/CodingButter/snapcap-native/blob/main/src/client.ts#L315)
+
+Set the global presence status for this client's session — the same
+"I'm here" / "I'm away" slot the bundle's presence slice gates
+outbound typing-pulse broadcasts on.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `status` | [`PresenceStatus`](../type-aliases/PresenceStatus.mdx) | one of [PresenceStatus](../type-aliases/PresenceStatus.mdx) |
+
+#### Returns
+
+`void`
+
+#### Remarks
+
+Synchronous; writes through `state.presence.setAwayState` on the
+bundle's Zustand store, mapping the canonical SDK string to the
+underlying numeric enum (chat module 46471's
+`{Present: 0, Away: 1, AwaitingReactivate: 2}`).
+
+`"Present"` is the typical default — the chat-bundle loader patches
+`document.hasFocus = () => true` so the slice initializes there at
+factory time. Switching to `"Away"` causes the bundle to suppress
+`broadcastTypingActivity` until the next `setStatus("Present")` call,
+which is the right behaviour when a tenant is logically idle but the
+SDK should keep the auth session live.
+
+Requires `client.authenticate()` to have completed first — the
+presence slice doesn't exist on the bundle store until the chat
+bundle has loaded.
+
+#### Implementation of
+
+[`ISnapcapClient`](../interfaces/ISnapcapClient.mdx).[`setStatus`](../interfaces/ISnapcapClient.mdx#setstatus)

@@ -4,7 +4,7 @@ title: RawEncryptedMessage
 
 # Interface: RawEncryptedMessage
 
-Defined in: [api/messaging.ts:93](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L93)
+Defined in: [api/messaging.ts:99](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L99)
 
 One message envelope as captured from BatchDeltaSync.
 
@@ -12,9 +12,9 @@ One message envelope as captured from BatchDeltaSync.
 
 | Property | Type | Description | Defined in |
 | ------ | ------ | ------ | ------ |
-| <a id="cleartextbody"></a> `cleartextBody?` | `string` | Cleartext content if the conversation is non-E2E (AI bot replies, MEMORIES, etc.) — otherwise `undefined`. Surfaced when present so consumers can render a message without going through decrypt. | [api/messaging.ts:113](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L113) |
-| <a id="conversationid"></a> `conversationId` | `string` | Conversation this message belongs to. | [api/messaging.ts:95](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L95) |
-| <a id="envelope"></a> `envelope` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Raw envelope bytes — the `f3` ContentEnvelope on the ContentMessage proto. Includes the FideliusEncryption sub-message and the AES-GCM-wrapped body. | [api/messaging.ts:107](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L107) |
-| <a id="messageid"></a> `messageId` | `bigint` | Server message id (varint). | [api/messaging.ts:99](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L99) |
-| <a id="senderuserid"></a> `senderUserId` | `string` | Sender's hyphenated UUID. | [api/messaging.ts:97](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L97) |
-| <a id="servertimestampms"></a> `serverTimestampMs` | `bigint` | Server timestamp (ms since epoch). | [api/messaging.ts:101](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L101) |
+| <a id="cleartextbody"></a> `cleartextBody?` | `string` | Cleartext content if the conversation is non-E2E (AI bot replies, MEMORIES, etc.) — otherwise `undefined`. Surfaced when present so consumers can render a message without going through decrypt. | [api/messaging.ts:119](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L119) |
+| <a id="conversationid"></a> `conversationId` | `string` | Conversation this message belongs to. | [api/messaging.ts:101](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L101) |
+| <a id="envelope"></a> `envelope` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Raw envelope bytes — the `f3` ContentEnvelope on the ContentMessage proto. Includes the FideliusEncryption sub-message and the AES-GCM-wrapped body. | [api/messaging.ts:113](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L113) |
+| <a id="messageid"></a> `messageId` | `bigint` | Server message id (varint). | [api/messaging.ts:105](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L105) |
+| <a id="senderuserid"></a> `senderUserId` | `string` | Sender's hyphenated UUID. | [api/messaging.ts:103](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L103) |
+| <a id="servertimestampms"></a> `serverTimestampMs` | `bigint` | Server timestamp (ms since epoch). | [api/messaging.ts:107](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L107) |
