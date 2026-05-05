@@ -8,7 +8,7 @@
  *
  * @internal
  */
-import { authSlice } from "../../bundle/register.ts";
+import { authSlice } from "../../bundle/register/index.ts";
 import type { ClientContext } from "../_context.ts";
 import type { AuthSliceLive, AuthState } from "./types.ts";
 

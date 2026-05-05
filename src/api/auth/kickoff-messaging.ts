@@ -10,7 +10,7 @@
  *
  * @internal
  */
-import { authSlice } from "../../bundle/register.ts";
+import { authSlice } from "../../bundle/register/index.ts";
 import { getOrCreateJar } from "../../shims/cookie-jar.ts";
 import { mintFideliusIdentity } from "../../auth/fidelius-mint.ts";
 import { initializeWebKey, type FideliusIdentity } from "../fidelius.ts";

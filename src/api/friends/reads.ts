@@ -10,7 +10,7 @@
  * @internal
  */
 import type { ClientContext } from "../_context.ts";
-import { userSlice } from "../../bundle/register.ts";
+import { userSlice } from "../../bundle/register/index.ts";
 import type { UserSlice } from "../../bundle/types/index.ts";
 import { buildGraphSnapshot, buildSnapshot, saveGraphCacheGuarded } from "./snapshot-builders.ts";
 import type { Friend, FriendsSnapshot, ReceivedRequest, SentRequest } from "./types.ts";

@@ -8,7 +8,7 @@
  * @internal
  */
 import { getKameleon } from "../../bundle/accounts-loader.ts";
-import { authSlice } from "../../bundle/register.ts";
+import { authSlice } from "../../bundle/register/index.ts";
 import type { ClientContext } from "../_context.ts";
 
 /**

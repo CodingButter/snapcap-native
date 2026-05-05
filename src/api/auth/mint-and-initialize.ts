@@ -14,7 +14,7 @@
  *
  * @internal
  */
-import { authSlice } from "../../bundle/register.ts";
+import { authSlice } from "../../bundle/register/index.ts";
 import { getOrCreateJar } from "../../shims/cookie-jar.ts";
 import type { ClientContext } from "../_context.ts";
 import { _mintTicketFromSSO } from "./sso-ticket.ts";

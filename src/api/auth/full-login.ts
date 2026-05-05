@@ -18,7 +18,7 @@
  * @internal
  */
 import { getKameleon } from "../../bundle/accounts-loader.ts";
-import { loginClient } from "../../bundle/register.ts";
+import { loginClient } from "../../bundle/register/index.ts";
 import { getOrCreateJar } from "../../shims/cookie-jar.ts";
 import type { UnaryFn, WebLoginRequest, WebLoginResponse } from "../../bundle/types/index.ts";
 import type { ClientContext } from "../_context.ts";

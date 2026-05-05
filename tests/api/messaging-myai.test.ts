@@ -159,7 +159,7 @@ beforeAll(async () => {
   // some hundreds of ms after authenticate() resolves; poll up to 30s
   // before falling back to the captured smoke value.
   const FALLBACK_SELF_USER_ID = "527be2ff-aaec-4622-9c68-79d200b8bdc1"; // perdyjamie
-  const { authSlice } = await import("../../src/bundle/register.ts");
+  const { authSlice } = await import("../../src/bundle/register/index.ts");
   const sandbox = await introspectSandbox(client);
   for (let i = 0; i < 300; i++) {
     const slice = authSlice(sandbox as never) as { userId?: string };

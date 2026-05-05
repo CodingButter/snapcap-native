@@ -133,7 +133,7 @@ export class Stories {
     const realm = await getStandaloneChatRealm(sandbox);
     this.#realm = realm;
 
-    const { authSlice } = await import("../bundle/register.ts");
+    const { authSlice } = await import("../bundle/register/index.ts");
     let userId: string | undefined;
     let bearer: string | undefined;
     for (let i = 0; i < 20; i++) {

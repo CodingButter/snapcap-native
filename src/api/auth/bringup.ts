@@ -15,7 +15,7 @@
 import { ensureChatBundle } from "../../bundle/chat-loader.ts";
 import { bootChatWasm } from "../../bundle/chat-wasm-boot.ts";
 import { getKameleon } from "../../bundle/accounts-loader.ts";
-import { chatStore } from "../../bundle/register.ts";
+import { chatStore } from "../../bundle/register/index.ts";
 import { makeWorkerProxyFacade } from "../../bundle/worker-proxy-facade.ts";
 import type { ClientContext } from "../_context.ts";
 import { patchSandboxLocationToWeb } from "./patch-location.ts";

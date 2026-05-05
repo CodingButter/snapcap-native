@@ -9,7 +9,7 @@
  * @internal
  */
 import type { ClientContext } from "../_context.ts";
-import { friendActionClient } from "../../bundle/register.ts";
+import { friendActionClient } from "../../bundle/register/index.ts";
 import { makeFriendIdParams } from "../_helpers.ts";
 import { FriendSource, type UserId } from "./types.ts";
 

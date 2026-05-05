@@ -20,12 +20,12 @@
  * factory-rewire mechanism are bundle plumbing — api files should never
  * touch raw webpack ids or `wreq.m`.
  */
-import { chatWreq } from "./register.ts";
+import { chatWreq } from "./register/index.ts";
 import { Sandbox } from "../shims/sandbox.ts";
 
 // ─── Module IDs in the priming graph ─────────────────────────────────────
 // These IDs are not "state lookup" references (those belong in
-// register.ts); they identify the factories the priming routines must
+// register/); they identify the factories the priming routines must
 // re-execute or rewire to break the cyclic-dep cache poisoning.
 
 /** Zustand chat store factory — root of the cyclic dep. */

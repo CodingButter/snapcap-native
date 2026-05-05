@@ -7,7 +7,7 @@
  * @internal
  */
 import type { ClientContext } from "../_context.ts";
-import { searchUsers } from "../../bundle/register.ts";
+import { searchUsers } from "../../bundle/register/index.ts";
 import { extractUserId } from "../_helpers.ts";
 import type { User } from "./types.ts";
 

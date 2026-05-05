@@ -18,7 +18,7 @@
  * @internal
  */
 import type { ClientContext } from "../_context.ts";
-import { subscribeUserSlice, userSlice, userSliceFrom } from "../../bundle/register.ts";
+import { subscribeUserSlice, userSlice, userSliceFrom } from "../../bundle/register/index.ts";
 import type {
   ChatState,
   IncomingFriendRequestRecord,
