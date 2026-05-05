@@ -97,22 +97,60 @@ else
   fi
 fi
 
-# 3. .snapcap-smoke.json — only copy if env var points us at a parent repo
-#    that has it. Otherwise the live tests just won't have credentials,
-#    which is fine (developer can copy manually if needed).
-if [ ! -f ".snapcap-smoke.json" ] && [ -n "${SNAPCAP_PARENT_REPO:-}" ]; then
-  if [ -f "$SNAPCAP_PARENT_REPO/.snapcap-smoke.json" ]; then
+# 3. .snapcap-smoke.json — same cascade as vendor:
+#      a. explicit SNAPCAP_PARENT_REPO env var
+#      b. auto-detect via `git worktree list`
+#      c. skip silently (live tests will be skipped — fine for fresh clones)
+if [ ! -f ".snapcap-smoke.json" ]; then
+  if [ -n "${SNAPCAP_PARENT_REPO:-}" ] && [ -f "$SNAPCAP_PARENT_REPO/.snapcap-smoke.json" ]; then
     cp "$SNAPCAP_PARENT_REPO/.snapcap-smoke.json" .
-    echo "[worktree-init] copied .snapcap-smoke.json from parent"
+    echo "[worktree-init] copied .snapcap-smoke.json from $SNAPCAP_PARENT_REPO (explicit)"
+  else
+    while IFS= read -r line; do
+      case "$line" in
+        worktree\ *)
+          candidate="${line#worktree }"
+          if [ "$candidate" != "$SELF" ] && [ -f "$candidate/.snapcap-smoke.json" ]; then
+            cp "$candidate/.snapcap-smoke.json" .
+            echo "[worktree-init] copied .snapcap-smoke.json from $candidate (auto-detected sibling)"
+            break
+          fi
+          ;;
+      esac
+    done < <(git worktree list --porcelain)
   fi
 fi
 
-# 4. .tmp/auth/ — same idea. Skip silently if no parent given.
-if [ -n "${SNAPCAP_PARENT_REPO:-}" ] && [ -d "$SNAPCAP_PARENT_REPO/.tmp/auth" ]; then
-  mkdir -p .tmp/auth
-  # Use cp -n to never overwrite if the worktree already has its own.
-  cp -n "$SNAPCAP_PARENT_REPO/.tmp/auth/"*.json .tmp/auth/ 2>/dev/null || true
-  echo "[worktree-init] copied auth files from parent"
+# 4. .tmp/auth/ — same cascade. Auth files are COPIED (not symlinked) so
+#    each worktree has its own — prevents JWT-refresh races across
+#    parallel workers using the same account. WARNING: parallel agents
+#    using the same account WILL still hit Snap-side session invalidation
+#    on bearer refresh. For parallel work, use distinct accounts via
+#    tests/lib/user-locker (when added) or explicit per-agent credentials.
+if [ ! -d ".tmp/auth" ] || [ -z "$(ls -A .tmp/auth 2>/dev/null)" ]; then
+  AUTH_SRC=""
+  if [ -n "${SNAPCAP_PARENT_REPO:-}" ] && [ -d "$SNAPCAP_PARENT_REPO/.tmp/auth" ]; then
+    AUTH_SRC="$SNAPCAP_PARENT_REPO/.tmp/auth"
+    AUTH_FROM="$SNAPCAP_PARENT_REPO (explicit)"
+  else
+    while IFS= read -r line; do
+      case "$line" in
+        worktree\ *)
+          candidate="${line#worktree }"
+          if [ "$candidate" != "$SELF" ] && [ -d "$candidate/.tmp/auth" ] && [ -n "$(ls -A "$candidate/.tmp/auth" 2>/dev/null)" ]; then
+            AUTH_SRC="$candidate/.tmp/auth"
+            AUTH_FROM="$candidate (auto-detected sibling)"
+            break
+          fi
+          ;;
+      esac
+    done < <(git worktree list --porcelain)
+  fi
+  if [ -n "$AUTH_SRC" ]; then
+    mkdir -p .tmp/auth
+    cp -n "$AUTH_SRC/"*.json .tmp/auth/ 2>/dev/null || true
+    echo "[worktree-init] copied auth files from $AUTH_FROM"
+  fi
 fi
 
 echo "[worktree-init] ✓ ready."
