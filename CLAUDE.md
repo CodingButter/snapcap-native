@@ -4,6 +4,8 @@ Public, MIT-licensed Node SDK that talks to `web.snapchat.com` natively. Sibling
 
 > **Pre-read:** the parent `~/snapcap/CLAUDE.md` summarizes the layout. The `docs/internals/` chapters are the long-form story of how everything works (architecture, kameleon, webpack-trick, sso-flow, why-it-works).
 
+> **Active refactor in progress:** see [`.claude/refactor-status.md`](.claude/refactor-status.md) for the canonical phase tracker — what's done, what's next, and the lessons learned along the way (model choice, worktree-base quirk, dynamic-import gotcha, user-locker pattern, verification gates). Read this BEFORE making structural changes to `src/` or dispatching new refactor agents.
+
 ## What works today
 
 - `new SnapcapClient({ dataStore, username?, password? })` — DataStore-backed ctor; sandbox installs eagerly so kameleon boot reuses the same realm
