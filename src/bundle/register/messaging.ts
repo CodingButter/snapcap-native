@@ -4,7 +4,7 @@
  * (text / image / snap / mark-viewed / lifecycle / fetch).
  */
 import { Sandbox } from "../../shims/sandbox.ts";
-import type { ChatState, MessagingSlice, SendsModule } from "../types.ts";
+import type { ChatState, MessagingSlice, SendsModule } from "../types/index.ts";
 import { chatStore } from "./chat.ts";
 import { MOD_SENDS } from "./module-ids.ts";
 import { reachModule } from "./reach.ts";

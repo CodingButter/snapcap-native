@@ -4,7 +4,7 @@
  * code that already has a {@link ChatState} snapshot in hand.
  */
 import { Sandbox } from "../../shims/sandbox.ts";
-import type { ChatState, UserSlice } from "../types.ts";
+import type { ChatState, UserSlice } from "../types/index.ts";
 import { chatStore } from "./chat.ts";
 
 /**

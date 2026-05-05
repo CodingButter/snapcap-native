@@ -86,7 +86,7 @@ export async function setTyping(
     // slice's `awayState` to Present.
     try {
       const ctx = await internal.ctx();
-      const { presenceSlice } = await import("../../bundle/register.ts");
+      const { presenceSlice } = await import("../../bundle/register/index.ts");
       const slice = presenceSlice(ctx.sandbox) as Record<string, unknown>;
       process.stderr.write(`[trace.messaging] setTyping pre-chatVisible awayState=${String(slice.awayState)} slot-equals-cached=${slice.presenceSession === presenceSession}\n`);
     } catch (e) {
@@ -104,7 +104,7 @@ export async function setTyping(
     }
     try {
       const ctx = await internal.ctx();
-      const { presenceSlice } = await import("../../bundle/register.ts");
+      const { presenceSlice } = await import("../../bundle/register/index.ts");
       const slice = presenceSlice(ctx.sandbox) as Record<string, unknown>;
       process.stderr.write(`[trace.messaging] setTyping post-chatVisible awayState=${String(slice.awayState)}\n`);
     } catch { /* tolerate */ }
@@ -127,7 +127,7 @@ export async function setTyping(
     if (presenceSession) {
       try {
         const ctx = await internal.ctx();
-        const { presenceSlice } = await import("../../bundle/register.ts");
+        const { presenceSlice } = await import("../../bundle/register/index.ts");
         const envelope = presenceSession.conversationId as { id?: unknown; str?: string } | string | undefined;
         const envShape = envelope && typeof envelope === "object"
           ? `{id-bytelen=${(envelope.id as Uint8Array | undefined)?.byteLength}, str=${envelope.str?.slice(0, 8)}}`
@@ -152,7 +152,7 @@ export async function setTyping(
     const interval = 2000;
     const start = Date.now();
     const ctx = await internal.ctx();
-    const { presenceSlice } = await import("../../bundle/register.ts");
+    const { presenceSlice } = await import("../../bundle/register/index.ts");
     while (Date.now() - start < durationMs) {
       const remaining = durationMs - (Date.now() - start);
       await new Promise<void>((r) => setTimeout(r, Math.min(interval, remaining)));

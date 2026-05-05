@@ -10,7 +10,7 @@
  */
 import { Sandbox } from "../../shims/sandbox.ts";
 import { getChatWreq } from "../chat-loader.ts";
-import type { ChatStore, NiChatRpc } from "../types.ts";
+import type { ChatStore, NiChatRpc } from "../types/index.ts";
 import { MOD_CHAT_STORE } from "./module-ids.ts";
 import { G_CHAT_RPC } from "./patch-keys.ts";
 import { reach, reachModule } from "./reach.ts";

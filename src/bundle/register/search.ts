@@ -9,7 +9,7 @@ import type {
   DecodedSearchResponse,
   SearchRequestCodec,
   SearchResponseCodec,
-} from "../types.ts";
+} from "../types/index.ts";
 import { defaultAuthedFetch, hostModule } from "./host.ts";
 import { G_SEARCH_REQ_CODEC, G_SEARCH_RESP_CODEC } from "./patch-keys.ts";
 import { reach } from "./reach.ts";

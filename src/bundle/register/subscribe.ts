@@ -5,7 +5,7 @@
  * idiom used by `friends.ts`.
  */
 import { Sandbox } from "../../shims/sandbox.ts";
-import type { ChatState, UserSlice } from "../types.ts";
+import type { ChatState, UserSlice } from "../types/index.ts";
 import { chatStore } from "./chat.ts";
 import type { Unsubscribe } from "./reach.ts";
 import { userSliceFrom } from "./user.ts";

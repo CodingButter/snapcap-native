@@ -9,7 +9,7 @@
  * avoids a cross-file rename when Snap changes the enum shape.
  */
 import { Sandbox } from "../../shims/sandbox.ts";
-import type { ChatState, PresenceSlice } from "../types.ts";
+import type { ChatState, PresenceSlice } from "../types/index.ts";
 import { chatStore } from "./chat.ts";
 import { MOD_PRESENCE_STATE_ENUM } from "./module-ids.ts";
 import { reachModule } from "./reach.ts";

@@ -3,7 +3,7 @@
  * the `auth` Zustand slice on the chat-bundle store.
  */
 import { Sandbox } from "../../shims/sandbox.ts";
-import type { AuthSlice, ChatState, LoginClientCtor } from "../types.ts";
+import type { AuthSlice, ChatState, LoginClientCtor } from "../types/index.ts";
 import { chatStore } from "./chat.ts";
 import { G_LOGIN_CLIENT_IMPL } from "./patch-keys.ts";
 import { reach } from "./reach.ts";

@@ -86,7 +86,7 @@ export async function getSelfUserId(ctx: ClientContext): Promise<string> {
   // Try the chat-bundle's auth slice first — has `userId` once the
   // session is brought up.
   try {
-    const { authSlice } = await import("../../bundle/register.ts");
+    const { authSlice } = await import("../../bundle/register/index.ts");
     const slice = authSlice(ctx.sandbox) as { userId?: string };
     if (typeof slice.userId === "string" && slice.userId.length >= 32) {
       return slice.userId;

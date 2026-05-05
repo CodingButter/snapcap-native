@@ -46,7 +46,7 @@ export async function bringUpSession(internal: MessagingInternal): Promise<void>
   // with our microtask timing — poll briefly with a short backoff
   // before throwing so consumers don't hit a transient miss when they
   // chain `.on()` directly off `await authenticate()`.
-  const { authSlice } = await import("../../bundle/register.ts");
+  const { authSlice } = await import("../../bundle/register/index.ts");
   const auth = await import("../auth/index.ts");
   let userId: string | undefined;
   let bearer: string | undefined;

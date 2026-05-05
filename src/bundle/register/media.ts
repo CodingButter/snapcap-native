@@ -3,7 +3,7 @@
  * destinations builder, and the story-descriptor helper module.
  */
 import { Sandbox } from "../../shims/sandbox.ts";
-import type { DestinationsModule, FiUpload, StoryDescModule } from "../types.ts";
+import type { DestinationsModule, FiUpload, StoryDescModule } from "../types/index.ts";
 import { MOD_DESTINATIONS, MOD_STORY_DESC } from "./module-ids.ts";
 import { G_FI_UPLOAD } from "./patch-keys.ts";
 import { reach, reachModule } from "./reach.ts";

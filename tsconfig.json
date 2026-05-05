@@ -27,10 +27,11 @@
 
     "outDir": "./dist"
   },
-  "include": ["src/**/*", "scripts/**/*"],
-  // Dev probe scripts — one-off investigation tools, not part of the SDK
-  // contract. Updated as needed when next used; type-checking them blocks
-  // the canonical paths (smoke, smoke-multi-instance, mint-attestation).
+  "include": ["src/**/*", "scripts/**/*", "tests/**/*"],
+  // The personal probe/test scripts that USED to live in scripts/ have
+  // moved to .tmp/scripts/ (gitignored). The exclude list below is now
+  // historical — most of those files no longer exist in scripts/. Kept
+  // as defensive entries in case any one-off script gets reintroduced.
   "exclude": [
     "dist", "node_modules", "vendor", "docs",
     "scripts/probe-*.ts",

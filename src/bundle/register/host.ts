@@ -8,7 +8,7 @@ import type {
   AtlasGwClient,
   DefaultAuthedFetchModule,
   HostModule,
-} from "../types.ts";
+} from "../types/index.ts";
 import { MOD_ATLAS_CLASS, MOD_DEFAULT_AUTHED_FETCH, MOD_HOST } from "./module-ids.ts";
 import { G_ATLAS_CLIENT } from "./patch-keys.ts";
 import { reach, reachModule } from "./reach.ts";

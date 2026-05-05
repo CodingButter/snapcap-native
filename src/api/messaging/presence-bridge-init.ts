@@ -50,7 +50,7 @@ export async function ensurePresenceForConv(
   }
   const ctx = await internal.ctx();
   const sandbox = ctx.sandbox;
-  const { presenceSlice } = await import("../../bundle/register.ts");
+  const { presenceSlice } = await import("../../bundle/register/index.ts");
 
   // First-call init. Wrapped in its own try so a failure here doesn't
   // permanently block the cache — a future call retries.
@@ -191,7 +191,7 @@ async function seedMessagingConversation(
 ): Promise<void> {
   try {
     const ctx = await internal.ctx();
-    const { chatStore } = await import("../../bundle/register.ts");
+    const { chatStore } = await import("../../bundle/register/index.ts");
     const store = chatStore(ctx.sandbox);
     const state = store.getState() as {
       messaging?: { conversations?: Record<string, unknown> };

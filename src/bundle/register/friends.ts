@@ -6,7 +6,7 @@
  * route through these two getters from the api layer.
  */
 import { Sandbox } from "../../shims/sandbox.ts";
-import type { FriendRequestsClient, JzFriendAction } from "../types.ts";
+import type { FriendRequestsClient, JzFriendAction } from "../types/index.ts";
 import { G_FRIEND_ACTION, G_FRIEND_REQUESTS_CLIENT } from "./patch-keys.ts";
 import { reach } from "./reach.ts";
 

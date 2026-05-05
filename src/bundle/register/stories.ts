@@ -4,7 +4,7 @@
  * mapped" error at call time via {@link reach}.
  */
 import { Sandbox } from "../../shims/sandbox.ts";
-import type { StoryManager, UserInfoClient } from "../types.ts";
+import type { StoryManager, UserInfoClient } from "../types/index.ts";
 import { G_STORY_MANAGER, G_USER_INFO_CLIENT } from "./patch-keys.ts";
 import { reach } from "./reach.ts";
 

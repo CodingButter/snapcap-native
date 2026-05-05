@@ -25,12 +25,15 @@
  *   - Cap test runs to <5 per session — My AI is rate-limited too.
  *   - 60s minimum between manual re-runs.
  */
-import { test, expect, describe, beforeAll } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { SnapcapClient } from "../../src/client.ts";
 import { FileDataStore } from "../../src/storage/data-store.ts";
 import { RECOMMENDED_THROTTLE_RULES, type PlaintextMessage } from "../../src/index.ts";
+import {
+  checkoutUser,
+  releaseUser,
+  type LockedUser,
+} from "../lib/user-locker.ts";
 
 // ── Noise suppression ────────────────────────────────────────────────────
 // Same shape as messaging-multi-account.test.ts. The standalone-WASM mint
@@ -56,10 +59,12 @@ process.on("unhandledRejection", (err) => {
 
 // ── Constants ────────────────────────────────────────────────────────────
 
-const SDK_ROOT = join(import.meta.dir, "..", "..");
-const SMOKE_PATH = join(SDK_ROOT, ".snapcap-smoke.json");
-
-const ACCOUNT_USERNAME = "perdyjamie";
+/** This test prefers `perdyjamie` because the cached myai userId in its
+ * config has been verified. The locker will fall through to another account
+ * if perdyjamie is busy — but that account's friends list also needs a
+ * "myai" entry, which is an invariant per Snap (auto-friended on every
+ * account). */
+const PREFER_USER = "perdyjamie";
 
 /** Hard sleep before the single send. Matches multi-account test. */
 const TEST_THROTTLE_FLOOR_MS = 5_000;
@@ -69,31 +74,6 @@ const TEST_THROTTLE_FLOOR_MS = 5_000;
  * pipeline is broken (or My AI is flaky). Fail fast instead of holding
  * the suite for a slow timeout. */
 const REPLY_WAIT_MS = 25_000;
-
-// ── Types / smoke config ────────────────────────────────────────────────
-
-interface SmokeFriend {
-  username: string;
-  userId: string;
-  displayName?: string;
-}
-interface SmokeAccount {
-  username: string;
-  password: string;
-  authPath?: string;
-  browser?: { userAgent: string };
-  friends?: SmokeFriend[];
-}
-interface Smoke {
-  accounts: SmokeAccount[];
-  fingerprint?: { userAgent?: string };
-}
-
-function pickAccount(smoke: Smoke, username: string): SmokeAccount {
-  const found = smoke.accounts.find((a) => a.username === username);
-  if (!found) throw new Error(`account ${username} missing from .snapcap-smoke.json`);
-  return found;
-}
 
 function decode(content: Uint8Array): string {
   return new TextDecoder("utf-8", { fatal: false }).decode(content);
@@ -106,6 +86,7 @@ function sleep(ms: number): Promise<void> {
 // ── Fixture state ────────────────────────────────────────────────────────
 
 let client: SnapcapClient;
+let lockedUser: LockedUser;
 let myAiConvId: string;
 let myAiUserId: string;
 let selfUserId: string;
@@ -119,34 +100,31 @@ async function introspectSandbox(c: SnapcapClient): Promise<unknown> {
 }
 
 beforeAll(async () => {
-  const smoke = JSON.parse(readFileSync(SMOKE_PATH, "utf8")) as Smoke;
-  const acct = pickAccount(smoke, ACCOUNT_USERNAME);
+  // Lock an account from the pool. PREFER perdyjamie (its myai userId is
+  // verified-cached) but fall through to others if it's busy. Per Snap,
+  // every account is auto-friended with My AI so any account works once
+  // its config has the myai friend cached.
+  lockedUser = await checkoutUser({ preferUser: PREFER_USER });
 
-  // Resolve My AI's userId from the smoke config's friend list. Across
-  // every Snap account, the My AI bot appears as username "myai" — the
-  // userId itself is per-account-stable but auto-friended for everyone,
-  // so reading it from the friend list is the runtime-detection path.
-  // (Avoiding a hardcoded UUID here keeps the test resilient to account
-  // re-provisioning — but if the friend list lookup ever fails, we have
-  // the value from the captured friends payload as a fallback.)
-  const aiFriend = acct.friends?.find((f) => f.username === "myai");
+  // Resolve My AI's userId from the locked user's cached friends list.
+  // Friends list is captured per-account during smoke runs and stored in
+  // the config. Avoiding a hardcoded UUID keeps the test resilient to
+  // account re-provisioning.
+  const aiFriend = (lockedUser.config.friends as Array<{ username: string; userId: string }> | undefined)
+    ?.find((f) => f.username === "myai");
   if (!aiFriend) {
     throw new Error(
-      `beforeAll: no "myai" friend on ${ACCOUNT_USERNAME}'s friend list in ` +
-      `.snapcap-smoke.json. My AI should be auto-friended on every Snap ` +
-      `account; re-run the friend-list capture in the smoke harness.`,
+      `beforeAll: no "myai" friend cached on ${lockedUser.username}'s config. ` +
+      `My AI should be auto-friended on every Snap account; re-run the ` +
+      `friend-list capture for this account.`,
     );
   }
   myAiUserId = aiFriend.userId;
 
   client = new SnapcapClient({
-    dataStore: new FileDataStore(join(SDK_ROOT, acct.authPath ?? `.tmp/auth/${ACCOUNT_USERNAME}.json`)),
-    credentials: { username: acct.username, password: acct.password },
-    browser: acct.browser ?? {
-      userAgent:
-        smoke.fingerprint?.userAgent ??
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-    },
+    dataStore: new FileDataStore(lockedUser.storagePath),
+    credentials: { username: lockedUser.username, password: lockedUser.config.password },
+    browser: { userAgent: lockedUser.config.fingerprint.userAgent },
     throttle: { rules: RECOMMENDED_THROTTLE_RULES },
   });
   await client.authenticate();
@@ -156,9 +134,7 @@ beforeAll(async () => {
 
   // Resolve self userId from the chat-bundle auth slice. Same pattern as
   // messaging-multi-account.test.ts — Zustand setState lands the userId
-  // some hundreds of ms after authenticate() resolves; poll up to 30s
-  // before falling back to the captured smoke value.
-  const FALLBACK_SELF_USER_ID = "527be2ff-aaec-4622-9c68-79d200b8bdc1"; // perdyjamie
+  // some hundreds of ms after authenticate() resolves; poll up to 30s.
   const { authSlice } = await import("../../src/bundle/register/index.ts");
   const sandbox = await introspectSandbox(client);
   for (let i = 0; i < 300; i++) {
@@ -170,10 +146,10 @@ beforeAll(async () => {
     await sleep(100);
   }
   if (!selfUserId) {
-    process.stderr.write(
-      `[beforeAll] WARNING: auth slice never populated userId after 30s — using hardcoded fallback\n`,
+    throw new Error(
+      `beforeAll: auth slice never populated userId after 30s for ${lockedUser.username}. ` +
+      `Cold-fresh auth path may be broken — investigate auth.ts kickoffMessagingSession.`,
     );
-    selfUserId = FALLBACK_SELF_USER_ID;
   }
 
   // Find the 1:1 conversation between us and My AI. My AI is just another
@@ -182,15 +158,12 @@ beforeAll(async () => {
   const convs = await client.messaging.listConversations(selfUserId);
   const myAiConv = convs.find((c) => {
     const set = new Set(c.participants);
-    // 1:1 conv (self + My AI). My AI's conv `type` may differ from a
-    // human DM (Snap distinguishes the AI bot conv kind), but
-    // participant-based detection is the reliable signal.
     return set.has(myAiUserId);
   });
   if (!myAiConv) {
     throw new Error(
       `beforeAll: no conversation containing My AI (${myAiUserId}) in ` +
-      `${ACCOUNT_USERNAME}'s conv list. Open Snap web once and tap the ` +
+      `${lockedUser.username}'s conv list. Open Snap web once and tap the ` +
       `My AI chat to seed the conv server-side, then re-run.`,
     );
   }
@@ -199,15 +172,18 @@ beforeAll(async () => {
   // Pre-warm the bundle messaging session in beforeAll. Without this, the
   // standalone-WASM mint's benign `setAttribute` throw can fire DURING the
   // test and Bun aborts (per the lesson from messaging-multi-account.test).
-  // Touch on() to start bring-up + setTyping(0) to await #ensureSession.
   const noopUnsub = client.messaging.on("message", () => {});
   await client.messaging.setTyping(myAiConvId, 0).catch(() => {});
   noopUnsub();
 
   process.stderr.write(
-    `[beforeAll] myAiUserId=${myAiUserId} myAiConvId=${myAiConvId} type=${myAiConv.type}\n`,
+    `[beforeAll] account=${lockedUser.username} myAiUserId=${myAiUserId} myAiConvId=${myAiConvId} type=${myAiConv.type}\n`,
   );
 }, 120_000);
+
+afterAll(() => {
+  if (lockedUser) releaseUser(lockedUser);
+});
 
 // ─── Live-push round-trip via My AI ─────────────────────────────────────
 
