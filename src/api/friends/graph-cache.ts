@@ -14,9 +14,13 @@
  * KB even for chunky friend graphs), and JSON survives bundle / SDK
  * version drift better than any binary tagged format.
  *
+ * Lives inside the `friends/` feature directory because no consumer
+ * outside Friends touches this — leading-underscore was the prior
+ * convention for "internal to one neighbor".
+ *
  * @internal
  */
-import type { DataStore } from "../storage/data-store.ts";
+import type { DataStore } from "../../storage/data-store.ts";
 
 /**
  * Persisted snapshot of the three id-sets that drive diff-style

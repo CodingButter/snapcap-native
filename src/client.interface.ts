@@ -4,7 +4,7 @@
  * Tests, mocks, and consumer code can depend on this interface without
  * pulling in the full bundle bring-up machinery in `client.ts`.
  */
-import type { Friends } from "./api/friends.ts";
+import type { Friends } from "./api/friends/index.ts";
 import type { Messaging } from "./api/messaging.ts";
 import type { Presence } from "./api/presence.ts";
 import type { Stories } from "./api/stories.ts";

@@ -92,7 +92,7 @@ export {
   type User as FriendsUser,
   type BitmojiPublicInfo,
   type FriendsEvents,
-} from "./api/friends.ts";
+} from "./api/friends/index.ts";
 
 // Shared subscription primitive — every domain manager (Friends,
 // Messaging today; Stories, Presence ahead) composes this. `Subscription`
