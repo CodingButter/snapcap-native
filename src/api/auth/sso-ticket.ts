@@ -116,6 +116,8 @@ export async function _mintTicketFromSSO(opts: MintTicketOpts): Promise<MintTick
 }
 
 function extractTicket(location: string): string | null {
-  const m = location.match(/[#&]ticket=([^&#]+)/);
+  // [#?&] covers all three positions Snap might use: fragment (#ticket=…),
+  // first query param (?ticket=…), and subsequent params (&ticket=…).
+  const m = location.match(/[#?&]ticket=([^&#]+)/);
   return m && m[1] ? decodeURIComponent(m[1]) : null;
 }

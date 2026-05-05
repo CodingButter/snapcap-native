@@ -22,8 +22,11 @@
 import { log } from "../logging.ts";
 
 /**
- * Eager snapshot of the un-shimmed fetch. Kept around so the wrapper has a
- * stable reference even if a future shim hooks `globalThis.fetch`.
+ * Resolve the host-realm fetch fresh on every call. Earlier this snapshotted
+ * `globalThis.fetch.bind(globalThis)` at module load to insulate against
+ * shim hooks, but happy-dom never installs into Node's globalThis (per the
+ * Sandbox model — see CLAUDE.md "Sandbox model"), so the only callers that
+ * benefit from re-resolving are tests that stub `globalThis.fetch` per case.
  *
  * @remarks
  * Throttling is NOT applied here — it lives per-Sandbox at
@@ -34,7 +37,9 @@ import { log } from "../logging.ts";
  *
  * @internal
  */
-const snapshotFetch = globalThis.fetch.bind(globalThis);
+function hostFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return globalThis.fetch(input, init);
+}
 
 /**
  * Best-effort byte size of an outgoing fetch body. Sizes only, never content.
@@ -152,7 +157,7 @@ async function loggingFetch(
   }
   let res: Response;
   try {
-    res = await snapshotFetch(input, init);
+    res = await hostFetch(input, init);
   } catch (err) {
     log({
       kind: "net.fetch.error",

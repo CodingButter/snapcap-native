@@ -144,11 +144,6 @@ describe("api/auth/sso-ticket — _mintTicketFromSSO", () => {
   });
 
   test("ticket as a subsequent query param (&ticket=...) is parsed correctly", async () => {
-    // BUG NOTE: extractTicket's regex is /[#&]ticket=([^&#]+)/ — it matches
-    // '#ticket=' and '&ticket=' but NOT '?ticket=' (first query param).
-    // If Snap ever redirects with ?ticket= as the first param, extraction
-    // will fail silently (no bearer → throws). The regex should be
-    // /[#?&]ticket=/ for robustness. Documented here as a known gap.
     const qLanding = "https://www.snapchat.com/web?other=1&ticket=tok_query_style";
     responses = [
       { status: 303, location: qLanding },
@@ -158,5 +153,17 @@ describe("api/auth/sso-ticket — _mintTicketFromSSO", () => {
     const { _mintTicketFromSSO } = await import("../../../src/api/auth/sso-ticket.ts");
     const result = await _mintTicketFromSSO({ jar: new CookieJar(), userAgent: UA });
     expect(result.bearer).toBe("tok_query_style");
+  });
+
+  test("ticket as the first query param (?ticket=...) is parsed correctly", async () => {
+    const qLanding = "https://www.snapchat.com/web?ticket=tok_first_query&other=1";
+    responses = [
+      { status: 303, location: qLanding },
+      { status: 200 },
+    ];
+
+    const { _mintTicketFromSSO } = await import("../../../src/api/auth/sso-ticket.ts");
+    const result = await _mintTicketFromSSO({ jar: new CookieJar(), userAgent: UA });
+    expect(result.bearer).toBe("tok_first_query");
   });
 });
