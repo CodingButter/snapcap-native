@@ -103,7 +103,7 @@ export {
   type MessagingEvents,
   type ConversationSummary,
   type RawEncryptedMessage,
-} from "./api/messaging.ts";
+} from "./api/messaging/index.ts";
 export { Presence } from "./api/presence.ts";
 export { Stories } from "./api/stories.ts";
 export { Media } from "./api/media.ts";

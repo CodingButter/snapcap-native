@@ -30,7 +30,7 @@ import {
 import { getOrCreateJar } from "../shims/cookie-jar.ts";
 import { TypedEventBus, type Subscription } from "../lib/typed-event-bus.ts";
 import { sendMediaViaSession } from "./_media_upload.ts";
-import type { MessagingEvents } from "./messaging.ts";
+import type { MessagingEvents } from "./messaging/index.ts";
 
 /**
  * Stories domain manager — held as {@link SnapcapClient.stories}.

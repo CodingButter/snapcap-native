@@ -5,7 +5,7 @@
  * pulling in the full bundle bring-up machinery in `client.ts`.
  */
 import type { Friends } from "./api/friends/index.ts";
-import type { Messaging } from "./api/messaging.ts";
+import type { Messaging } from "./api/messaging/index.ts";
 import type { Presence } from "./api/presence.ts";
 import type { Stories } from "./api/stories.ts";
 import type { Media } from "./api/media.ts";
