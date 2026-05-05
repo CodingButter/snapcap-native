@@ -50,7 +50,7 @@ import {
 } from "../auth/fidelius-mint.ts";
 import { sendMediaViaSession, createOutboundCapture } from "./_media_upload.ts";
 import { createPresenceBridge } from "../bundle/presence-bridge.ts";
-import type { BundlePresenceSession } from "../bundle/types.ts";
+import type { BundlePresenceSession } from "../bundle/types/index.ts";
 
 // ── Inline ProtoReader (no shared one in transport/) ──────────────────
 class ProtoReader {

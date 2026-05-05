@@ -27,7 +27,7 @@
  */
 import { nativeFetch } from "../transport/native-fetch.ts";
 import { ProtoWriter } from "../transport/proto-encode.ts";
-import type { GrpcMethodDesc } from "../bundle/types.ts";
+import type { GrpcMethodDesc } from "../bundle/types/index.ts";
 
 /** Cleartext identity material as returned by the WASM. */
 export type FideliusIdentity = {

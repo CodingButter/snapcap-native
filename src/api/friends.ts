@@ -24,7 +24,7 @@ import type {
   PublicUserRecord,
   SnapchatterPublicInfo,
   UserSlice,
-} from "../bundle/types.ts";
+} from "../bundle/types/index.ts";
 import { bytesToUuid, extractUserId, makeFriendIdParams, uuidToBytes } from "./_helpers.ts";
 import {
   diffGraph,

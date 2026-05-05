@@ -61,7 +61,7 @@ import type {
   StoryManager,
   UserInfoClient,
   UserSlice,
-} from "./types.ts";
+} from "./types/index.ts";
 
 /**
  * Presence-state enum — chat module 46471 exports this as `O`. Backs the

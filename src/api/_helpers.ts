@@ -25,7 +25,7 @@
  * (used by the api layer to bridge bundle-shape parameters into the
  * registry).
  */
-import type { ConversationRef, DecodedSearchUserResult, Uuid64Pair } from "../bundle/types.ts";
+import type { ConversationRef, DecodedSearchUserResult, Uuid64Pair } from "../bundle/types/index.ts";
 
 /**
  * Convert a hyphenated UUID string into its 16-byte representation.

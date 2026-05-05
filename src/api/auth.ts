@@ -49,7 +49,7 @@ import type { Sandbox } from "../shims/sandbox.ts";
 import { getOrCreateJar } from "../shims/cookie-jar.ts";
 import { authSlice, chatStore, chatWreq, loginClient } from "../bundle/register.ts";
 import { makeWorkerProxyFacade } from "../bundle/worker-proxy-facade.ts";
-import type { UnaryFn, WebLoginRequest, WebLoginResponse } from "../bundle/types.ts";
+import type { UnaryFn, WebLoginRequest, WebLoginResponse } from "../bundle/types/index.ts";
 import type { ClientContext } from "./_context.ts";
 import { activeIdentifier, type Credentials } from "../types.ts";
 import { mintFideliusIdentity } from "../auth/fidelius-mint.ts";
