@@ -42,7 +42,7 @@ import type {
   BundleMessagingSession,
 } from "../auth/fidelius-decrypt.ts";
 import type { StandaloneChatRealm } from "../auth/fidelius-mint.ts";
-import type { MessagingEvents } from "./messaging.ts";
+import type { MessagingEvents } from "./messaging/index.ts";
 
 /**
  * Options for {@link sendMediaViaSession}.

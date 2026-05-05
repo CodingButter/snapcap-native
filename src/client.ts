@@ -29,7 +29,7 @@ import {
   makeContext,
 } from "./api/auth.ts";
 import { Friends } from "./api/friends.ts";
-import { Messaging } from "./api/messaging.ts";
+import { Messaging } from "./api/messaging/index.ts";
 import { Presence } from "./api/presence.ts";
 import { Stories } from "./api/stories.ts";
 import { Media } from "./api/media.ts";
