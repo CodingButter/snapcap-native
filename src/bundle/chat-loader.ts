@@ -11,7 +11,7 @@
  *
  * Used by:
  *   - api/friends.ts (AtlasGw class lives in module 74052)
- *   - auth/fidelius-mint.ts (Emscripten Module factory lives in 86818,
+ *   - bundle/chat/standalone/realm.ts (Emscripten Module factory lives in 86818,
  *     plus this loader is what makes module 86818's deps resolve)
  *
  * Eval happens inside the sandbox (`Sandbox.runInContext`) — bundle code's

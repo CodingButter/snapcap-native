@@ -13,11 +13,11 @@
  *
  * @internal
  */
-import { setupBundleSession } from "../../auth/fidelius-decrypt.ts";
 import {
+  setupBundleSession,
   mintFideliusIdentity,
   getStandaloneChatRealm,
-} from "../../auth/fidelius-mint.ts";
+} from "../../bundle/chat/standalone/index.ts";
 import { getOrCreateJar } from "../../shims/cookie-jar.ts";
 import type { MessagingInternal, Cell } from "./internal.ts";
 import { listConversations } from "./reads.ts";

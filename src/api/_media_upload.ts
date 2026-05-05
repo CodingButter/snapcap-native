@@ -40,8 +40,8 @@ import { bytesToUuid } from "./_helpers.ts";
 import type { TypedEventBus } from "../lib/typed-event-bus.ts";
 import type {
   BundleMessagingSession,
-} from "../auth/fidelius-decrypt.ts";
-import type { StandaloneChatRealm } from "../auth/fidelius-mint.ts";
+  StandaloneChatRealm,
+} from "../bundle/chat/standalone/index.ts";
 import type { MessagingEvents } from "./messaging/index.ts";
 
 /**

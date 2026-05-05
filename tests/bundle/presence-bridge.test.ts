@@ -25,7 +25,7 @@ import vm from "node:vm";
 import { createPresenceBridge } from "../../src/bundle/presence-bridge.ts";
 import { mockSandbox } from "../lib/mock-sandbox.ts";
 import { chatStateFixture } from "../lib/fixtures/index.ts";
-import type { StandaloneChatRealm } from "../../src/auth/fidelius-mint.ts";
+import type { StandaloneChatRealm } from "../../src/bundle/chat/standalone/index.ts";
 
 // Build a minimal StandaloneChatRealm with a controllable __SNAPCAP_EN
 function makeRealm(enOverride?: unknown): StandaloneChatRealm {

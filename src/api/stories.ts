@@ -19,14 +19,12 @@
 import type { ClientContext } from "./_context.ts";
 import {
   setupBundleSession,
-  type BundleMessagingSession,
-  type PlaintextMessage,
-} from "../auth/fidelius-decrypt.ts";
-import {
   mintFideliusIdentity,
   getStandaloneChatRealm,
+  type BundleMessagingSession,
+  type PlaintextMessage,
   type StandaloneChatRealm,
-} from "../auth/fidelius-mint.ts";
+} from "../bundle/chat/standalone/index.ts";
 import { getOrCreateJar } from "../shims/cookie-jar.ts";
 import { TypedEventBus, type Subscription } from "../lib/typed-event-bus.ts";
 import { sendMediaViaSession } from "./_media_upload.ts";

@@ -52,36 +52,21 @@ This file is the canonical phase tracker. Update it as phases land.
 
 ---
 
-## ⏳ Phase 3 — rename `src/auth/` → `src/bundle/chat/standalone/` + split fidelius files
+## ✅ Phase 3 — `src/auth/` → `src/bundle/chat/standalone/` + fidelius split
 
-Two files in `src/auth/` are misnamed (don't do login auth — they're bundle realm management):
+Two files in `src/auth/` were misnamed (didn't do login auth — they were bundle realm management):
 - `src/auth/fidelius-mint.ts` (493 LOC) — boots a SECOND chat WASM in an isolated vm.Context for the identity mint. WASM #1 in main sandbox has corrupted Embind state due to neutered Worker shim; WASM #2 is the clean realm.
-- `src/auth/fidelius-decrypt.ts` (1698 LOC) — brings up the bundle's messaging session in the standalone realm. NOT decryption — the bundle's WASM does that. Should rename to something like `messaging-bringup.ts`.
+- `src/auth/fidelius-decrypt.ts` (1698 LOC) — brings up the bundle's messaging session in the standalone realm. NOT decryption — the bundle's WASM does that.
 
-Target structure (per investigation agent's proposal, confirmed with user):
+Split into `src/bundle/chat/standalone/`:
+- `index.ts` (44) — barrel + WASM-duplication TODO doc
+- `realm.ts` (291), `realm-globals.ts` (111), `identity-mint.ts` (63), `types.ts` (87)
+- `session/index.ts` (40), `session/setup.ts` (238) — orchestration
+- `session/{realm-globals,ws-shim,import-scripts,chunk-patch,wrap-session-create,push-handler,deliver-plaintext,id-coercion,types,utils,wake-session,wasm-services-init,grpc-web-factory,session-args,inbox-pump,register-duplex-trace}.ts` — per-concern siblings, all ≤ 265 LOC
 
-```
-src/bundle/chat/standalone/
-  index.ts
-  realm.ts              (was fidelius-mint.ts — getStandaloneChatRealm + getStandaloneChatModule)
-  identity-mint.ts      (was fidelius-mint.ts — mintFideliusIdentity)
-  types.ts              (KeyManagerStatics, StandaloneChatRealm, StandaloneChatModule)
-  session/
-    index.ts
-    setup.ts            (setupBundleSession entry)
-    realm-globals.ts    (CustomEvent/Event/EventTarget/Worker stubs)
-    ws-shim.ts          (WebSocket shim — note: should also reuse src/shims/websocket.ts factory eventually)
-    chunk-patch.ts      (f16f14e3 source-patch)
-    wrap-session-create.ts
-    push-handler.ts
-    deliver-plaintext.ts
-    id-coercion.ts
-    types.ts            (PlaintextMessage, SetupBundleSessionOpts, etc.)
-```
+`src/auth/` directory deleted entirely. 18 importers updated (static + 1 dynamic). Verification gates pass: lint clean (only pre-existing `logging.ts:111`), typecheck unchanged at 22 pre-existing errors (3 src + 19 tests), `multi-instance-isolation.test.ts` passes (3/3), `messaging-myai.test.ts` live decrypt passes ("Hey Jamie! What's up?" decrypted from My AI in ~17s).
 
-`src/auth/` directory disappears entirely.
-
-**Big TODO** to include in `src/bundle/chat/standalone/index.ts` jsdoc: the WASM duplication (~12MB extra in memory + ~250ms boot time per `SnapcapClient`) is a known compromise. Root cause is the bundle expects a Web Worker hosting the WASM via Comlink, and our Worker shim is "neutered" to prevent metrics/sentry boot loops — which corrupts internal state for static Embind calls. Fixing properly = reverse-engineering Snap's worker init sequence (1-2 weeks investigation). Standalone realm sidesteps this at the cost of duplication. Worth fixing if multi-tenancy ever scales to N>20 per process.
+The WASM-duplication TODO (~12MB extra in memory + ~250ms boot time per `SnapcapClient`) is documented in `src/bundle/chat/standalone/index.ts` jsdoc — fixing it properly = reverse-engineering Snap's worker init sequence (~1-2 weeks). Worth doing if multi-tenancy scales beyond N>20 per process.
 
 ### ✅ Phase 5 — Test fan-out (parallel Sonnet, 4 of 5 done; 5B redo in flight)
 

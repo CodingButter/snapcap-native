@@ -107,7 +107,7 @@ export {
 export { Presence } from "./api/presence.ts";
 export { Stories } from "./api/stories.ts";
 export { Media } from "./api/media.ts";
-export type { PlaintextMessage } from "./auth/fidelius-decrypt.ts";
+export type { PlaintextMessage } from "./bundle/chat/standalone/index.ts";
 
 export { uuidToBytes, bytesToUuid, uuidToHighLow, highLowToUuid } from "./api/_helpers.ts";
 

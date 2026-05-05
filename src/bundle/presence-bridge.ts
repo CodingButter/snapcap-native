@@ -72,7 +72,7 @@
  * @internal Bundle-layer plumbing. Public consumers never construct this.
  */
 import vm from "node:vm";
-import type { StandaloneChatRealm } from "../auth/fidelius-mint.ts";
+import type { StandaloneChatRealm } from "./chat/standalone/index.ts";
 import type { Sandbox } from "../shims/sandbox.ts";
 
 /**
@@ -162,7 +162,7 @@ export function createPresenceBridge(
   log: (line: string) => void = () => {},
 ): PresenceDuplexClient {
   // Reach the standalone-realm `En`. The chunk patch in
-  // `auth/fidelius-decrypt.ts` exposes it as `globalThis.__SNAPCAP_EN`
+  // `bundle/chat/standalone/session/chunk-patch.ts` exposes it as `globalThis.__SNAPCAP_EN`
   // inside `realm.context` — read it via vm.runInContext so we get the
   // realm-local reference (cross-realm property reads work but make
   // intent explicit).

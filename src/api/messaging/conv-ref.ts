@@ -12,7 +12,7 @@
  * @internal
  */
 import { uuidToBytes } from "../_helpers.ts";
-import type { StandaloneChatRealm } from "../../auth/fidelius-mint.ts";
+import type { StandaloneChatRealm } from "../../bundle/chat/standalone/index.ts";
 
 /**
  * Build a realm-local convRef ({id: vm-realm Uint8Array, str}) matching

@@ -12,7 +12,7 @@
  */
 import { authSlice } from "../../bundle/register/index.ts";
 import { getOrCreateJar } from "../../shims/cookie-jar.ts";
-import { mintFideliusIdentity } from "../../auth/fidelius-mint.ts";
+import { mintFideliusIdentity } from "../../bundle/chat/standalone/index.ts";
 import { initializeWebKey, type FideliusIdentity } from "../fidelius.ts";
 import type { ClientContext } from "../_context.ts";
 import type { AuthSliceLive } from "./types.ts";
@@ -50,7 +50,7 @@ export async function kickoffMessagingSession(ctx: ClientContext): Promise<void>
 
   // Cold-path: mint a fresh Fidelius identity in a clean vm.Context
   // (separate from the bundle's auto-instantiated noop'd Module — see
-  // `auth/fidelius-mint.ts` for the rationale) and POST it to Snap's
+  // `bundle/chat/standalone/realm.ts` for the rationale) and POST it to Snap's
   // `FideliusIdentityService.InitializeWebKey`. On 200 we persist the
   // SERVER's response bytes (the canonical wrapped-identity payload)
   // into the DataStore at `local_uds.e2eeIdentityKey.shared`.

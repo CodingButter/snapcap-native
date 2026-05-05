@@ -13,7 +13,7 @@
  *
  * Identity material comes from the chat-bundle WASM
  * (`e2ee_E2EEKeyManager.generateKeyInitializationRequest`) — see
- * `src/auth/fidelius-mint.ts`. We hand-build the wire request to match
+ * `src/bundle/chat/standalone/identity-mint.ts`. We hand-build the wire request to match
  * the v10 shape browsers send at first login (4 fields under proto field
  * 2 with a 16-byte wrapped RWK), since the WASM's request output omits
  * that wrapping.

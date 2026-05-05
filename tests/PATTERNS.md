@@ -296,7 +296,7 @@ expect(calls[0].method).toBe("AddFriends");
 The function only meaningfully runs against a real Snap account + real
 bundle WASM. Examples: `client.authenticate()`, `client.messaging.sendText()`,
 the full bring-up path in `api/auth/bringup.ts`, the standalone-mint in
-`auth/fidelius-mint.ts`.
+`bundle/chat/standalone/identity-mint.ts`.
 
 ### Template
 

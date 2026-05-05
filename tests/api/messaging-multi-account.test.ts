@@ -55,7 +55,7 @@ import {
 // The standalone-WASM mint inside the chat bundle throws a benign
 // `ei.setAttribute is not a function` from a browser-only iframe init path
 // during cold bring-up. The mint catches it internally (see
-// `bootStandaloneMintWasm` in src/auth/fidelius-mint.ts) but the throw
+// `bootStandaloneMintWasm` in src/bundle/chat/standalone/realm.ts) but the throw
 // surfaces here as an unhandled error / rejection in Bun's event loop,
 // which would otherwise fail tests that aren't related to the actual error.
 // Swallow these specific bundle-internal noise events so they don't
@@ -364,7 +364,7 @@ describe("isolation under load", () => {
   test("A and B have distinct sandboxes / WASM realms / Fidelius identities", async () => {
     // Same shape as scripts/test-isolation.ts — different vm.Context
     // references, different moduleEnv references. Should pass today.
-    const { getStandaloneChatRealm } = await import("../../src/auth/fidelius-mint.ts");
+    const { getStandaloneChatRealm } = await import("../../src/bundle/chat/standalone/index.ts");
     const sandboxA = await introspectSandbox(A);
     const sandboxB = await introspectSandbox(B);
     expect(sandboxA).not.toBe(sandboxB);
