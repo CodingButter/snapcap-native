@@ -65,9 +65,10 @@ If you want a clean network shutdown — closing the bundle's duplex WebSocket, 
 import { SnapcapClient, FileDataStore } from "@snapcap/native";
 import { readFileSync } from "node:fs";
 
-// `.snapcap-smoke.json` is just `{"username":"…","password":"…"}` — local file,
-// gitignored. Pattern used by `scripts/smoke.ts` in the SDK repo.
-const { username, password } = JSON.parse(readFileSync(".snapcap-smoke.json", "utf8"));
+// `.snapcap-creds.json` is just `{"username":"…","password":"…"}` — local
+// file, gitignored. Replace with your own credential-loading pattern in
+// production.
+const { username, password } = JSON.parse(readFileSync(".snapcap-creds.json", "utf8"));
 
 const client = new SnapcapClient({
   dataStore: new FileDataStore("./.tmp/auth/auth.json"),

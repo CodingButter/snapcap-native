@@ -159,7 +159,7 @@ Snap ships the bundle as multiple webpack chunks loaded from different hosts:
 
 Each bundle uses its own webpack chunk-array name (`webpackChunk_N_E` vs `webpackChunk_snapchat_web_calling_app`) and its own webpack runtime. Module IDs are scoped per-bundle: module 74052 in the chat bundle is AtlasGw; module 74052 in the accounts bundle is something completely different (if it exists at all).
 
-When we boot kameleon, only the accounts bundle is loaded. The first time anything calls `listFriends()`, `api/friends.ts` lazy-loads the chat bundle and merges its factories into the accounts `p.m`. As above, `globalThis` here is the sandbox-realm global — both chunk arrays live in the vm.Context, not the host:
+When we boot kameleon, only the accounts bundle is loaded. The first time anything reaches into the chat-bundle realm (e.g. `client.friends.list()` going through `api/friends/`), the chat-loader lazy-loads the chat bundle and merges its factories into the accounts `p.m`. As above, `globalThis` here is the sandbox-realm global — both chunk arrays live in the vm.Context, not the host:
 
 ```ts
 const arr = sandbox.getGlobal<unknown[]>("webpackChunk_snapchat_web_calling_app")!;
