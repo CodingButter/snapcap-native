@@ -37,11 +37,11 @@ Knip config: `knip.json` v6, entry = `src/index.ts` + all test files + all shell
 
 > These have no callers in `src/`, `tests/`, or `scripts/`. Removal carries low risk.
 
-### `sharp` — production dependency (`package.json:66`)
+### ~~`sharp` — production dependency (`package.json:66`)~~ ✅ removed
 
 - **Knip:** unused dependency.
 - **Verification:** `grep -r "sharp" src/ tests/ scripts/` → zero results. Not imported anywhere.
-- **Assessment:** The `Stories` domain (`src/api/stories.ts`) normalizes image buffers to 1080×1920 RGBA PNG before posting. That code path appears to not use `sharp` — either it was removed or the normalization was never implemented. Remove from `dependencies`.
+- **Resolution:** `src/api/stories.ts:68` documents that auto-normalization to 1080×1920 RGBA PNG is the bundle's responsibility once it sniffs the Blob — the SDK passes raw bytes through. `sharp` was a leftover from an abandoned SDK-side normalization path. Removed from `dependencies`. Test suite unchanged (562 pass / 14 pre-existing fails).
 
 ### `makeConversationRef` — `src/api/_helpers.ts:127`
 

@@ -162,7 +162,7 @@ All planned phases (1, 2A, 2B.1, 2B.2, 3, 4, 5A–5E, 6) merged to `main` at `f3
 
 Open follow-ups (NOT part of the refactor; track separately):
 - Fix the 5 `// BUG:` markers in tests/ (5C found these during audit; kept as docs).
-- Decide on `sharp` removal vs. wiring up image normalization properly.
+- ~~Decide on `sharp` removal vs. wiring up image normalization properly.~~ ✅ removed (`stories.ts:68` confirms the bundle does it; SDK passes raw bytes).
 - Review the 9 unused exports in BLOAT-AUDIT.md and prune the ones that are truly orphans.
 - Re-enable the pre-push doc-update hook (currently `exit 0` early — see `scripts/git-hooks/pre-push`).
 
