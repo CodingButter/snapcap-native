@@ -96,6 +96,7 @@ class IDBObjectStoreShim {
   get(key: IDBValidKey): IDBRequestShim {
     const req = new IDBRequestShim();
     req.transaction = this.transaction;
+    this.transaction._opStart();
     void this.store.get(makeFullKey(this.dbName, this.name, key)).then(
       (bytes) => {
         if (!bytes || bytes.byteLength === 0) {
@@ -108,8 +109,12 @@ class IDBObjectStoreShim {
             req.fail(e as Error);
           }
         }
+        this.transaction._opEnd();
       },
-      (e) => req.fail(e as Error),
+      (e) => {
+        req.fail(e as Error);
+        this.transaction._opEnd();
+      },
     );
     return req;
   }
@@ -130,12 +135,16 @@ class IDBObjectStoreShim {
       req.fail(e as Error);
       return req;
     }
+    this.transaction._opStart();
     void this.store.set(makeFullKey(this.dbName, this.name, key), bytes).then(
       () => {
-        this.transaction._noteOp();
         req.succeed(key);
+        this.transaction._opEnd();
       },
-      (e) => req.fail(e as Error),
+      (e) => {
+        req.fail(e as Error);
+        this.transaction._opEnd();
+      },
     );
     return req;
   }
@@ -148,12 +157,16 @@ class IDBObjectStoreShim {
   delete(key: IDBValidKey): IDBRequestShim {
     const req = new IDBRequestShim();
     req.transaction = this.transaction;
+    this.transaction._opStart();
     void this.store.delete(makeFullKey(this.dbName, this.name, key)).then(
       () => {
-        this.transaction._noteOp();
         req.succeed(undefined);
+        this.transaction._opEnd();
       },
-      (e) => req.fail(e as Error),
+      (e) => {
+        req.fail(e as Error);
+        this.transaction._opEnd();
+      },
     );
     return req;
   }
@@ -163,19 +176,23 @@ class IDBObjectStoreShim {
     req.transaction = this.transaction;
     const listable = this.store as Listable;
     if (typeof listable.keys !== "function") {
-      // Without listing we can't enumerate — best-effort no-op success.
-      this.transaction._noteOp();
+      this.transaction._opStart();
       req.succeed(undefined);
+      this.transaction._opEnd();
       return req;
     }
     const prefix = makeStorePrefix(this.dbName, this.name);
     const allKeys = listable.keys(prefix);
+    this.transaction._opStart();
     void Promise.all(allKeys.map((k) => this.store.delete(k))).then(
       () => {
-        this.transaction._noteOp();
         req.succeed(undefined);
+        this.transaction._opEnd();
       },
-      (e) => req.fail(e as Error),
+      (e) => {
+        req.fail(e as Error);
+        this.transaction._opEnd();
+      },
     );
     return req;
   }
@@ -185,11 +202,14 @@ class IDBObjectStoreShim {
     req.transaction = this.transaction;
     const listable = this.store as Listable;
     if (typeof listable.keys !== "function") {
+      this.transaction._opStart();
       req.succeed([]);
+      this.transaction._opEnd();
       return req;
     }
     const prefix = makeStorePrefix(this.dbName, this.name);
     const allKeys = listable.keys(prefix);
+    this.transaction._opStart();
     void Promise.all(allKeys.map((k) => this.store.get(k))).then(
       (allBytes) => {
         const out: unknown[] = [];
@@ -202,8 +222,12 @@ class IDBObjectStoreShim {
           }
         }
         req.succeed(out);
+        this.transaction._opEnd();
       },
-      (e) => req.fail(e as Error),
+      (e) => {
+        req.fail(e as Error);
+        this.transaction._opEnd();
+      },
     );
     return req;
   }
@@ -212,13 +236,16 @@ class IDBObjectStoreShim {
     const req = new IDBRequestShim();
     req.transaction = this.transaction;
     const listable = this.store as Listable;
+    this.transaction._opStart();
     if (typeof listable.keys !== "function") {
       req.succeed([]);
+      this.transaction._opEnd();
       return req;
     }
     const prefix = makeStorePrefix(this.dbName, this.name);
     const stripped = listable.keys(prefix).map((k) => k.slice(prefix.length));
     req.succeed(stripped);
+    this.transaction._opEnd();
     return req;
   }
 }
@@ -251,14 +278,28 @@ class IDBTransactionShim {
     return new IDBObjectStoreShim(this.store, this.dbName, name, this);
   }
 
-  /** Internal: object-store op records that an async op happened. */
-  _noteOp(): void {
+  /**
+   * Internal: store ops call `_opStart()` synchronously when the op is
+   * issued and `_opEnd()` when its async work resolves. The constructor
+   * microtask only fires `oncomplete` for transactions where no op was
+   * registered AT ALL by then; once at least one op has started, completion
+   * is gated on `_opEnd` calls returning pending to zero.
+   *
+   * The previous `_noteOp()` API merged "op started" and "op finished"
+   * into one call, scheduling the decrement on a microtask. Callers that
+   * fired it from inside their async-completion `.then()` left a window
+   * where `hadOp` was still false when the constructor's microtask ran,
+   * so `oncomplete` fired before the read result landed. See git blame
+   * for the bug fix.
+   */
+  _opStart(): void {
     this.hadOp = true;
     this.pending++;
-    queueMicrotask(() => {
-      this.pending--;
-      this._tryComplete();
-    });
+  }
+
+  _opEnd(): void {
+    this.pending--;
+    this._tryComplete();
   }
 
   private _tryComplete(): void {

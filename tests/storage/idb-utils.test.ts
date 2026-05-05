@@ -2,23 +2,8 @@
  * STATE-DRIVEN tests — `src/storage/idb-utils.ts`
  *
  * idbGet / idbPut / idbDelete use the IDB shim installed on a real Sandbox.
- * We construct a real Sandbox backed by a MemoryDataStore.
- *
- * BUG FOUND (do not fix): `idbGet` returns `undefined` even after a
- * successful `idbPut`. Root cause: `IDBObjectStoreShim.get` does NOT call
- * `tx._noteOp()`, so the `IDBTransactionShim` fires `oncomplete` before
- * the async `store.get()` promise resolves and before `req.onsuccess`
- * fires. In `idb-utils.ts:runOp`, `resolve(opResult)` runs while
- * `opResult` is still `undefined`.
- *
- * The write path (put/delete) DOES call `_noteOp()` so writes land
- * correctly in the DataStore. Only reads are broken.
- *
- * Until the bug is fixed, these tests verify:
- *   - idbPut successfully writes to the DataStore (observable via store.keys)
- *   - idbDelete removes the key from the DataStore
- *   - idbGet resolves (to undefined, due to the bug) without throwing
- *   - sandbox construction + getGlobal("indexedDB") works correctly
+ * We construct a real Sandbox backed by a MemoryDataStore. Round-trip,
+ * absent-key, and sandbox-wiring paths are covered.
  */
 import { describe, expect, test } from "bun:test";
 import { Sandbox } from "../../src/shims/sandbox.ts";
@@ -73,18 +58,15 @@ describe("storage/idb-utils — idbDelete removes from DataStore", () => {
   });
 });
 
-describe("storage/idb-utils — idbGet resolves without throwing", () => {
-  test("idbGet resolves (to undefined) without throwing — BUG: tx.oncomplete fires before get result", async () => {
-    // This test documents the known bug: idbGet returns undefined even
-    // after a successful idbPut. See file header for root cause.
+describe("storage/idb-utils — idbGet round-trip", () => {
+  test("idbGet returns the value previously written by idbPut", async () => {
     const { sb } = makeSandbox();
     await idbPut(sb, "db", "store", "k", { tag: "A" });
     const result = await idbGet(sb, "db", "store", "k");
-    // Bug: should equal { tag: "A" } but returns undefined.
-    expect(result).toBeUndefined(); // KNOWN BUG — see file header
+    expect(result).toEqual({ tag: "A" });
   });
 
-  test("idbGet on absent key resolves to undefined (correct behavior)", async () => {
+  test("idbGet on absent key resolves to undefined", async () => {
     const { sb } = makeSandbox();
     const got = await idbGet(sb, "db", "store", "nonexistent");
     expect(got).toBeUndefined();

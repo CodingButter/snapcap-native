@@ -32,9 +32,13 @@ export function patchSandboxLocationToWeb(ctx: ClientContext): void {
     host?: string;
     hostname?: string;
   };
-  // Already patched? `pathname` would already be "/web".
+  // Already patched? Use `host` as the idempotency marker — happy-dom
+  // defaults to `www.snapchat.com`, the proxy rewrites to `web.snapchat.com`.
+  // (Earlier this guarded on `pathname === "/web"`, which always matched
+  // because happy-dom's default pathname is also `/web` — so the proxy
+  // never installed and `href`/`host` stayed wrong.)
   try {
-    if (prevLoc.pathname === "/web") return;
+    if (prevLoc.host === "web.snapchat.com") return;
   } catch {
     // proxy may have a getter that throws on probe — fall through and re-wrap.
   }

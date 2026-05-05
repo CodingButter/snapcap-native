@@ -167,27 +167,23 @@ describe("shims/indexed-db — put / get (via req.onsuccess) / delete", () => {
     expect(await get(db, "store", "b")).toEqual({ tag: "B" });
   });
 
-  test("BUG: tx.oncomplete fires before get result — get via runOp returns undefined", async () => {
-    // This test documents the known bug in the tx.oncomplete vs get timing.
-    // idb-utils.ts:runOp uses tx.oncomplete to resolve, but get never calls
-    // _noteOp(), so oncomplete fires before the async store.get() resolves.
+  test("tx.oncomplete waits for get's onsuccess — result is observable inside oncomplete", async () => {
     const store = new MemoryDataStore();
     const factory = new IDBFactoryShim(store);
     const db = await openDb(factory, "db", 1, "mystore");
     await put(db, "mystore", "testkey", { value: "test" });
-    // Direct DataStore check confirms the put worked.
     expect(store.getSync("indexdb_db__mystore__testkey")).toBeDefined();
-    // Via tx.oncomplete (broken path — returns undefined due to bug):
     const txOnCompleteResult = await new Promise<unknown>((resolve) => {
       const tx = db.transaction(["mystore"], "readonly");
       const os = tx.objectStore("mystore");
-      os.get("testkey"); // fire the get
+      const req = os.get("testkey");
       let result: unknown;
-      // Wire onsuccess but rely on tx.oncomplete to resolve
-      tx.oncomplete = () => resolve(result); // result may not be set yet
+      (req as { onsuccess: ((ev: { target: { result: unknown } }) => void) | null }).onsuccess = (ev) => {
+        result = ev.target.result;
+      };
+      tx.oncomplete = () => resolve(result);
     });
-    // BUG: should be { value: "test" } but is undefined
-    expect(txOnCompleteResult).toBeUndefined(); // KNOWN BUG — tx.oncomplete races with get.onsuccess
+    expect(txOnCompleteResult).toEqual({ value: "test" });
   });
 });
 
