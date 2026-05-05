@@ -39,7 +39,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --path-ignore-patterns='**/bringup.test.ts' --path-ignore-patterns='**/presence-bridge-init.test.ts' && bun test tests/api/messaging/bringup.test.ts tests/api/messaging/presence-bridge-init.test.ts",
     "lint:no-singletons": "bash scripts/lint-no-singletons.sh",
     "install:bundle": "bash scripts/install-bundle.sh",
     "release:bundle": "bash scripts/release-bundle.sh",

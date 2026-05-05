@@ -13,7 +13,7 @@
  * Heavy boundaries (bundle bridge, slices, conversation reads) are
  * mocked via `mock.module`. Each test owns one orchestration assertion.
  */
-import { describe, expect, mock, test, beforeAll } from "bun:test";
+import { describe, expect, mock, test, beforeAll, afterAll } from "bun:test";
 import type {
   Cell,
   MessagingInternal,
@@ -135,6 +135,12 @@ beforeAll(async () => {
   const mod = await import("../../../src/api/messaging/presence-bridge-init.ts");
   ensurePresenceForConv = mod.ensurePresenceForConv;
 });
+
+// `mock.module` calls above are process-global. Without this teardown the
+// reads/register/presence-bridge stubs would still be in place when sibling
+// test files load and import the real modules. `mock.restore()` undoes
+// `mock.module` registrations as of bun 1.3.x.
+afterAll(() => mock.restore());
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

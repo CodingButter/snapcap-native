@@ -22,7 +22,7 @@
  * with module-scope mocks, so each test owns one orchestration assertion
  * and we verify shared state on the per-internal mutable cells.
  */
-import { describe, expect, mock, test, beforeAll } from "bun:test";
+import { describe, expect, mock, test, beforeAll, afterAll } from "bun:test";
 import { TypedEventBus } from "../../../src/lib/typed-event-bus.ts";
 import type { MessagingEvents } from "../../../src/api/messaging/interface.ts";
 import type {
@@ -164,6 +164,14 @@ beforeAll(async () => {
   bringUpSession = mod.bringUpSession;
   ensureSession = mod.ensureSession;
 });
+
+// `mock.module` calls above are process-global. Without this teardown the
+// reads/register/auth/cookie-jar/fidelius stubs would still be in place
+// when sibling test files (e.g. `reads.test.ts`) load and import the real
+// modules, returning the stubbed exports instead. `mock.restore()` does
+// undo `mock.module` registrations as of bun 1.3.x — verified via a probe
+// before adding this hook.
+afterAll(() => mock.restore());
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
