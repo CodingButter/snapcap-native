@@ -83,16 +83,58 @@ src/bundle/chat/standalone/
 
 **Big TODO** to include in `src/bundle/chat/standalone/index.ts` jsdoc: the WASM duplication (~12MB extra in memory + ~250ms boot time per `SnapcapClient`) is a known compromise. Root cause is the bundle expects a Web Worker hosting the WASM via Comlink, and our Worker shim is "neutered" to prevent metrics/sentry boot loops — which corrupts internal state for static Embind calls. Fixing properly = reverse-engineering Snap's worker init sequence (1-2 weeks investigation). Standalone realm sidesteps this at the cost of duplication. Worth fixing if multi-tenancy ever scales to N>20 per process.
 
-### ⏳ Phase 4 — Test foundation (Opus)
+### ✅ Phase 4 — Test foundation (Opus)
 
-Build the test infrastructure that future Sonnet agents fan out tests against:
+Built the test infrastructure that future Sonnet agents fan out tests against:
 
-1. **Mock-Sandbox helper** (`tests/lib/mock-sandbox.ts`) — fake Sandbox with stubbable `getGlobal`, `runInContext`, etc. Returns canned bundle Zustand slice state for state-driven tests.
-2. **Bundle-state fixtures** — pre-built slice shapes (auth slice with various userIds, presence slice in different awayStates, friend slice with various graph topologies).
-3. **Test-organization audit** — categorize every src/ file as: pure (unit-testable directly), state-driven (mock Sandbox), network-touching (mock fetch/WS), live-only (need user-locker + real Snap).
-4. **Reference tests** — 2-3 example tests demonstrating each category.
+1. **Test audit** (`tests/AUDIT.md`) — every `src/` file categorized as PURE (27) / STATE-DRIVEN (22) / NETWORK (13) / LIVE-ONLY (14). Plus suggested Phase-5 priority order.
+2. **Mock-Sandbox helper** (`tests/lib/mock-sandbox.ts`) — fluent builder; `mockSandbox().withGlobal(k,v).withChatStore(state).build()` returns a Sandbox-shaped duck-typed object. The `.withChatStore(state)` shortcut wires a fake `__snapcap_chat_p` webpack require so `chatStore(sandbox).getState()` resolves an in-memory Zustand-like store. Test-side handle accessible via `sandbox._chatStore` for subscription tests.
+3. **Bundle-state fixtures** (`tests/lib/fixtures/`) — `auth-slice.ts` (default / signed-out / mid-refresh), `user-slice.ts` (default / smallGraph / largeGraph / enveloped), `presence-slice.ts` (default / active / away), `messaging-slice.ts` (default / oneConv / manyConv), plus `chatStateFixture()` composer.
+4. **Reference tests**:
+   - PURE: `tests/api/friends/mappers.test.ts` (14 tests, ~24ms)
+   - STATE-DRIVEN: `tests/api/friends/snapshot.test.ts` (8 tests, ~76ms)
+   - INTEGRATION: `tests/api/friends-snapshot.live.test.ts` (1 test, ~8s warm)
+5. **Patterns playbook** (`tests/PATTERNS.md`) — decision tree, per-pattern templates, mock-Sandbox API + 3 examples, fixture extension guide, anti-spam rules for live tests, file-organization conventions.
 
-Why Opus: design judgment, not mechanical work. Bad foundation = future tests painful.
+Verification gates all pass: lint clean (only pre-existing `logging.ts:111`), typecheck unchanged (3 pre-existing src errors + pre-existing test-file errors), all reference tests pass, existing isolation + myai tests still pass.
+
+### Phase 5 dispatch template
+
+Boilerplate prompt for fan-out agents — substitute the bracketed slots:
+
+```
+You're Phase 5[ID] — write tests for [DOMAIN].
+
+Step 1: bash scripts/worktree-init.sh
+Step 2: git rebase refactor/feature-folders
+
+Pre-read (in order):
+1. tests/AUDIT.md — find your domain's bucket assignments
+2. tests/PATTERNS.md — the playbook
+3. The src/ files in [DOMAIN] you're testing
+4. tests/api/friends/mappers.test.ts (PURE reference)
+5. tests/api/friends/snapshot.test.ts (STATE-DRIVEN reference)
+6. tests/api/friends-snapshot.live.test.ts (INTEGRATION reference)
+
+Deliverables:
+- One `tests/<DOMAIN>/<file>.test.ts` per src file in your bucket assignments.
+- Use `mockSandbox()` + `chatStateFixture()` for STATE-DRIVEN.
+- Use `withLockedUser` for INTEGRATION (rare; one per domain typically).
+- Each test file < 300 LOC; split if larger.
+- Use existing fixtures; only add new ones if a needed slice shape is missing.
+
+Verification (mandatory before reporting done):
+- bash scripts/lint-no-singletons.sh — only pre-existing `logging.ts:111` allowed
+- bun run typecheck — only pre-existing errors allowed
+- bun test tests/<your test files> — all pass
+- bun test tests/shims/multi-instance-isolation.test.ts — still passes
+- bun test tests/api/messaging-myai.test.ts — still passes
+
+Constraints:
+- Touch ONLY tests/ (no src/ changes)
+- DO NOT commit, push, or merge
+- Report back: branch path, test-count + LOC delta, verification gate results.
+```
 
 ### ⏳ Phase 5 — Test fan-out (Sonnet, parallel)
 
