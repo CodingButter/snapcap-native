@@ -17,7 +17,7 @@ import {
   subscribeUserSlice,
   userSlice,
   userSliceFrom,
-} from "../bundle/register.ts";
+} from "../bundle/register/index.ts";
 import type {
   ChatState,
   IncomingFriendRequestRecord,

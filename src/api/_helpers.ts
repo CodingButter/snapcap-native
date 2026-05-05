@@ -7,7 +7,7 @@
  * (16-byte UUID buffers, `{highBits, lowBits}` pairs, bigints, enum ints).
  *
  * @remarks
- * The bundle registry (`../bundle/register.ts`) is intentionally pure
+ * The bundle registry (`../bundle/register/`) is intentionally pure
  * pass-through to Snap's webpack methods — every export there takes
  * bundle-realm types in and returns bundle-realm types out. The api
  * files own the consumer-friendly surface and lean on these helpers to

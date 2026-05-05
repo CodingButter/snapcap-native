@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SnapcapClient, FileDataStore, type BrowserContext } from "../src/index.ts";
-import { chatStore } from "../src/bundle/register.ts";
+import { chatStore } from "../src/bundle/register/index.ts";
 
 type Account = { username: string; password: string; authPath: string; status?: string; browser?: BrowserContext };
 type Smoke = { accounts: Account[]; fingerprint?: { userAgent: string } };

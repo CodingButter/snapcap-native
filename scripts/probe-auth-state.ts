@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SnapcapClient, FileDataStore, RECOMMENDED_THROTTLE_RULES } from "../src/index.ts";
-import { authSlice, chatStore } from "../src/bundle/register.ts";
+import { authSlice, chatStore } from "../src/bundle/register/index.ts";
 
 const root = join(import.meta.dir, "..");
 const cfg = JSON.parse(readFileSync(join(root, ".snapcap-smoke.json"), "utf8"));

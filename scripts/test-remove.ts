@@ -11,7 +11,7 @@ import {
   type BrowserContext,
   type LogEvent,
 } from "../src/index.ts";
-import { friendActionClient } from "../src/bundle/register.ts";
+import { friendActionClient } from "../src/bundle/register/index.ts";
 import { uuidToHighLow } from "../src/api/_helpers.ts";
 
 setLogger((ev: LogEvent) => {

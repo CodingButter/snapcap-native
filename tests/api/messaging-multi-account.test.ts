@@ -211,7 +211,7 @@ beforeAll(async () => {
     jamielillee: "1411a45a-7c00-4c63-8caf-2f2cd05e0c19", // resolved from auth slice
   };
 
-  const { authSlice } = await import("../../src/bundle/register.ts");
+  const { authSlice } = await import("../../src/bundle/register/index.ts");
   const sandboxA = await introspectSandbox(A);
   const sandboxB = await introspectSandbox(B);
 

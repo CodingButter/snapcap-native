@@ -28,7 +28,7 @@ import {
   type ThrottleConfig,
   type ThrottleGate,
 } from "../src/index.ts";
-import { authSlice } from "../src/bundle/register.ts";
+import { authSlice } from "../src/bundle/register/index.ts";
 
 const root = join(import.meta.dir, "..");
 const cfg = JSON.parse(readFileSync(join(root, ".snapcap-smoke.json"), "utf8"));

@@ -2,7 +2,7 @@
  * Bundle-driven auth orchestration.
  *
  * Tier-2 api file: composes the manager getters from
- * `../bundle/register.ts` (the "registry of Snap managers") into a
+ * `../bundle/register/` (the "registry of Snap managers") into a
  * coherent end-user surface (`authenticate`, `logout`,
  * `refreshAuthToken`, …). Stateless — every exported function takes a
  * `ClientContext` first arg.
@@ -47,7 +47,7 @@ import { getKameleon } from "../bundle/accounts-loader.ts";
 import { makeJarFetch, type JarLike } from "../transport/cookies.ts";
 import type { Sandbox } from "../shims/sandbox.ts";
 import { getOrCreateJar } from "../shims/cookie-jar.ts";
-import { authSlice, chatStore, chatWreq, loginClient } from "../bundle/register.ts";
+import { authSlice, chatStore, chatWreq, loginClient } from "../bundle/register/index.ts";
 import { makeWorkerProxyFacade } from "../bundle/worker-proxy-facade.ts";
 import type { UnaryFn, WebLoginRequest, WebLoginResponse } from "../bundle/types.ts";
 import type { ClientContext } from "./_context.ts";

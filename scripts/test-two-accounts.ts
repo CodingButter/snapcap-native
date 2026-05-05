@@ -25,7 +25,7 @@ import {
   FileDataStore,
   type PlaintextMessage,
 } from "../src/index.ts";
-import { authSlice } from "../src/bundle/register.ts";
+import { authSlice } from "../src/bundle/register/index.ts";
 
 type Account = {
   username: string;

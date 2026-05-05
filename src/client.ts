@@ -37,7 +37,7 @@ import { Sandbox } from "./shims/sandbox.ts";
 import type { DataStore } from "./storage/data-store.ts";
 import type { ThrottleConfig, ThrottleGate } from "./transport/throttle.ts";
 import { CookieJarStore } from "./storage/cookie-store.ts";
-import { presenceSlice, presenceStateEnum } from "./bundle/register.ts";
+import { presenceSlice, presenceStateEnum } from "./bundle/register/index.ts";
 
 // `Credentials`, `BrowserContext`, and `activeIdentifier` live in
 // `./types.ts` so `api/auth.ts` can import them without forming a cycle

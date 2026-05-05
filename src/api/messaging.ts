@@ -309,7 +309,7 @@ export class Messaging {
       // slice's `awayState` to Present.
       try {
         const ctx = await this._getCtx();
-        const { presenceSlice } = await import("../bundle/register.ts");
+        const { presenceSlice } = await import("../bundle/register/index.ts");
         const slice = presenceSlice(ctx.sandbox) as Record<string, unknown>;
         process.stderr.write(`[trace.messaging] setTyping pre-chatVisible awayState=${String(slice.awayState)} slot-equals-cached=${slice.presenceSession === presenceSession}\n`);
       } catch (e) {
@@ -327,7 +327,7 @@ export class Messaging {
       }
       try {
         const ctx = await this._getCtx();
-        const { presenceSlice } = await import("../bundle/register.ts");
+        const { presenceSlice } = await import("../bundle/register/index.ts");
         const slice = presenceSlice(ctx.sandbox) as Record<string, unknown>;
         process.stderr.write(`[trace.messaging] setTyping post-chatVisible awayState=${String(slice.awayState)}\n`);
       } catch { /* tolerate */ }
@@ -350,7 +350,7 @@ export class Messaging {
       if (presenceSession) {
         try {
           const ctx = await this._getCtx();
-          const { presenceSlice } = await import("../bundle/register.ts");
+          const { presenceSlice } = await import("../bundle/register/index.ts");
           const envelope = presenceSession.conversationId as { id?: unknown; str?: string } | string | undefined;
           const envShape = envelope && typeof envelope === "object"
             ? `{id-bytelen=${(envelope.id as Uint8Array | undefined)?.byteLength}, str=${envelope.str?.slice(0, 8)}}`
@@ -375,7 +375,7 @@ export class Messaging {
       const interval = 2000;
       const start = Date.now();
       const ctx = await this._getCtx();
-      const { presenceSlice } = await import("../bundle/register.ts");
+      const { presenceSlice } = await import("../bundle/register/index.ts");
       while (Date.now() - start < durationMs) {
         const remaining = durationMs - (Date.now() - start);
         await new Promise<void>((r) => setTimeout(r, Math.min(interval, remaining)));
@@ -561,7 +561,7 @@ export class Messaging {
     }
     const ctx = await this._getCtx();
     const sandbox = ctx.sandbox;
-    const { presenceSlice } = await import("../bundle/register.ts");
+    const { presenceSlice } = await import("../bundle/register/index.ts");
 
     // First-call init. Wrapped in its own try so a failure here doesn't
     // permanently block the cache — a future call retries.
@@ -621,7 +621,7 @@ export class Messaging {
     // Uint8Array so the bundle's `u(e)` check (`id instanceof Uint8Array`)
     // against the chat realm constructor succeeds.
     try {
-      const { chatStore } = await import("../bundle/register.ts");
+      const { chatStore } = await import("../bundle/register/index.ts");
       const slice = presenceSlice(sandbox);
       const ChatU8 = sandbox.getGlobal<Uint8ArrayConstructor>("Uint8Array") ?? Uint8Array;
       const idBytes = new ChatU8(16);
@@ -788,7 +788,7 @@ export class Messaging {
     // with our microtask timing — poll briefly with a short backoff
     // before throwing so consumers don't hit a transient miss when they
     // chain `.on()` directly off `await authenticate()`.
-    const { authSlice } = await import("../bundle/register.ts");
+    const { authSlice } = await import("../bundle/register/index.ts");
     const auth = await import("./auth.ts");
     let userId: string | undefined;
     let bearer: string | undefined;
@@ -1112,7 +1112,7 @@ export class Messaging {
     // Try the chat-bundle's auth slice first — has `userId` once the
     // session is brought up.
     try {
-      const { authSlice } = await import("../bundle/register.ts");
+      const { authSlice } = await import("../bundle/register/index.ts");
       const slice = authSlice(ctx.sandbox) as { userId?: string };
       if (typeof slice.userId === "string" && slice.userId.length >= 32) {
         return slice.userId;

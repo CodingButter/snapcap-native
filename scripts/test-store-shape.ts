@@ -15,7 +15,7 @@ import {
   FileDataStore,
   type BrowserContext,
 } from "../src/index.ts";
-import { chatStore } from "../src/bundle/register.ts";
+import { chatStore } from "../src/bundle/register/index.ts";
 
 type Account = {
   username: string;
