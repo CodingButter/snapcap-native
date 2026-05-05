@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
-# Download Snap's web bundle using curl. Sidesteps Bun/Node fetch's IPv6
-# preference issues in this sandbox.
+# Refresh vendor/snap-bundle/ by crawling Snap's web CDNs directly.
+#
+# WHEN TO RUN: only when Snap pushes incompatible bundle changes and the
+# SDK breaks against the pinned snapshot. Normal install flow uses
+# `bun run install:bundle` which fetches the pinned tarball from a
+# GitHub Release — that's reproducible and version-controlled.
+#
+# AFTER REFRESHING: adapt the SDK to the new bundle, then run
+# `bun run release:bundle` to publish a new pinned snapshot via GitHub
+# Releases and update package.json#snapcap.bundle. Commit + push.
+#
+# Sidesteps Bun/Node fetch's IPv6 preference issues — uses curl --ipv4.
 set -euo pipefail
 
 OUT_DIR="${OUT_DIR:-./vendor/snap-bundle}"

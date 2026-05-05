@@ -31,7 +31,8 @@
   },
   "files": [
     "dist",
-    "scripts/download-bundle.sh",
+    "scripts/install-bundle.sh",
+    "scripts/refresh-bundle.sh",
     "README.md",
     "LICENSE"
   ],
@@ -40,12 +41,24 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint:no-singletons": "bash scripts/lint-no-singletons.sh",
-    "download:bundle": "bash scripts/download-bundle.sh",
+    "install:bundle": "bash scripts/install-bundle.sh",
+    "release:bundle": "bash scripts/release-bundle.sh",
+    "refresh:bundle": "bash scripts/refresh-bundle.sh",
+    "init:worktree": "bash scripts/worktree-init.sh",
     "docs:api": "typedoc",
     "docs:api:check": "typedoc --emit none",
     "docs:update": "bash scripts/update-docs.sh",
     "install-hooks": "bash scripts/install-hooks.sh",
     "prepublishOnly": "pnpm build"
+  },
+  "snapcap": {
+    "bundle": {
+      "version": "2026-05-05",
+      "release_tag": "bundle-2026-05-05",
+      "asset": "snap-bundle.tar.gz",
+      "sha256": "2894bf6af195ca0eb723283a14c3470bfac5dd23f401f9a0ce24026e03236463",
+      "repo": "CodingButter/snapcap-native"
+    }
   },
   "dependencies": {
     "happy-dom": "^15.0.0",
