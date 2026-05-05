@@ -83,6 +83,27 @@ src/bundle/chat/standalone/
 
 **Big TODO** to include in `src/bundle/chat/standalone/index.ts` jsdoc: the WASM duplication (~12MB extra in memory + ~250ms boot time per `SnapcapClient`) is a known compromise. Root cause is the bundle expects a Web Worker hosting the WASM via Comlink, and our Worker shim is "neutered" to prevent metrics/sentry boot loops — which corrupts internal state for static Embind calls. Fixing properly = reverse-engineering Snap's worker init sequence (1-2 weeks investigation). Standalone realm sidesteps this at the cost of duplication. Worth fixing if multi-tenancy ever scales to N>20 per process.
 
+### ✅ Phase 5 — Test fan-out (parallel Sonnet, 4 of 5 done; 5B redo in flight)
+
+Per-domain test coverage built against the Phase 4 foundation. **5 sub-agents dispatched in worktrees, all Sonnet; 4 nailed it, 5B got stuck on proto wire-format and was stopped + split.**
+
+| Domain | Files | Tests | Bugs found | Status |
+|---|---|---|---|---|
+| 5A Friends | 7 | 117 | 0 | ✅ merged |
+| 5B Messaging | — | — | — | ❌ stopped (proto wire-format too hard for Sonnet, all writes were going to MAIN due to absolute-path use). Re-dispatched as 5B.1 (Sonnet, 8 easy files) + 5B.2 (Opus, 6 hard files including parse/* using real captured bytes from `.tmp/recon/`) |
+| 5C Auth | 8 | 31 | 4 (`patch-location` guard wrong, `extractTicket` regex misses `?ticket=`, `full-login` no test seam, `nativeFetch` snapshots `globalThis.fetch` eagerly) | ✅ merged |
+| 5D Bundle | 16 | 113 | 0 | ✅ merged |
+| 5E Storage/Shims | 17 | 157 | 1 (`idbGet` always returns `undefined` — `IDBObjectStoreShim.get` doesn't call `tx._noteOp()`) | ✅ merged |
+
+**Net SDK test coverage: 4 files → 55 files. 432 of 446 tests pass (97%); 12 of the 14 fails are pre-existing `friends.test.ts` API drift, not from this work.**
+
+5 documented bugs remain as TODOs in the test files themselves (each test asserts the broken behavior so the test passes today; flip the assertion when the bug is fixed). Future fix-up agent should grep `// BUG:` in tests/.
+
+**Lessons from 5B failure (apply to all future test agents):**
+- Sonnet bites off too much when domain has hidden complexity. Domain-difficulty audit the prompt scope BEFORE dispatching.
+- Worktree discipline isn't automatic — must explicitly say "use relative paths only, never `/home/codingbutter/`, run `pwd && git status` between writes to confirm."
+- Don't try to hand-build proto fixtures. Use real captured bytes from `.tmp/recon/` (sync-conv, bds, qm, ccm, fidelius blobs all available).
+
 ### ✅ Phase 4 — Test foundation (Opus)
 
 Built the test infrastructure that future Sonnet agents fan out tests against:
