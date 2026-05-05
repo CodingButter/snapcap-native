@@ -9,7 +9,7 @@
 import { rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { FileDataStore } from "../src/storage/data-store.ts";
-import { installShims, uninstallShims, getSandbox } from "../src/shims/runtime.ts";
+import { Sandbox } from "../src/shims/sandbox.ts";
 
 const STORE_PATH = join(import.meta.dir, "..", ".tmp", "auth", "test-cache.json");
 if (existsSync(STORE_PATH)) rmSync(STORE_PATH);
@@ -17,8 +17,7 @@ if (existsSync(STORE_PATH)) rmSync(STORE_PATH);
 async function main(): Promise<void> {
   console.log(`[test-cache] === Phase A: cold install + write/read ===`);
   const dsA = new FileDataStore(STORE_PATH);
-  installShims({ dataStore: dsA });
-  const sbA = getSandbox();
+  const sbA = new Sandbox({ dataStore: dsA });
   const cachesA = sbA.window.caches as {
     open: (n: string) => Promise<{
       put: (req: unknown, res: unknown) => Promise<void>;
@@ -64,10 +63,11 @@ async function main(): Promise<void> {
   console.log(`[test-cache] caches.match cross-search: status=${cross.status}`);
 
   console.log(`\n[test-cache] === Phase B: re-install, prove persistence ===`);
-  await uninstallShims();
+  // Construct a fresh, fully isolated Sandbox bound to a NEW DataStore
+  // pointing at the same on-disk file — proves the cache content survives
+  // a sandbox restart via the persisted bytes (not in-memory leakage).
   const dsB = new FileDataStore(STORE_PATH);
-  installShims({ dataStore: dsB });
-  const sbB = getSandbox();
+  const sbB = new Sandbox({ dataStore: dsB });
   const cachesB = sbB.window.caches as typeof cachesA;
   const cache2 = await cachesB.open("test-cache");
   const r2 = await cache2.match("https://example.com/x");

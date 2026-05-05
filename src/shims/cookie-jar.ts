@@ -45,7 +45,7 @@ function isSyncStore(s: DataStore): s is SyncCapable {
 }
 
 /** Per-DataStore jar cache so document-cookie + cookie-container share state. */
-const JAR_CACHE = new WeakMap<DataStore, CookieJar>();
+const JAR_CACHE = new WeakMap<DataStore, CookieJar>(); // MULTI-INSTANCE-SAFE: keyed by per-instance DataStore, isolation follows from consumers using distinct DataStore instances
 
 function loadJar(store: DataStore): CookieJar {
   if (!isSyncStore(store)) return new CookieJar();

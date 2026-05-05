@@ -8,10 +8,11 @@
  *    `MessagingCoreService`. Handy for inbox enumeration and historical
  *    message backfill that doesn't need decrypt.
  * 2. **Live decrypted stream + presence** ({@link Messaging.on},
- *    {@link Messaging.setTyping}, {@link Messaging.setViewing}) — boots
- *    Snap's own messaging session inside our standalone-WASM realm
- *    (`setupBundleSession` in `auth/fidelius-decrypt.ts`) and emits
- *    plaintext `message` events through a {@link TypedEventBus}.
+ *    {@link Messaging.setTyping}, {@link Messaging.setViewing},
+ *    {@link Messaging.setRead}) — boots Snap's own messaging session
+ *    inside our standalone-WASM realm (`setupBundleSession` in
+ *    `auth/fidelius-decrypt.ts`) and emits plaintext `message` events
+ *    through a {@link TypedEventBus}.
  *
  * # Lifecycle
  *
@@ -211,40 +212,174 @@ export class Messaging {
   // ── Outbound presence ──────────────────────────────────────────────
 
   /**
-   * Show typing indicator in `convId` for `durationMs`. Returns a
-   * Promise resolving when `durationMs` elapses, so consumers can
-   * compose:
+   * Show typing indicator in `convId` for `durationMs`, then auto-clear.
+   *
+   * Wires through the bundle's own typing helper — module 56639 export
+   * `zM` (sendTypingNotification wrapper) → `convMgr.sendTypingNotification(convRef, kind, cb)`.
+   * The bundle's TypingStateMachine on the **recipient** side starts a
+   * ~3s idle timer on every received pulse and drops the indicator if
+   * no follow-up arrives. To hold the indicator across windows longer
+   * than 3s we re-pulse every 2.5s. **Auto-clear** is implicit:
+   * returning from this function (or aborting / rejecting) stops the
+   * pulse loop, and the recipient's idle timer takes the state to
+   * "none" within ~3s — no peer ever sees a stale typing dot.
+   *
+   * @remarks
+   * The convMgr.sendTypingNotification path goes out on the wire as
+   * soon as we call it — verified at the WASM boundary. However, on
+   * Snap's modern web client there is **also** a parallel
+   * `ChatPresenceSession.onUserAction({type: "typing"})` flow gated on
+   * a `chat_visible` local state which we do not yet drive (it requires
+   * `initializePresenceServiceTs` + per-conv `createPresenceSession`
+   * plumbing, not yet wired). For most peer clients (mobile + older web
+   * builds) the convMgr path is sufficient; if you find a peer that
+   * doesn't render the indicator, we may need to add the PresenceSession
+   * layer too.
    *
    * ```ts
    * await messaging.setTyping(convId, 1500);
-   * await messaging.send(convId, "hello");
+   * await messaging.sendText(convId, "hello");
    * ```
-   *
-   * @remarks
-   * Stub today — the underlying WS frame isn't yet wired (the bundle's
-   * outbound presence path lives on a sibling manager off the session
-   * object; mapping pending). Resolves after `durationMs` so the
-   * compose-await pattern works without firing a real frame.
    */
   async setTyping(convId: string, durationMs: number): Promise<void> {
-    void convId;
     await this.#ensureSession();
-    // TODO: wire to bundle's session presence manager for real WS frame.
-    await new Promise((r) => setTimeout(r, durationMs));
+    if (!this.#session || !this.#realm) return; // best-effort if bring-up failed
+    const convRef = await this.#buildConvRef(convId);
+    const sendsMod = this.#realm.wreq("56639") as Record<string, Function>;
+    const zM = sendsMod.zM as Function | undefined;
+    if (typeof zM !== "function") return; // bundle shape shifted; resolve quietly
+    try {
+      // Fire "typing on" — the WASM's TypingStateMachine starts its 3s
+      // auto-clear timer on the receiving side, but we re-pulse to keep
+      // the indicator alive across our requested window if it exceeds 3s.
+      // Fire-and-forget: convMgr's callback may never fire for some conv
+      // kinds (bots, broadcast convs); the WS frame leaves synchronously
+      // when the WASM dispatches, so we don't gate caller progress on the
+      // ack.
+      this.#fireBundleCall(() => zM(this.#session, convRef));
+      const interval = 2500;
+      const start = Date.now();
+      while (Date.now() - start < durationMs) {
+        const remaining = durationMs - (Date.now() - start);
+        await new Promise<void>((r) => setTimeout(r, Math.min(interval, remaining)));
+        if (Date.now() - start < durationMs) {
+          this.#fireBundleCall(() => zM(this.#session, convRef));
+        }
+      }
+    } finally {
+      // Auto-clear: empirically the WASM's TypingStateMachine drops the
+      // typing state ~3s after the last sendTypingNotification pulse with
+      // no further pulses. Stopping the pulse loop above is sufficient
+      // for the recipient's UI to clear within that window. We do NOT
+      // fire exitConversation here — that would clobber a separate
+      // setViewing() in flight and isn't the typing-state opcode anyway.
+    }
   }
 
   /**
-   * Mark `convId` as actively viewed for `durationMs`. Same compose-await
-   * pattern as {@link Messaging.setTyping}.
+   * Mark `convId` as actively viewed (chat-open / focused) for `durationMs`,
+   * then auto-clear with an `exitConversation` pulse.
    *
-   * @remarks
-   * Stub today — see {@link Messaging.setTyping} note.
+   * Wires through module 56639 export `Mw` (enterConversation) →
+   * `convMgr.enterConversation(convRef, source, cb)`. Snap propagates the
+   * "active in chat" state to the peer's UI as the viewing indicator;
+   * pairing it with `ON` (exitConversation) on teardown clears the state.
+   * `try/finally` guarantees exit fires even on abort.
+   *
+   * @remarks Same caveat as {@link Messaging.setTyping} — the convMgr
+   * path leaves the WASM as a real WS frame, but the modern web client
+   * also runs a parallel ChatPresenceSession that gates the visible
+   * indicator. Older web peers + the mobile app still observe the
+   * convMgr-side state.
    */
   async setViewing(convId: string, durationMs: number): Promise<void> {
-    void convId;
     await this.#ensureSession();
-    // TODO: wire to bundle's session presence manager for real WS frame.
-    await new Promise((r) => setTimeout(r, durationMs));
+    if (!this.#session || !this.#realm) return;
+    const convRef = await this.#buildConvRef(convId);
+    const sendsMod = this.#realm.wreq("56639") as Record<string, Function>;
+    const Mw = sendsMod.Mw as Function | undefined;
+    const ON = sendsMod.ON as Function | undefined;
+    if (typeof Mw !== "function") return;
+    try {
+      // Source enum 0 = unspecified; bundle accepts and the WASM doesn't
+      // care for presence-frame purposes. Real React caller passes the
+      // ConversationEntrySource it tracks for analytics. Fire-and-forget
+      // for the same reason as setTyping — the WS frame goes out before
+      // the convMgr callback fires.
+      this.#fireBundleCall(() => Mw(this.#session, convRef, 0));
+      await new Promise<void>((r) => setTimeout(r, durationMs));
+    } finally {
+      // Auto-clear: explicit exitConversation cancels the viewing state
+      // immediately. Runs on every code path (await complete, abort, throw)
+      // so the peer's "viewing" UI never sticks. Fire-and-forget.
+      if (typeof ON === "function") {
+        this.#fireBundleCall(() => ON(this.#session, convRef, 0));
+      }
+    }
+  }
+
+  /**
+   * Mark `messageId` in `convId` as read (fires a read-receipt frame).
+   * Resolves once the bundle has dispatched the notification.
+   *
+   * Wires through module 56639 export `cr` (displayedMessages wrapper) →
+   * `convMgr.displayedMessages(convRef, messageIds, cb)`. The bundle's
+   * WASM batches the IDs and pushes the read state over the duplex so the
+   * sender's UI flips to "Opened" / removes the unread badge.
+   *
+   * @param convId - Hyphenated conversation UUID.
+   * @param messageId - Server message id (bigint) or its decimal-string
+   *   form. From a `RawEncryptedMessage`, this is the `messageId: bigint`
+   *   field; from a live inbound `message` event, the underlying delegate
+   *   record carries it as well.
+   */
+  async setRead(convId: string, messageId: string | bigint): Promise<void> {
+    await this.#ensureSession();
+    if (!this.#session || !this.#realm) return;
+    const convRef = await this.#buildConvRef(convId);
+    const sendsMod = this.#realm.wreq("56639") as Record<string, Function>;
+    const cr = sendsMod.cr as Function | undefined;
+    if (typeof cr !== "function") return;
+    // The Embind boundary expects a JS array of int64-coercible values
+    // (BigInt). Coerce string → BigInt once so callers can pass either.
+    const idBig = typeof messageId === "bigint" ? messageId : BigInt(messageId);
+    // Fire-and-forget: the read-receipt WS frame leaves synchronously
+    // when convMgr.displayedMessages dispatches. We don't gate caller
+    // progress on the bundle's success-callback ack which doesn't always
+    // fire (same pattern as sendText for bot convs).
+    this.#fireBundleCall(() => cr(this.#session, convRef, [idBig]));
+  }
+
+  /**
+   * @internal — invoke a bundle call (which returns a Promise that may
+   * never resolve for some conv kinds), swallowing all sync throws and
+   * async rejections. Fire-and-forget: the WS frame leaves synchronously
+   * inside the WASM before the JS-side callback would resolve.
+   */
+  #fireBundleCall(fn: () => unknown): void {
+    try {
+      const r = fn();
+      if (r && typeof (r as Promise<unknown>).then === "function") {
+        (r as Promise<unknown>).then(
+          () => {},
+          () => {},
+        );
+      }
+    } catch { /* tolerate */ }
+  }
+
+  /**
+   * @internal — build a realm-local convRef ({id: vm-realm Uint8Array, str})
+   * matching the shape the bundle's helpers in module 56639 expect. Mirrors
+   * the inline construction inside {@link Messaging.sendText}.
+   */
+  async #buildConvRef(convId: string): Promise<{ id: Uint8Array; str: string }> {
+    const VmU8 = await import("node:vm").then(
+      (vm) => vm.runInContext("Uint8Array", this.#realm!.context) as Uint8ArrayConstructor,
+    );
+    const idBytes = new VmU8(16);
+    idBytes.set(uuidToBytes(convId));
+    return { id: idBytes, str: convId };
   }
 
   /** @internal — single-flight bring-up gate. */

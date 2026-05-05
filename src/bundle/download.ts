@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-let ensured = false;
+let ensured = false; // MULTI-INSTANCE-SAFE: bundle download is process-wide and idempotent (vendor/ files are the source of truth)
 
 /**
  * Idempotent bundle bootstrap — ensure `vendor/snap-bundle/` is

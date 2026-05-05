@@ -19,7 +19,7 @@ import { rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { Cookie } from "tough-cookie";
 import { FileDataStore } from "../src/storage/data-store.ts";
-import { installShims, getSandbox, uninstallShims } from "../src/shims/runtime.ts";
+import { Sandbox } from "../src/shims/sandbox.ts";
 import { getOrCreateJar } from "../src/shims/cookie-jar.ts";
 
 const STORE_PATH = join(import.meta.dir, "..", ".tmp", "auth", "test-fetch.json");
@@ -29,8 +29,7 @@ type HeadersEcho = { headers?: Record<string, string> };
 
 async function main(): Promise<void> {
   const ds = new FileDataStore(STORE_PATH);
-  installShims({ dataStore: ds });
-  const sb = getSandbox();
+  const sb = new Sandbox({ dataStore: ds });
   const fetch = sb.window.fetch as (
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -157,7 +156,6 @@ async function main(): Promise<void> {
   }
 
   console.log(`\n[test-fetch] All checks passed`);
-  await uninstallShims();
 }
 
 main().then(

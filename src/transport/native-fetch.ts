@@ -2,8 +2,8 @@
  * Node/Bun's real `fetch`, used by the SDK for actual network traffic
  * (login, gRPC, media uploads). All Set-Cookie headers reach our cookie
  * jar through this reference because happy-dom's cookie-stripping fetch
- * never lands on the host globalThis — `installShims()` keeps happy-dom
- * scoped to the sandbox vm.Context (see `shims/sandbox.ts`).
+ * never lands on the host globalThis — the {@link Sandbox} keeps happy-dom
+ * scoped to its own vm.Context (see `shims/sandbox.ts`).
  *
  * @remarks
  * Eager-binding is preserved as defence-in-depth: if a future change ever

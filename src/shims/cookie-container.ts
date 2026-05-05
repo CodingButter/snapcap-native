@@ -21,16 +21,21 @@
  * Implementation — happy-dom's `BrowserContext` constructs a fresh
  * `CookieContainer` instance each time a Window is created, and stores
  * it behind private fields (`#browserFrame.page.context.cookieContainer`).
- * Reaching that instance from the outside requires private-field access
- * tricks. Instead we monkey-patch `CookieContainer.prototype.addCookies`
- * and `.getCookies` BEFORE the Window is constructed — every CookieContainer
- * created afterwards (i.e. the one happy-dom instantiates for our Window)
- * inherits the patched methods.
+ * We:
+ *   1. Patch `CookieContainer.prototype.addCookies` / `.getCookies` ONCE
+ *      per process. The patched methods dispatch via a
+ *      `WeakMap<CookieContainer, { jar, store }>` keyed by the calling
+ *      `this`, so each Sandbox's CookieContainer routes through its OWN
+ *      jar — no shared module-level state.
+ *   2. After the Window is constructed, walk the (private but reachable)
+ *      `WindowBrowserContext` API to grab the per-Window CookieContainer
+ *      and bind it in the WeakMap. CookieContainers without a binding
+ *      fall through to no-op behaviour.
  *
- * Process-global scope: because we patch the prototype, ALL CookieContainer
- * instances in this Node process share the patched methods. This is fine
- * because the SDK runs a singleton Sandbox; if that ever changes, this
- * module needs revisiting (e.g. WeakMap from `this` to the bound jar).
+ * Multi-instance: two Sandboxes have two Windows → two CookieContainers,
+ * each bound to its own jar in the WeakMap. The patched prototype is
+ * shared (process-global), but the per-instance state is keyed by `this`,
+ * so isolation is preserved.
  *
  * happy-dom's outgoing-fetch path that reads us back:
  *   `lib/fetch/utilities/FetchRequestHeaderUtility.js:89`
@@ -47,15 +52,20 @@
 import CookieContainer from "happy-dom/lib/cookie/CookieContainer.js";
 import type ICookie from "happy-dom/lib/cookie/ICookie.js";
 import CookieSameSiteEnum from "happy-dom/lib/cookie/enums/CookieSameSiteEnum.js";
+import WindowBrowserContext from "happy-dom/lib/window/WindowBrowserContext.js";
 import { Cookie, type CookieJar } from "tough-cookie";
 import type { DataStore } from "../storage/data-store.ts";
 import { getOrCreateJar, persistJar } from "./cookie-jar.ts";
 import { Shim, type ShimContext } from "./types.ts";
 import type { Sandbox } from "./sandbox.ts";
 
-/** Module-singleton jar binding. Set by `installCookieContainer`. */
-let activeJar: CookieJar | undefined;
-let activeStore: DataStore | undefined;
+/**
+ * Per-CookieContainer binding. Looked up by the patched prototype methods
+ * via `this` so each Sandbox's CookieContainer dispatches through its own
+ * jar — zero module-level mutable state.
+ */
+type CookieBinding = { jar: CookieJar; store: DataStore };
+const BINDINGS = new WeakMap<object, CookieBinding>(); // MULTI-INSTANCE-SAFE: keyed by per-Sandbox-Window CookieContainer; each Sandbox dispatches through its own jar via `this` lookup
 
 /** Convert tough-cookie's lowercase sameSite (or undefined) → happy-dom enum. */
 function tcSameSiteToHd(s: string | undefined): CookieSameSiteEnum {
@@ -174,33 +184,33 @@ export class DataStoreCookieContainer {
 }
 
 /**
- * Install the DataStore-backed cookie container by patching happy-dom's
- * `CookieContainer.prototype`. Must be called BEFORE the Window is
- * constructed so the (private) instance happy-dom news up inherits the
- * patched methods.
+ * Install the prototype patch on happy-dom's `CookieContainer.prototype`
+ * (process-global, idempotent). The patched methods dispatch via the
+ * per-instance {@link BINDINGS} WeakMap — calling
+ * {@link bindCookieContainer} after a Window is constructed is what
+ * actually wires THIS Sandbox's CookieContainer through the DataStore.
  *
- * Idempotent — repeated calls update the active jar binding without
- * re-patching the prototype.
+ * Splitting "patch the prototype" from "bind a specific instance" is
+ * what makes multi-Sandbox isolation work: the patch is shared but
+ * stateless; the (jar, store) lives on the per-CookieContainer binding.
  *
  * @internal
- * @param store - DataStore that backs the shared cookie jar
  */
-export function installCookieContainer(store: DataStore): void {
-  activeJar = getOrCreateJar(store);
-  activeStore = store;
-
+export function installCookieContainer(_store: DataStore): void {
   const proto = (CookieContainer as unknown as { prototype: Record<string, unknown> }).prototype;
   const marker = Symbol.for("snapcap.cookieContainerShim");
   if ((proto as Record<symbol, unknown>)[marker]) return;
 
-  proto.addCookies = function (this: unknown, cookies: ICookie[]): void {
-    if (!activeJar || !activeStore) return;
-    const impl = new DataStoreCookieContainer(activeJar, activeStore);
+  proto.addCookies = function (this: object, cookies: ICookie[]): void {
+    const binding = BINDINGS.get(this);
+    if (!binding) return;
+    const impl = new DataStoreCookieContainer(binding.jar, binding.store);
     impl.addCookies(cookies);
   };
-  proto.getCookies = function (this: unknown, url: URL | null, httpOnly: boolean): ICookie[] {
-    if (!activeJar || !activeStore) return [];
-    const impl = new DataStoreCookieContainer(activeJar, activeStore);
+  proto.getCookies = function (this: object, url: URL | null, httpOnly: boolean): ICookie[] {
+    const binding = BINDINGS.get(this);
+    if (!binding) return [];
+    const impl = new DataStoreCookieContainer(binding.jar, binding.store);
     return impl.getCookies(url, httpOnly);
   };
 
@@ -213,10 +223,45 @@ export function installCookieContainer(store: DataStore): void {
 }
 
 /**
- * `Shim`-shaped wrapper around {@link installCookieContainer}. Consumes
- * the shared jar from {@link ShimContext} (populated by {@link getOrCreateJar}
- * upstream in the {@link Sandbox} constructor) and patches happy-dom's
- * CookieContainer prototype so the per-Window instance routes through it.
+ * Bind a Sandbox's per-Window `CookieContainer` to its `(jar, store)`. The
+ * per-Window instance is reached via happy-dom's `WindowBrowserContext`
+ * helper (`window → browserFrame → page → context → cookieContainer`).
+ *
+ * Idempotent: re-binding the same CookieContainer just overwrites the
+ * (jar, store) entry — fine because both come from the same DataStore.
+ *
+ * @internal
+ * @param hdWindow - happy-dom Window (Sandbox.hdWindow); we reach its
+ *   per-instance CookieContainer through the BrowserContext chain
+ * @param jar - tough-cookie jar this Sandbox's cookies route through
+ * @param store - DataStore backing the jar (for persistence on writes)
+ * @returns true if binding succeeded; false if the BrowserContext chain
+ *   was unreachable (e.g. detached Window) — in that case happy-dom's
+ *   in-memory CookieContainer behaviour applies and our patch no-ops
+ */
+export function bindCookieContainer(
+  hdWindow: object,
+  jar: CookieJar,
+  store: DataStore,
+): boolean {
+  // WindowBrowserContext is happy-dom's documented (but not top-level
+  // exported) shim for reaching the per-Window BrowserContext without
+  // exposing the Browser to scripts. See
+  // `node_modules/happy-dom/lib/window/WindowBrowserContext.js`.
+  const wbc = new (WindowBrowserContext as unknown as new (w: object) => {
+    getBrowserContext(): { cookieContainer?: object } | null;
+  })(hdWindow);
+  const ctx = wbc.getBrowserContext();
+  const container = ctx?.cookieContainer;
+  if (!container) return false;
+  BINDINGS.set(container, { jar, store });
+  return true;
+}
+
+/**
+ * `Shim`-shaped wrapper. Patches the CookieContainer prototype (idempotent)
+ * and binds THIS Sandbox's per-Window CookieContainer to the shared jar
+ * from {@link ShimContext}.
  *
  * MUST run before any other shim that needs cookies ({@link DocumentCookieShim},
  * {@link WebSocketShim}) — see `./index.ts` for the canonical order.
@@ -227,7 +272,8 @@ export class CookieContainerShim extends Shim {
   /** @internal */
   readonly name = "cookie-container";
   /** @internal */
-  install(_sandbox: Sandbox, ctx: ShimContext): void {
+  install(sandbox: Sandbox, ctx: ShimContext): void {
     installCookieContainer(ctx.dataStore);
+    bindCookieContainer(sandbox.hdWindow, ctx.jar, ctx.dataStore);
   }
 }

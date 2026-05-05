@@ -112,7 +112,9 @@ export { uuidToBytes, bytesToUuid, uuidToHighLow, highLowToUuid } from "./api/_h
 
 // Sandbox primitives — for consumers that need direct vm.Context access
 // (custom bundle eval, advanced introspection). Most users don't need these.
-export { installShims, getSandbox, isShimInstalled, type InstallShimOpts } from "./shims/runtime.ts";
+// Construct a fresh `Sandbox` per use site — there's no longer a process
+// singleton (`installShims`/`getSandbox`/`uninstallShims` were removed in
+// favour of per-instance Sandboxes that fit the multi-tenant model).
 export { Sandbox, type SandboxOpts } from "./shims/sandbox.ts";
 
 // Storage backing — implement DataStore to plug Redis/KMS/IndexedDB

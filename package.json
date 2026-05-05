@@ -39,6 +39,7 @@
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "lint:no-singletons": "bash scripts/lint-no-singletons.sh",
     "download:bundle": "bash scripts/download-bundle.sh",
     "docs:api": "typedoc",
     "docs:api:check": "typedoc --emit none",

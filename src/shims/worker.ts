@@ -368,7 +368,7 @@ function resolveBlobOrUrl(url: string): string {
 }
 
 /** Process-wide registry: blob URL → string contents (the inner JS). */
-const blobUrlRegistry = new Map<string, string>();
+const blobUrlRegistry = new Map<string, string>(); // MULTI-INSTANCE-SAFE: blob URLs are per-call UUID-suffixed strings (`blob:null/<uuid>`), so cross-Sandbox key collisions cannot occur in practice
 
 /**
  * Patch the sandbox-realm `URL.createObjectURL` so that any

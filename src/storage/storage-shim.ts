@@ -33,7 +33,7 @@ type SyncCapable = DataStore & {
  * by a {@link DataStore}.
  *
  * @remarks
- * Pass an instance into the sandbox via `installShims({ dataStore, … })` so
+ * Pass an instance into the sandbox via `new Sandbox({ dataStore, … })` so
  * the bundle's storage reads/writes route through your DataStore.
  *
  * @example

@@ -10,9 +10,11 @@
  * Storage:
  *   - The chunk arrays themselves live on `sandbox.window` so the bundle
  *     (running under `sandbox.runInContext`) sees them as `self.webpackChunk_*`.
- *   - The capture maps (modules / originals / hints) are module-private
- *     here so multiple sandboxed bundles share the same accumulator
- *     without polluting the sandbox's namespace.
+ *   - The capture maps (modules / originals / hints) live on the
+ *     `Sandbox` instance ({@link Sandbox.webpackCapture}) so two sandboxed
+ *     bundles never share an accumulator. The maps are mutable references
+ *     handed back to the caller; subsequent installs return the same
+ *     reference for the same Sandbox.
  */
 import { Sandbox } from "./sandbox.ts";
 
@@ -53,28 +55,32 @@ export type ModuleHint = {
   keys: string[];
 };
 
-let installed: {
+/**
+ * Per-sandbox capture state — modules/originals/hints accumulators plus
+ * the idempotency flag. Stored on the {@link Sandbox} instance so two
+ * sandboxes never share an accumulator.
+ *
+ * @internal
+ */
+export type WebpackCaptureState = {
   modules: CapturedModules;
   originals: OriginalFactories;
   hints: ModuleHint[];
-} | null = null;
+};
 
 /**
  * Install the webpack-chunk hook on the sandbox's window. Pre-creates the
  * known `webpackChunk_*` arrays with a wrapped `push`, so factories can be
- * intercepted from the very first chunk the bundle loads. Idempotent —
- * repeated calls return the same accumulator.
+ * intercepted from the very first chunk the bundle loads. Idempotent
+ * per-Sandbox — repeated calls on the same Sandbox return the same
+ * accumulator; a fresh Sandbox gets fresh maps.
  *
  * @internal
  * @param sandbox - target sandbox to instrument
  * @returns mutable maps the caller can poll for module exports / hints
  */
-export function installWebpackCapture(sandbox: Sandbox): {
-  modules: CapturedModules;
-  originals: OriginalFactories;
-  hints: ModuleHint[];
-} {
-  if (installed) return installed;
+export function installWebpackCapture(sandbox: Sandbox): WebpackCaptureState {
+  if (sandbox.webpackCapture) return sandbox.webpackCapture;
 
   const w = sandbox.window as unknown as Record<string, unknown>;
 
@@ -211,6 +217,7 @@ export function installWebpackCapture(sandbox: Sandbox): {
     }
   }
 
-  installed = { modules, originals, hints };
-  return installed;
+  const state: WebpackCaptureState = { modules, originals, hints };
+  sandbox.webpackCapture = state;
+  return state;
 }

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Pre-commit hook — runs the no-singletons lint to enforce per-instance
+# isolation in src/.
+#
+# Per-instance isolation is the SDK's whole multi-tenant story. Module-
+# scope mutable state breaks two SnapcapClients sharing one process and
+# is invisible in single-client tests. The lint catches it at commit time
+# so it never lands.
+#
+# Skip mechanisms:
+#   - `git commit --no-verify`              (standard git, bypasses hook)
+#   - `SNAPCAP_SKIP_LINT=1 git commit`      (env var, runs hook but exits early)
+#
+# Install via: `bun run install-hooks` (symlinks this file into .git/hooks/)
+set -euo pipefail
+
+if [ "${SNAPCAP_SKIP_LINT:-0}" = "1" ]; then
+  echo "[pre-commit] SNAPCAP_SKIP_LINT=1 — skipping lint."
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+bash "$REPO_ROOT/scripts/lint-no-singletons.sh"

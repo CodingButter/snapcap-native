@@ -50,7 +50,9 @@ process.on("unhandledRejection", (err) => {
   process.stderr.write(`[unhandledRejection] ${msg}\n`);
 });
 
-const log = (s: string): void => process.stderr.write(s + "\n");
+const log = (s: string): void => {
+  process.stderr.write(s + "\n");
+};
 const stamp = () => new Date().toISOString().slice(11, 23);
 
 // ── Boot SnapcapClient ──────────────────────────────────────────────
@@ -85,7 +87,14 @@ client.messaging.on("message", (msg) => {
   process.stdout.write(`\n[${stamp()}] ← jamie_nichols: ${text}\n`);
 });
 
-// ── Fire the send ───────────────────────────────────────────────────
+// ── Show typing indicator, then fire the send ───────────────────────
+// Type for a duration proportional to the message length — ~50ms per
+// char + jitter, which feels human. setTyping auto-clears on resolve
+// (when wired; today it's still a stub-sleep with no real WS frame).
+const typeMs = Math.min(8_000, outgoingText.length * 50 + 200 + Math.floor(Math.random() * 400));
+log(`[${stamp()}] ⌨  setTyping(${typeMs}ms)…`);
+await client.messaging.setTyping(JAMIE_NICHOLS_CONV, typeMs);
+
 log(`[${stamp()}] → sending: "${outgoingText}"`);
 const messageId = await client.messaging.sendText(JAMIE_NICHOLS_CONV, outgoingText);
 log(`[${stamp()}] sent (id=${messageId.slice(0, 8)}…)`);

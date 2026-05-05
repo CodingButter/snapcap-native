@@ -32,6 +32,7 @@ import type {
 import { createThrottle, type ThrottleConfig, type ThrottleGate } from "../transport/throttle.ts";
 import { getOrCreateJar } from "./cookie-jar.ts";
 import { SDK_SHIMS, type ShimContext } from "./index.ts";
+import type { WebpackCaptureState } from "./webpack-capture.ts";
 import { installWorkerShim } from "./worker.ts";
 
 /**
@@ -111,9 +112,9 @@ const BROWSER_PROJECTED_KEYS = [
 // Process-level counters for the "multi-instance with per-instance
 // throttle" foot-gun warning. Tracking is cheap (two integers) and the
 // warning fires at most once per process — opt-out via env var.
-let _sandboxesConstructed = 0;
-let _sandboxesUsingPerInstanceThrottle = 0;
-let _multiInstanceWarningEmitted = false;
+let _sandboxesConstructed = 0; // MULTI-INSTANCE-SAFE: process-wide counter, diagnostics only
+let _sandboxesUsingPerInstanceThrottle = 0; // MULTI-INSTANCE-SAFE: process-wide counter, diagnostics only
+let _multiInstanceWarningEmitted = false; // MULTI-INSTANCE-SAFE: once-per-process warning latch
 
 function maybeWarnMultiInstancePerInstanceThrottle(): void {
   if (_multiInstanceWarningEmitted) return;
@@ -153,8 +154,15 @@ export class Sandbox {
   readonly window: Record<string, unknown>;
   /** @internal */
   readonly context: vm.Context;
-  /** happy-dom Window — kept for direct DOM access (e.g. injecting #root). */
-  private readonly hdWindow: Window;
+  /**
+   * happy-dom Window — kept for direct DOM access (e.g. injecting #root)
+   * and reachable by shims that need to walk happy-dom's BrowserContext
+   * chain (e.g. `CookieContainerShim` reaches the per-Window
+   * CookieContainer through it).
+   *
+   * @internal
+   */
+  readonly hdWindow: Window;
 
   /**
    * Per-instance throttle gate. Bundle-driven HTTP layers (`shims/fetch`,
@@ -218,6 +226,16 @@ export class Sandbox {
     wreq: StandaloneChatWreq;
   }>;
 
+  /**
+   * Per-sandbox webpack-capture accumulator. Owned by
+   * `shims/webpack-capture.ts:installWebpackCapture`; cached here so
+   * repeated installs on the same Sandbox return the same maps and two
+   * Sandboxes never share a captured-modules accumulator.
+   *
+   * @internal
+   */
+  webpackCapture?: WebpackCaptureState;
+
   constructor(opts: SandboxOpts = {}) {
     // Accept either a pre-built gate (shared across instances) or a config
     // (per-instance — build gate from config). Function = gate; object = config.
@@ -237,18 +255,18 @@ export class Sandbox {
     const width = opts.viewportWidth ?? 1440;
     const height = opts.viewportHeight ?? 900;
 
-    // CookieContainer prototype patch must happen BEFORE constructing the
-    // Window — happy-dom news up the per-Window CookieContainer inside
-    // `new Window(...)` (it lives on a private `#browserFrame.page.context`
-    // chain), and our patch needs to be visible on that instance so its
-    // outgoing-fetch path (FetchRequestHeaderUtility.getRequestHeaders)
-    // pulls cookies from the DataStore-backed jar instead of an in-memory
-    // array. We satisfy that ordering by running ONLY the CookieContainer
-    // shim before the Window is constructed; the rest of `SDK_SHIMS` runs
-    // after the Window + vm context exist (see end of constructor).
+    // The CookieContainer prototype patch (in `CookieContainerShim`) is
+    // process-global + idempotent + STATELESS — the patched methods
+    // dispatch via a per-instance WeakMap keyed by the calling
+    // CookieContainer (`this`). That binding happens via
+    // `bindCookieContainer(hdWindow, jar, store)` AFTER `new Window(...)`
+    // creates the per-Window CookieContainer. Order rationale: the patch
+    // is dynamic prototype lookup, so patching before or after Window
+    // construction is equivalent — but the per-instance binding obviously
+    // needs the Window (and its CookieContainer) to exist first.
     //
     // The shared cookie jar is hydrated synchronously here so all shims
-    // installed below see the same instance via `ShimContext.jar`.
+    // see the same instance via `ShimContext.jar`.
     let shimCtx: ShimContext | undefined;
     if (opts.dataStore) {
       shimCtx = {
@@ -256,9 +274,6 @@ export class Sandbox {
         userAgent,
         jar: getOrCreateJar(opts.dataStore),
       };
-      // CookieContainerShim patches the prototype; safe to run before
-      // `this.hdWindow` exists — its install ignores the sandbox arg.
-      SDK_SHIMS[0]!.install(this, shimCtx);
     }
 
     this.hdWindow = new Window({
@@ -306,14 +321,15 @@ export class Sandbox {
     ctxGlobal.parent = ctxGlobal;
     ctxGlobal.frames = ctxGlobal;
 
-    // Run the rest of `SDK_SHIMS` (skip [0] CookieContainerShim — already
-    // ran above pre-Window). Each shim is responsible for its own I/O
-    // boundary; the canonical list + ordering is in `./index.ts`. Without
-    // a DataStore we fall through to happy-dom's in-memory defaults for
-    // localStorage / sessionStorage / indexedDB / document.cookie / WS.
+    // Run all of `SDK_SHIMS` (CookieContainerShim included, since its
+    // per-instance binding step needs `this.hdWindow`). Each shim is
+    // responsible for its own I/O boundary; the canonical list + ordering
+    // is in `./index.ts`. Without a DataStore we fall through to
+    // happy-dom's in-memory defaults for localStorage / sessionStorage /
+    // indexedDB / document.cookie / WS.
     if (shimCtx) {
-      for (let i = 1; i < SDK_SHIMS.length; i++) {
-        SDK_SHIMS[i]!.install(this, shimCtx);
+      for (const shim of SDK_SHIMS) {
+        shim.install(this, shimCtx);
       }
     }
 

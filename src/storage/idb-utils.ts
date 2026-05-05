@@ -16,20 +16,25 @@
  * and waits for the transaction to settle. The shim is cheap so we don't
  * bother caching the `IDBDatabase` across calls.
  *
+ * Each helper takes the target {@link Sandbox} as its first argument —
+ * multi-tenant runners pass their per-client Sandbox so reads/writes
+ * land in the right realm's IDB shim instead of a process-singleton.
+ *
  * @example
  * ```ts
- * import { idbGet, idbPut, idbDelete } from "@snapcap/native";
+ * import { idbGet, idbPut, idbDelete, Sandbox } from "@snapcap/native";
  *
- * await idbPut("snapcap", "fidelius", "identity", blob);
- * const blob = await idbGet<MyBlob>("snapcap", "fidelius", "identity");
- * await idbDelete("snapcap", "fidelius", "identity");
+ * const sandbox = new Sandbox({ dataStore });
+ * await idbPut(sandbox, "snapcap", "fidelius", "identity", blob);
+ * const blob = await idbGet<MyBlob>(sandbox, "snapcap", "fidelius", "identity");
+ * await idbDelete(sandbox, "snapcap", "fidelius", "identity");
  * ```
  *
  * @see {@link idbGet}
  * @see {@link idbPut}
  * @see {@link idbDelete}
  */
-import { getSandbox } from "../shims/runtime.ts";
+import type { Sandbox } from "../shims/sandbox.ts";
 
 /** Minimum IDB surface we consume here — matches our shim and real IDB. */
 type MiniRequest = {
@@ -69,9 +74,8 @@ type MiniFactory = {
  *
  * @internal
  */
-function getIDB(): MiniFactory {
-  const sb = getSandbox();
-  const idb = sb.getGlobal<MiniFactory>("indexedDB");
+function getIDB(sandbox: Sandbox): MiniFactory {
+  const idb = sandbox.getGlobal<MiniFactory>("indexedDB");
   if (!idb) throw new Error("indexedDB is not available on the sandbox");
   return idb;
 }
@@ -84,8 +88,8 @@ function getIDB(): MiniFactory {
  *
  * @internal
  */
-function openDb(dbName: string, storeName: string): Promise<MiniDatabase> {
-  const idb = getIDB();
+function openDb(sandbox: Sandbox, dbName: string, storeName: string): Promise<MiniDatabase> {
+  const idb = getIDB(sandbox);
   return new Promise<MiniDatabase>((resolve, reject) => {
     const req = idb.open(dbName, 1);
     req.onupgradeneeded = (ev) => {
@@ -143,9 +147,10 @@ function runOp<T>(
 }
 
 /**
- * Read a value from the sandbox's IndexedDB at `(dbName, storeName, key)`.
+ * Read a value from the given Sandbox's IndexedDB at `(dbName, storeName, key)`.
  *
  * @typeParam T - The value type stored at this key.
+ * @param sandbox - The {@link Sandbox} whose IDB shim handles the read.
  * @param dbName - IndexedDB database name.
  * @param storeName - Object store name within the database. Created on
  *   first use if absent.
@@ -154,24 +159,26 @@ function runOp<T>(
  *
  * @example
  * ```ts
- * const identity = await idbGet<{ pub: Uint8Array }>("snapcap", "fidelius", "identity");
+ * const identity = await idbGet<{ pub: Uint8Array }>(sandbox, "snapcap", "fidelius", "identity");
  * ```
  *
  * @see {@link idbPut}
  * @see {@link idbDelete}
  */
 export async function idbGet<T = unknown>(
+  sandbox: Sandbox,
   dbName: string,
   storeName: string,
   key: string,
 ): Promise<T | undefined> {
-  const db = await openDb(dbName, storeName);
+  const db = await openDb(sandbox, dbName, storeName);
   return runOp<T | undefined>(db, storeName, "readonly", (s) => s.get(key));
 }
 
 /**
- * Write `value` into the sandbox's IndexedDB at `(dbName, storeName, key)`.
+ * Write `value` into the given Sandbox's IndexedDB at `(dbName, storeName, key)`.
  *
+ * @param sandbox - The {@link Sandbox} whose IDB shim handles the write.
  * @param dbName - IndexedDB database name.
  * @param storeName - Object store name within the database. Created on
  *   first use if absent.
@@ -180,25 +187,28 @@ export async function idbGet<T = unknown>(
  *
  * @example
  * ```ts
- * await idbPut("snapcap", "fidelius", "identity", { pub, priv });
+ * await idbPut(sandbox, "snapcap", "fidelius", "identity", { pub, priv });
  * ```
  *
  * @see {@link idbGet}
  * @see {@link idbDelete}
  */
 export async function idbPut(
+  sandbox: Sandbox,
   dbName: string,
   storeName: string,
   key: string,
   value: unknown,
 ): Promise<void> {
-  const db = await openDb(dbName, storeName);
+  const db = await openDb(sandbox, dbName, storeName);
   await runOp<unknown>(db, storeName, "readwrite", (s) => s.put(value, key));
 }
 
 /**
- * Delete the entry at `(dbName, storeName, key)`. No-op if absent.
+ * Delete the entry at `(dbName, storeName, key)` in the given Sandbox's
+ * IndexedDB. No-op if absent.
  *
+ * @param sandbox - The {@link Sandbox} whose IDB shim handles the delete.
  * @param dbName - IndexedDB database name.
  * @param storeName - Object store name within the database.
  * @param key - Record key within the object store.
@@ -207,10 +217,11 @@ export async function idbPut(
  * @see {@link idbPut}
  */
 export async function idbDelete(
+  sandbox: Sandbox,
   dbName: string,
   storeName: string,
   key: string,
 ): Promise<void> {
-  const db = await openDb(dbName, storeName);
+  const db = await openDb(sandbox, dbName, storeName);
   await runOp<unknown>(db, storeName, "readwrite", (s) => s.delete(key));
 }

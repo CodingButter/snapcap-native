@@ -9,11 +9,13 @@
  *   3. Append an entry to `SDK_SHIMS`.
  *
  * Order matters:
- *   - `CookieContainerShim` MUST run first. It patches happy-dom's
- *     CookieContainer prototype and seeds the shared tough-cookie jar
- *     into `ShimContext.jar`.
- *   - `DocumentCookieShim` and `WebSocketShim` both consume that jar and
- *     therefore depend on the CookieContainer install having run.
+ *   - `CookieContainerShim` runs first by convention — its install both
+ *     patches the CookieContainer prototype (process-global, idempotent)
+ *     and binds THIS Sandbox's per-Window CookieContainer in the
+ *     dispatch WeakMap. `DocumentCookieShim` and `WebSocketShim` both
+ *     read the same shared jar (`ShimContext.jar`), so observing
+ *     CookieContainerShim's effects before they install keeps the wiring
+ *     order obvious.
  *   - `LocalStorageShim` / `SessionStorageShim` / `IndexedDbShim` are
  *     storage-side and independent of the cookie pipeline; their
  *     ordering relative to each other is incidental.
