@@ -1,0 +1,41 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+
+  "entry": [
+    "src/index.ts",
+    "tests/**/*.test.ts",
+    "scripts/install-bundle.sh",
+    "scripts/release-bundle.sh",
+    "scripts/refresh-bundle.sh",
+    "scripts/worktree-init.sh",
+    "scripts/install-hooks.sh",
+    "scripts/lint-no-singletons.sh",
+    "scripts/update-docs.sh",
+    "scripts/git-hooks/pre-commit",
+    "scripts/git-hooks/pre-push"
+  ],
+
+  "project": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/*.ts"
+  ],
+
+  "ignore": [
+    "vendor/**",
+    "dist/**",
+    "docs/**",
+    ".tmp/**",
+    ".claude/**",
+    "node_modules/**"
+  ],
+
+  "ignoreDependencies": [
+    "typedoc-plugin-frontmatter",
+    "typedoc-plugin-markdown",
+    "typedoc-plugin-mdn-links",
+    "@types/bun"
+  ],
+
+  "ignoreExportsUsedInFile": true
+}
