@@ -87,6 +87,23 @@ export interface UserConfig {
     locale?: string;
     platform?: string;
   };
+  /** Smoke-test status (e.g. "accepted", "pending"). Optional. */
+  status?: string;
+  /** ISO timestamp of last verified live login. Optional. */
+  lastVerifiedAt?: string;
+  /** Cached friend graph from prior smoke runs — used by tests that need
+   *  a known-stable peer (e.g. messaging-myai resolves My AI's userId
+   *  from this list). Each entry is the SnapchatterPublicInfo shape. */
+  friends?: Array<{
+    username: string;
+    userId: string;
+    displayName?: string;
+    isOfficial?: boolean;
+    isPopular?: boolean;
+    snapProId?: string;
+    mutableUsername?: string;
+    profileTier?: number;
+  }>;
 }
 
 /**
