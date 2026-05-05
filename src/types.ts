@@ -123,6 +123,35 @@ export type BrowserContext = {
  * // { type: "username", value: "alice" }
  * ```
  */
+/**
+ * Presence status — what the client reports for the active session's
+ * global "I'm here" / "I'm away" slot.
+ *
+ * @remarks
+ * Mirrors the bundle's own three-member presence enum (chat module 46471
+ * `O = {Present:0, Away:1, AwaitingReactivate:2}`) using the same names
+ * as canonical strings on the SDK's public surface — consumers don't have
+ * to know about the underlying numeric encoding.
+ *
+ * The most-common values are `"Present"` (active, typing/viewing pulses
+ * flow normally) and `"Away"` (idle; the bundle's
+ * `broadcastTypingActivity` is gated on `awayState === Present` and
+ * suppresses typing pulses from this side). `"AwaitingReactivate"` is a
+ * rare transitional value the bundle uses when the session is briefly
+ * paused mid-flight; consumers can pass or read it but typically won't.
+ *
+ * @example
+ * ```ts
+ * client.setStatus("Away");
+ * console.log(client.getStatus()); // "Away"
+ * client.setStatus("Present");
+ * ```
+ *
+ * @see {@link ISnapcapClient.setStatus}
+ * @see {@link ISnapcapClient.getStatus}
+ */
+export type PresenceStatus = "Present" | "Away" | "AwaitingReactivate";
+
 export function activeIdentifier(c: Credentials): { type: "username" | "email" | "phone"; value: string } {
   const set: Array<{ type: "username" | "email" | "phone"; value: string }> = [];
   if (c.username) set.push({ type: "username", value: c.username });

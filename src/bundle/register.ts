@@ -51,7 +51,9 @@ import type {
   HostModule,
   JzFriendAction,
   LoginClientCtor,
+  MessagingSlice,
   NiChatRpc,
+  PresenceSlice,
   SearchRequestCodec,
   SearchResponseCodec,
   SendsModule,
@@ -60,6 +62,32 @@ import type {
   UserInfoClient,
   UserSlice,
 } from "./types.ts";
+
+/**
+ * Presence-state enum — chat module 46471 exports this as `O`. Backs the
+ * presence slice's `awayState` slot. Confirmed members + values from the
+ * factory body (`{Present: 0, Away: 1, AwaitingReactivate: 2}`).
+ *
+ * The bundle's gate on `broadcastTypingActivity` compares
+ * `state.presence.awayState === O.Present`, so anything that suppresses
+ * typing pulses across the wire flows from this enum.
+ *
+ * Lives here (not in `bundle/types.ts`) because the only consumers are
+ * the registry getter `presenceStateEnum()` below and `client.ts`'s
+ * `setStatus`/`getStatus` mapping — keeping the type co-located with its
+ * one bundle-side getter avoids a cross-file rename when Snap changes
+ * the enum shape.
+ *
+ * @internal Bundle wire-format type.
+ */
+export interface PresenceStateEnum {
+  /** Active / present — typing-pulse + presence broadcasts are gated open. */
+  Present: number;
+  /** Idle / away — bundle suppresses typing pulses. */
+  Away: number;
+  /** Transitional — awaiting client-side reactivation, rare. */
+  AwaitingReactivate: number;
+}
 
 /**
  * Cancel-thunk type for store / event subscriptions — same shape as
@@ -141,6 +169,16 @@ const MOD_HOST = "41359";
  * Friends.search() routes through it for the `/search/search` POST.
  */
 const MOD_DEFAULT_AUTHED_FETCH = "34010";
+/**
+ * Presence-state enum module — exports `O` as
+ * `{Present: 0, Away: 1, AwaitingReactivate: 2}`. The presence slice's
+ * `awayState` slot stores one of these numeric values; the slice's own
+ * `broadcastTypingActivity` is gated on `awayState === O.Present`.
+ *
+ * Confirmed at chat main byte ~4318612 — the factory body is a single
+ * line: `n.d(t,{O:()=>i});var i={Present:0,Away:1,AwaitingReactivate:2}`.
+ */
+const MOD_PRESENCE_STATE_ENUM = "46471";
 
 // ─── 3. helpers ──────────────────────────────────────────────────────────
 
@@ -278,6 +316,83 @@ export const authSlice = (sandbox: Sandbox): AuthSlice =>
  */
 export const userSlice = (sandbox: Sandbox): UserSlice =>
   (chatStore(sandbox).getState() as ChatState).user;
+
+/**
+ * Presence slice — Zustand store on chat module 94704 (factory `Zn(set,get)`
+ * at chat main byte ~8310100).
+ *
+ * Drives the presence-layer surface the bundle's modern chat clients gate
+ * typing / viewing indicators on. The sister convMgr path
+ * (`convMgr.sendTypingNotification` etc.) leaves a WS frame on the wire
+ * but the recipient's UI ignores it unless the presence session has been
+ * primed via `createPresenceSession(convId)` + `presenceSession.onUserAction
+ * ({type: "chatVisible"})`.
+ *
+ * Methods:
+ *   - {@link PresenceSlice.initializePresenceServiceTs} — one-shot init
+ *     with our duplex bridge (see `bundle/presence-bridge.ts`).
+ *   - {@link PresenceSlice.createPresenceSession} — per-conv session;
+ *     populates `state.presence.presenceSession` (single-slot).
+ *   - {@link PresenceSlice.broadcastTypingActivity} — broadcasts a
+ *     "typing" pulse on the active session.
+ *   - {@link PresenceSlice.setAwayState} — Present / Away enum value.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach presence via
+ * `Messaging.setTyping` / `Messaging.setViewing` (see `src/api/messaging.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `presence` slice from the chat-bundle state
+ */
+export const presenceSlice = (sandbox: Sandbox): PresenceSlice =>
+  (chatStore(sandbox).getState() as ChatState).presence;
+
+/**
+ * Presence-state enum — chat module 46471, exporting `O` as
+ * `{Present: 0, Away: 1, AwaitingReactivate: 2}`.
+ *
+ * The numeric values back the presence slice's `awayState` slot: the
+ * slice initializes from `document.hasFocus() ? O.Present : O.Away` at
+ * factory time, and subsequent reads/writes (`presenceSlice.setAwayState`,
+ * the `broadcastTypingActivity` gate) compare against these enum values.
+ *
+ * Reaching the enum live (rather than hardcoding the integers in
+ * consumer-side code) means the SDK keeps working if Snap renumbers the
+ * enum members in a future bundle build — only this one constant mapper
+ * needs verification on remap.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach presence state
+ * via `SnapcapClient.setStatus` / `getStatus` (see `src/client.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `O` enum object from chat module 46471
+ */
+export const presenceStateEnum = (sandbox: Sandbox): PresenceStateEnum =>
+  reachModule<{ O: PresenceStateEnum }>(sandbox, MOD_PRESENCE_STATE_ENUM, "presenceStateEnum").O;
+
+/**
+ * Messaging slice — Zustand store on chat module 94704 (factory in chat
+ * main byte ~6604846, beginning `messaging:{client:void 0,initializeClient:…`).
+ *
+ * Critical for presence bring-up. The presence slice's
+ * `createPresenceSession(envelope)` action awaits
+ * `firstValueFrom(observeConversationParticipants$)` inside
+ * `PresenceServiceImpl`; that observable only emits when the target conv
+ * is present in `state.messaging.conversations[convIdStr]`. Without
+ * React running the bundle's normal feed-pump, the slice is empty, the
+ * observable never emits, and `createPresenceSession` hangs forever —
+ * see the long writeup on {@link MessagingSlice}.
+ *
+ * The fix is to call `messagingSlice(sandbox).fetchConversation(envelope)`
+ * BEFORE `createPresenceSession`. The action drives
+ * `S.ik(session, convRef)` (`convMgr.fetchConversation`) and writes
+ * the result into the slice via `(0,fr.wD)(r, conversations)`, which
+ * populates the `participants` payload the presence selector waits on.
+ *
+ * @internal Bundle-layer accessor. Public consumers reach this via
+ * `Messaging.setTyping` / `Messaging.setViewing` (see `src/api/messaging.ts`).
+ * @param sandbox - the per-instance {@link Sandbox} owning the bundle eval
+ * @returns the live `messaging` slice from the chat-bundle state
+ */
+export const messagingSlice = (sandbox: Sandbox): MessagingSlice =>
+  (chatStore(sandbox).getState() as ChatState).messaging;
 
 /**
  * Generic chat-side gRPC escape hatch — `Ni.rpc.unary` for arbitrary

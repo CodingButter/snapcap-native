@@ -501,6 +501,55 @@ export interface ChatStore<T = ChatState> {
 export interface ChatState {
   auth: AuthSlice;
   user: UserSlice;
+  presence: PresenceSlice;
+  messaging: MessagingSlice;
+}
+
+/**
+ * `state.messaging` slice on the bundle's Zustand store — module 94704
+ * (factory in chat main byte ~6604846, beginning `messaging:{client:void 0,…`).
+ *
+ * Holds the per-conversation cache the bundle's reducers + selectors read
+ * from. Critically, the presence slice's `createPresenceSession` ends up
+ * `await firstValueFrom(observeConversationParticipants$)` inside the
+ * `PresenceServiceImpl` — that observable only emits when the target conv
+ * is present in `state.messaging.conversations` (selector `mt.VN(state,
+ * convIdStr)` reads `state.messaging.conversations[convIdStr]?.participants`).
+ *
+ * Without React running the bundle's normal feed-pump, the slice is
+ * empty, the selector emits nothing, and `createPresenceSession` hangs
+ * forever. Callers (see {@link Messaging.setTyping} →
+ * `#ensurePresenceForConv`) prime by invoking
+ * `messagingSlice.fetchConversation(envelope)` BEFORE
+ * `createPresenceSession` — that action drives `S.ik(session, convRef)`
+ * (= `convMgr.fetchConversation`) and writes the result via
+ * `(0,fr.wD)(r, e.messaging.conversations)`, populating the
+ * participants payload the presence selector waits on.
+ *
+ * Only the fields the SDK currently reads / drives are typed; tail keys
+ * (`feed`, `lightboxActiveConversations`, `client`, etc.) are intentionally
+ * omitted — add them when an api file actually needs one.
+ *
+ * @internal Bundle wire-format type.
+ */
+export interface MessagingSlice {
+  /**
+   * Conversation cache keyed by hyphenated conv UUID string. Each entry
+   * carries the bundle-realm `Conversation` record (with `.participants`)
+   * the presence slice's `observeConversationParticipants$` observable
+   * reads from. Values typed as `unknown` because the SDK doesn't decode
+   * the inner shape — the only contract we need is "the key exists,
+   * with a participants payload."
+   */
+  conversations: Record<string, unknown>;
+  /**
+   * Drive `convMgr.fetchConversation(convRef)` and write the result back
+   * into the `conversations` cache via the slice's internal `(0,fr.wD)`
+   * merge. Resolves with the bundle-realm `Conversation` record. Accepts
+   * the same `{id: Uint8Array(16), str: hyphenated-uuid}` envelope shape
+   * the rest of the messaging surface uses.
+   */
+  fetchConversation: (convEnvelope: { id: Uint8Array; str: string }) => Promise<unknown>;
 }
 
 /**
@@ -614,6 +663,107 @@ export interface UserSlice {
   publicUsers?: Map<string, PublicUserRecord>;
   /** Bundle thunk: refresh the friends graph from the server. */
   syncFriends?: () => Promise<void>;
+}
+
+/**
+ * `state.presence.presenceSession` — what the slice's
+ * `createPresenceSession(convId)` action populates after the
+ * `PresenceServiceImpl` builds a real `ChatPresenceSession` (chat main
+ * byte ~6056117, module 73127). Carries the `onUserAction` entry point
+ * the bundle's typing/viewing/idle reducers drive.
+ *
+ * Action shapes (`a` arg of `onUserAction`):
+ *   - `{type: "chatVisible", typingState: {state: "active" | "inactive"}}`
+ *     — primes the gate that allows `propagateTypingStateChange` to fire
+ *     (without the gate, modern Snap mobile clients ignore the convMgr
+ *     typing pulse).
+ *   - `{type: "chatHidden"}` — clears the gate and emits a final presence
+ *     frame so the recipient's "viewing" / "typing" indicators clear.
+ *   - `{type: "typing", typingAction: {activity: "typing" | "finished",
+ *     activityType: "text"}}` — broadcasts a typing pulse; gated on
+ *     `awayState === Present` AND a matching presence session existing
+ *     for the conv.
+ *
+ * @internal Bundle wire-format type.
+ */
+export interface BundlePresenceSession {
+  /**
+   * Conversation envelope (`{id: Uint8Array(16), str: hyphenated-uuid}`)
+   * the slice was constructed with — the bundle stores it verbatim. Use
+   * `.str` for human-readable comparison.
+   */
+  conversationId: { id: Uint8Array; str: string };
+  /** Drive presence state changes — see action shapes above. */
+  onUserAction: (action: { type: string; [k: string]: unknown }) => void;
+  /** Idempotent dispose; fires a final "chatHidden"-equivalent and
+   * clears the slice's `presenceSession` slot. */
+  dispose: () => void;
+  /** Per-remote-participant state slots (typing / call / etc). */
+  state: unknown[];
+}
+
+/**
+ * `state.presence` slice on the bundle's Zustand store — module 94704.
+ *
+ * Constructed by factory `Zn(set, get)` at chat main byte ~8310100
+ * (within the 94704 store factory). Methods:
+ *
+ *   - `initializePresenceServiceTs(duplexClient)` — constructs
+ *     `PresenceServiceImpl` (`new tn.nv(...)`, module 48712) wired
+ *     against the duplex client. **Must run once** before any
+ *     `createPresenceSession` call. The duplex client is the bundle's
+ *     React-built shape (`{registerHandler, send, addStreamListener,
+ *     ...}`); we synthesize ours via `bundle/presence-bridge.ts`.
+ *   - `createPresenceSession(convId)` — creates a per-conv session;
+ *     returns a cleanup thunk. Side-effect: populates
+ *     `state.presence.presenceSession` (one-at-a-time globally).
+ *   - `broadcastTypingActivity(convId, activity)` — gated on
+ *     `state.presence.presenceSession.conversationId === convId` AND
+ *     `state.presence.awayState === Present`. Equivalent to
+ *     `presenceSession.onUserAction({type: "typing",
+ *      typingAction: {activity, activityType: "text"}})`.
+ *   - `setAwayState(state)` — Present / Away enum value (see remarks).
+ *   - `presenceSession` — current session (single-slot, not
+ *     per-conversation).
+ *   - `awayState` — initialized from `document.hasFocus()`; we patch
+ *     `document.hasFocus = () => true` in the chat realm before bundle
+ *     eval so this always lands as `Present`.
+ *   - `destroyPresenceServiceTs` — tear-down counterpart to
+ *     `initializePresenceServiceTs`.
+ *
+ * Speculative slots (`activeConversationInfo`, `screenshotDetected`,
+ * `setScreenshotDetected`, `onCallStateChange`, `onActiveConversationInfoUpdated`)
+ * are exposed for completeness; the SDK currently only drives the typing
+ * / chatVisible / chatHidden path.
+ *
+ * @internal Bundle wire-format type.
+ */
+export interface PresenceSlice {
+  initializePresenceServiceTs: (duplexClient: unknown) => void;
+  destroyPresenceServiceTs: () => void;
+  /**
+   * Accepts a chat-realm conversation envelope (`{id, str}`), NOT a bare
+   * UUID string — the slice's internal `s.QA(convEnv)` reads `.str` and
+   * the `mt.Rv(convEnv)` selector reads `[QA(convEnv)]` from
+   * `state.messaging.conversations`. Passing a bare string crashes
+   * synchronously inside `s.QA` with `e[t+0]`.
+   */
+  createPresenceSession: (convEnvelope: { id: Uint8Array; str: string }) => () => void;
+  /** `convEnvelope` shape same as {@link createPresenceSession}. */
+  broadcastTypingActivity: (
+    convEnvelope: { id: Uint8Array; str: string },
+    activity: string,
+  ) => void;
+  setAwayState: (state: unknown) => void;
+  setScreenshotDetected: (detected: boolean) => void;
+  onActiveConversationInfoUpdated: (info: unknown) => void;
+  onCallStateChange: (event: unknown) => void;
+  /** Single-slot — only one active presence session globally. */
+  presenceSession: BundlePresenceSession | undefined;
+  /** Initialized from `document.hasFocus()` at slice creation time. */
+  awayState: unknown;
+  activeConversationInfo: Map<unknown, unknown>;
+  screenshotDetected: boolean;
 }
 
 // ─── Login client constructor ──────────────────────────────────────────

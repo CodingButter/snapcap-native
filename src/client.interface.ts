@@ -9,6 +9,7 @@ import type { Messaging } from "./api/messaging.ts";
 import type { Presence } from "./api/presence.ts";
 import type { Stories } from "./api/stories.ts";
 import type { Media } from "./api/media.ts";
+import type { PresenceStatus } from "./types.ts";
 
 /**
  * The public contract that {@link SnapcapClient} implements.
@@ -104,6 +105,76 @@ export interface ISnapcapClient {
    * signed-out returning user.
    */
   hasEverLoggedIn(): boolean;
+
+  // ── Presence status ──────────────────────────────────────────────────
+
+  /**
+   * Set the global presence status for this client's session — the same
+   * "I'm here" / "I'm away" slot the bundle's presence slice gates
+   * outbound typing-pulse broadcasts on.
+   *
+   * @remarks
+   * Synchronous; writes through `state.presence.setAwayState` on the
+   * bundle's Zustand store, mapping the canonical SDK string to the
+   * underlying numeric enum (chat module 46471's
+   * `{Present: 0, Away: 1, AwaitingReactivate: 2}`).
+   *
+   * `"Present"` is the typical default — the chat-bundle loader patches
+   * `document.hasFocus = () => true` so the slice initializes there at
+   * factory time. Switching to `"Away"` causes the bundle to suppress
+   * `broadcastTypingActivity` until the next `setStatus("Present")` call,
+   * which is the right behaviour when a tenant is logically idle but the
+   * SDK should keep the auth session live.
+   *
+   * Requires `client.authenticate()` to have completed first — the
+   * presence slice doesn't exist on the bundle store until the chat
+   * bundle has loaded.
+   *
+   * @param status - one of {@link PresenceStatus}
+   * @throws if called before {@link ISnapcapClient.authenticate}, or if
+   *   the bundle's presence slice / state-enum module shape has shifted.
+   *
+   * @example
+   * ```ts
+   * await client.authenticate();
+   * client.setStatus("Away");           // suppress typing broadcasts
+   * client.setStatus("Present");        // reopen the gate
+   * ```
+   *
+   * @see {@link ISnapcapClient.getStatus}
+   * @see {@link PresenceStatus}
+   */
+  setStatus(status: PresenceStatus): void;
+
+  /**
+   * Live read of the global presence status — same Zustand slot driven by
+   * {@link ISnapcapClient.setStatus}, plus whatever the bundle itself
+   * mutates in response to its own lifecycle events (focus / blur /
+   * presence-service signals).
+   *
+   * @remarks
+   * Synchronous; reads `state.presence.awayState` and maps the underlying
+   * numeric enum value back to the canonical SDK string. If the slot
+   * holds an unrecognized value (future-bundle drift), returns
+   * `"AwaitingReactivate"` as the safest neutral fallback rather than
+   * throwing.
+   *
+   * Requires `client.authenticate()` to have completed first.
+   *
+   * @returns the current {@link PresenceStatus}
+   * @throws if called before {@link ISnapcapClient.authenticate}, or if
+   *   the bundle's presence slice / state-enum module shape has shifted.
+   *
+   * @example
+   * ```ts
+   * await client.authenticate();
+   * console.log(client.getStatus()); // "Present"
+   * ```
+   *
+   * @see {@link ISnapcapClient.setStatus}
+   * @see {@link PresenceStatus}
+   */
+  getStatus(): PresenceStatus;
 
   // ── Domain managers ──────────────────────────────────────────────────
 

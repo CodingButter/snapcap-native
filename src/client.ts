@@ -37,13 +37,14 @@ import { Sandbox } from "./shims/sandbox.ts";
 import type { DataStore } from "./storage/data-store.ts";
 import type { ThrottleConfig, ThrottleGate } from "./transport/throttle.ts";
 import { CookieJarStore } from "./storage/cookie-store.ts";
+import { presenceSlice, presenceStateEnum } from "./bundle/register.ts";
 
 // `Credentials`, `BrowserContext`, and `activeIdentifier` live in
 // `./types.ts` so `api/auth.ts` can import them without forming a cycle
 // with `client.ts`. Re-exported here so consumers can import the public
 // types from either location.
-export { activeIdentifier, type Credentials, type BrowserContext } from "./types.ts";
-import { activeIdentifier, type Credentials, type BrowserContext } from "./types.ts";
+export { activeIdentifier, type Credentials, type BrowserContext, type PresenceStatus } from "./types.ts";
+import { activeIdentifier, type Credentials, type BrowserContext, type PresenceStatus } from "./types.ts";
 
 /**
  * Public constructor options for {@link SnapcapClient}.
@@ -306,5 +307,31 @@ export class SnapcapClient implements ISnapcapClient {
   /** {@inheritDoc ISnapcapClient.hasEverLoggedIn} */
   hasEverLoggedIn(): boolean {
     return hasEverLoggedInBundle({ sandbox: this.sandbox } as ClientContext);
+  }
+
+  // ── Presence status ────────────────────────────────────────────────
+
+  /** {@inheritDoc ISnapcapClient.setStatus} */
+  setStatus(status: PresenceStatus): void {
+    const enumObj = presenceStateEnum(this.sandbox);
+    // Map canonical SDK string → bundle's numeric enum value. The cast
+    // through `unknown` is required because the slice typing intentionally
+    // keeps `awayState` as `unknown` (forward-compat with future enum
+    // shape drift).
+    const value = enumObj[status];
+    presenceSlice(this.sandbox).setAwayState(value as unknown);
+  }
+
+  /** {@inheritDoc ISnapcapClient.getStatus} */
+  getStatus(): PresenceStatus {
+    const enumObj = presenceStateEnum(this.sandbox);
+    const raw = presenceSlice(this.sandbox).awayState;
+    if (raw === enumObj.Present) return "Present";
+    if (raw === enumObj.Away) return "Away";
+    if (raw === enumObj.AwaitingReactivate) return "AwaitingReactivate";
+    // Unknown future value — neutral fallback rather than throwing.
+    // `AwaitingReactivate` is the safest neutral mapping (already a
+    // transitional state) and matches the documented contract.
+    return "AwaitingReactivate";
   }
 }

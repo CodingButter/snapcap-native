@@ -222,9 +222,24 @@ export async function ensureChatBundle(sandbox: Sandbox, opts: ChatBundleOpts = 
 
   // Make sure happy-dom has a #root so React mount during top-level eval
   // doesn't blow up.
-  const doc = sandbox.window.document as { body?: { innerHTML: string } };
+  const doc = sandbox.window.document as { body?: { innerHTML: string }; hasFocus?: () => boolean };
   if (doc?.body && !doc.body.innerHTML.includes('id="root"')) {
     doc.body.innerHTML = (doc.body.innerHTML ?? "") + '<div id="root"></div>';
+  }
+
+  // Force `document.hasFocus()` to return true BEFORE the chat bundle
+  // evals. The presence slice (chat main byte ~8310100, factory `Zn`)
+  // initializes its `awayState` slot from `document.hasFocus()
+  // ? Zt.O.Present : Zt.O.Away` at slice creation time. happy-dom's
+  // default `hasFocus` returns false in headless contexts; without this
+  // patch the slice lands in `Away`, and `broadcastTypingActivity` is
+  // gated on `awayState === Present` (so typing pulses get suppressed
+  // before they reach `presenceSession.onUserAction`).
+  //
+  // Patching the underlying happy-dom document object is enough — the
+  // bundle's `document` global resolves to the same instance.
+  if (doc) {
+    (doc as { hasFocus: () => boolean }).hasFocus = (): boolean => true;
   }
 
   // Wrap the bundle in an IIFE so module/exports/require are scoped

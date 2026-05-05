@@ -70,8 +70,9 @@ export { SnapcapClient, type SnapcapClientOpts } from "./client.ts";
 export type { ISnapcapClient } from "./client.interface.ts";
 
 // Public cross-layer types — credentials + browser-context fingerprint.
-// Both are constructor opts on `SnapcapClient`.
-export { activeIdentifier, type Credentials, type BrowserContext } from "./types.ts";
+// Both are constructor opts on `SnapcapClient`. `PresenceStatus` is the
+// argument/return type for `client.setStatus` / `client.getStatus`.
+export { activeIdentifier, type Credentials, type BrowserContext, type PresenceStatus } from "./types.ts";
 
 // Domain managers — re-exported for typing (`import type { Friends } from "@snapcap/native"`).
 // Only `Friends` carries a stub shape today (Phase 1A); the others are

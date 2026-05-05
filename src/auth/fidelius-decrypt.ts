@@ -413,6 +413,8 @@ export async function setupBundleSession(
     private listeners: Map<string, Set<(ev: unknown) => void>> = new Map();
 
     constructor(url: string, protocols?: string | string[]) {
+      const stack = new Error().stack?.split("\n").slice(1, 8).join("\n  ") ?? "(no stack)";
+      log(`[ws.shim] CTOR url=${url}\n  ${stack}`);
       this.url = url;
       this.inner = new NodeWS(url, protocols, {
         headers: {
@@ -424,6 +426,7 @@ export async function setupBundleSession(
       this.inner.binaryType = "arraybuffer";
 
       this.inner.on("open", () => {
+        log(`[ws.shim] OPEN url=${url}`);
         this.readyState = 1;
         const ev = { type: "open", target: this };
         this.onopen?.(ev);
@@ -489,6 +492,27 @@ export async function setupBundleSession(
     }
 
     send(data: ArrayBuffer | Uint8Array | string): void {
+      // Diagnostic: log every outbound WS frame at the wire boundary.
+      // Lets us prove whether convMgr.sendTypingNotification (or any other
+      // bundle-driven WS dispatch) actually produces a frame vs being
+      // silently dropped inside the bundle.
+      const sz =
+        typeof data === "string"
+          ? data.length
+          : data instanceof ArrayBuffer
+            ? data.byteLength
+            : (data as Uint8Array).byteLength;
+      let hexPrefix = "";
+      if (typeof data !== "string") {
+        const bytes =
+          data instanceof ArrayBuffer ? new Uint8Array(data) : (data as Uint8Array);
+        const head = bytes.subarray(0, Math.min(32, bytes.byteLength));
+        hexPrefix = ` ${Array.from(head)
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("")}`;
+      }
+      log(`[ws.shim] SEND ${typeof data === "string" ? "txt" : "bin"} ${sz}B${hexPrefix}`);
+
       if (data instanceof ArrayBuffer) {
         this.inner.send(Buffer.from(new Uint8Array(data)));
       } else if (data instanceof Uint8Array) {
@@ -587,6 +611,66 @@ export async function setupBundleSession(
   if (!En) {
     throw new Error("setupBundleSession: chunk did not expose En — patch may have failed");
   }
+
+  // [TRACE-INSTRUMENTATION] — wrap En.registerDuplexHandler so we observe
+  // every duplex registration the bundle (or our presence-bridge) requests
+  // AND every send() invoked on the returned handle. Removable in one
+  // commit by deleting this block.
+  type DuplexHandlerHandleLike = {
+    send?: (channel: string, bytes: Uint8Array) => unknown;
+    unregisterHandler?: () => void;
+  } & Record<string, unknown>;
+  if (typeof En.registerDuplexHandler === "function") {
+    const origReg = En.registerDuplexHandler.bind(En);
+    En.registerDuplexHandler = ((path: string, handler: { onReceive: (bytes: Uint8Array) => void }) => {
+      process.stderr.write(`[trace.chat-loader.En.registerDuplexHandler] ENTER path=${path} handlerKeys=[${handler ? Object.keys(handler).join(",") : "?"}]\n`);
+      // Wrap onReceive so inbound frames coming up from the standalone
+      // duplex are visible at this layer too.
+      const wrappedHandler = {
+        onReceive: (bytes: Uint8Array): void => {
+          process.stderr.write(`[trace.chat-loader.En.handler.onReceive] path=${path} bytes=${bytes?.byteLength ?? "?"}\n`);
+          try { handler.onReceive(bytes); }
+          catch (e) {
+            process.stderr.write(`[trace.chat-loader.En.handler.onReceive] inner threw=${(e as Error).message?.slice(0, 200)}\n`);
+          }
+        },
+      };
+      const result = origReg(path, wrappedHandler) as DuplexHandlerHandleLike | Promise<DuplexHandlerHandleLike>;
+      const wrapHandle = (h: DuplexHandlerHandleLike): DuplexHandlerHandleLike => {
+        if (!h || typeof h !== "object") {
+          process.stderr.write(`[trace.chat-loader.En.registerDuplexHandler] RESULT non-object path=${path} type=${typeof h}\n`);
+          return h;
+        }
+        const handleKeys = Object.keys(h).join(",");
+        process.stderr.write(`[trace.chat-loader.En.registerDuplexHandler] RESULT path=${path} handle.keys=[${handleKeys}]\n`);
+        if (typeof h.send === "function") {
+          const origSend = h.send.bind(h);
+          h.send = ((channel: string, bytes: Uint8Array): unknown => {
+            process.stderr.write(`[trace.chat-loader.En.handle.send] ENTER path=${path} channel=${channel} bytes=${bytes?.byteLength ?? "?"}\n`);
+            try {
+              const r = origSend(channel, bytes);
+              process.stderr.write(`[trace.chat-loader.En.handle.send] EXIT path=${path} channel=${channel} ret=${typeof r}\n`);
+              return r;
+            } catch (e) {
+              process.stderr.write(`[trace.chat-loader.En.handle.send] THREW path=${path} channel=${channel} err=${(e as Error).message?.slice(0, 200)}\n`);
+              throw e;
+            }
+          }) as typeof h.send;
+        } else {
+          process.stderr.write(`[trace.chat-loader.En.registerDuplexHandler] RESULT path=${path} HAS NO send() method!\n`);
+        }
+        return h;
+      };
+      if (result && typeof (result as Promise<unknown>).then === "function") {
+        return (result as Promise<DuplexHandlerHandleLike>).then(wrapHandle);
+      }
+      return wrapHandle(result as DuplexHandlerHandleLike);
+    }) as typeof En.registerDuplexHandler;
+    process.stderr.write(`[trace.chat-loader.En.registerDuplexHandler] WRAP-INSTALLED on globalThis.__SNAPCAP_EN\n`);
+  } else {
+    process.stderr.write(`[trace.chat-loader.En.registerDuplexHandler] NOT A FUNCTION — cannot wrap (typeof=${typeof En.registerDuplexHandler})\n`);
+  }
+  // [/TRACE-INSTRUMENTATION]
 
   // ── Wrap messaging_Session.create to capture decrypted messages ────
   // Per recovered v3 reverse-engineering, arg slot 9 of Sess.create is

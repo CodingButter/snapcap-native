@@ -49,6 +49,8 @@ import {
   type StandaloneChatRealm,
 } from "../auth/fidelius-mint.ts";
 import { sendMediaViaSession, createOutboundCapture } from "./_media_upload.ts";
+import { createPresenceBridge } from "../bundle/presence-bridge.ts";
+import type { BundlePresenceSession } from "../bundle/types.ts";
 
 // ── Inline ProtoReader (no shared one in transport/) ──────────────────
 class ProtoReader {
@@ -176,6 +178,34 @@ export class Messaging {
    */
   #realm?: StandaloneChatRealm;
 
+  /**
+   * Once-per-Messaging-instance flag — set to `true` after the first
+   * successful `state.presence.initializePresenceServiceTs(bridge)` call.
+   * Subsequent typing/viewing calls skip the init.
+   *
+   * Lives as a `#` private instance field — NOT module scope. Each
+   * `Messaging` instance (= each `SnapcapClient`) tracks its own init
+   * state independently; multi-instance-safe by construction.
+   *
+   * @internal
+   */
+  #presenceInitialized = false;
+
+  /**
+   * Per-conv `BundlePresenceSession` cache. The bundle's
+   * `state.presence.presenceSession` slot is single-instance
+   * (one-active-session-globally), so creating a session for conv B
+   * disposes the one for conv A. We still cache by convId so
+   * back-to-back calls on the same conv reuse the live session.
+   *
+   * Lives as a `#` private instance field, keyed by per-instance convId
+   * strings — NOT module scope. Each `Messaging` instance owns its own
+   * Map; multi-instance-safe by construction.
+   *
+   * @internal
+   */
+  readonly #presenceSessions = new Map<string, BundlePresenceSession>();
+
   /** @internal */
   constructor(private readonly _getCtx: () => Promise<ClientContext>) {}
 
@@ -225,16 +255,17 @@ export class Messaging {
    * "none" within ~3s — no peer ever sees a stale typing dot.
    *
    * @remarks
-   * The convMgr.sendTypingNotification path goes out on the wire as
-   * soon as we call it — verified at the WASM boundary. However, on
-   * Snap's modern web client there is **also** a parallel
-   * `ChatPresenceSession.onUserAction({type: "typing"})` flow gated on
-   * a `chat_visible` local state which we do not yet drive (it requires
-   * `initializePresenceServiceTs` + per-conv `createPresenceSession`
-   * plumbing, not yet wired). For most peer clients (mobile + older web
-   * builds) the convMgr path is sufficient; if you find a peer that
-   * doesn't render the indicator, we may need to add the PresenceSession
-   * layer too.
+   * Drives **both** the legacy convMgr path (`sendTypingNotification`
+   * via module 56639 export `zM`) AND the modern presence path
+   * (`state.presence.initializePresenceServiceTs` + per-conv
+   * `createPresenceSession` + `presenceSession.onUserAction({type:
+   * "chatVisible"})` priming, then `broadcastTypingActivity`). Modern
+   * Snap clients gate the typing indicator on the presence
+   * `chat_visible` state — without priming, the WASM logs
+   * `propagateTypingStateChange called while not in chat_visible state`
+   * and recipients see nothing. Presence priming is best-effort: if
+   * init fails (e.g. auth slice not ready), we fall through to the
+   * convMgr-only path which still works for older peers.
    *
    * ```ts
    * await messaging.setTyping(convId, 1500);
@@ -242,37 +273,139 @@ export class Messaging {
    * ```
    */
   async setTyping(convId: string, durationMs: number): Promise<void> {
+    // [TRACE-INSTRUMENTATION-START] — remove with grep `\[trace\.`
+    const _t0 = Date.now();
+    process.stderr.write(`[trace.messaging] setTyping ENTER convId=${convId.slice(0, 8)} durationMs=${durationMs}\n`);
+    // [TRACE-INSTRUMENTATION-END]
     await this.#ensureSession();
-    if (!this.#session || !this.#realm) return; // best-effort if bring-up failed
+    if (!this.#session || !this.#realm) {
+      process.stderr.write(`[trace.messaging] setTyping EXIT-EARLY no session/realm\n`);
+      return; // best-effort if bring-up failed
+    }
     const convRef = await this.#buildConvRef(convId);
     const sendsMod = this.#realm.wreq("56639") as Record<string, Function>;
     const zM = sendsMod.zM as Function | undefined;
-    if (typeof zM !== "function") return; // bundle shape shifted; resolve quietly
+    if (typeof zM !== "function") {
+      process.stderr.write(`[trace.messaging] setTyping EXIT-EARLY zM not a function\n`);
+      return; // bundle shape shifted; resolve quietly
+    }
+
+    // Prime the bundle's presence layer in addition to the convMgr path.
+    // Modern Snap mobile clients ignore the convMgr typing pulse unless
+    // a `ChatPresenceSession.onUserAction({type: "chatVisible"})` has
+    // fired first to put the local state into `chat_visible`. Without
+    // this, the WASM logs `propagateTypingStateChange called while not
+    // in chat_visible state` and suppresses the propagation.
+    //
+    // Best-effort: if the presence init / session creation fails (auth
+    // slice not ready, presence slice shape shifted, etc.), fall through
+    // to the convMgr-only path which still works for older web peers
+    // and cooperative recipients.
+    const presenceSession = await this.#ensurePresenceForConv(convId);
+    process.stderr.write(`[trace.messaging] setTyping ensurePresenceForConv result=${presenceSession ? "session-obj" : "undefined"}\n`);
+    if (presenceSession) {
+      // Inspect the bundle's awayState gate + presenceSession identity at
+      // broadcast time — confirms `chatVisible` priming actually flips the
+      // slice's `awayState` to Present.
+      try {
+        const ctx = await this._getCtx();
+        const { presenceSlice } = await import("../bundle/register.ts");
+        const slice = presenceSlice(ctx.sandbox) as Record<string, unknown>;
+        process.stderr.write(`[trace.messaging] setTyping pre-chatVisible awayState=${String(slice.awayState)} slot-equals-cached=${slice.presenceSession === presenceSession}\n`);
+      } catch (e) {
+        process.stderr.write(`[trace.messaging] setTyping pre-chatVisible probe-threw=${(e as Error).message?.slice(0, 120)}\n`);
+      }
+      process.stderr.write(`[trace.messaging] setTyping → onUserAction(chatVisible+typing-active)\n`);
+      try {
+        presenceSession.onUserAction({
+          type: "chatVisible",
+          typingState: { state: "active" },
+        });
+        process.stderr.write(`[trace.messaging] setTyping ← onUserAction(chatVisible) ok\n`);
+      } catch (e) {
+        process.stderr.write(`[trace.messaging] setTyping ← onUserAction(chatVisible) THREW=${(e as Error).message?.slice(0, 200)}\n`);
+      }
+      try {
+        const ctx = await this._getCtx();
+        const { presenceSlice } = await import("../bundle/register.ts");
+        const slice = presenceSlice(ctx.sandbox) as Record<string, unknown>;
+        process.stderr.write(`[trace.messaging] setTyping post-chatVisible awayState=${String(slice.awayState)}\n`);
+      } catch { /* tolerate */ }
+    }
+
     try {
-      // Fire "typing on" — the WASM's TypingStateMachine starts its 3s
-      // auto-clear timer on the receiving side, but we re-pulse to keep
-      // the indicator alive across our requested window if it exceeds 3s.
-      // Fire-and-forget: convMgr's callback may never fire for some conv
-      // kinds (bots, broadcast convs); the WS frame leaves synchronously
-      // when the WASM dispatches, so we don't gate caller progress on the
-      // ack.
+      // Drive the convMgr typing pulse loop (existing path — leaves a
+      // sendTypingNotification frame on the wire every ~2.5s). Combined
+      // with the presence priming above, this satisfies BOTH the legacy
+      // and modern recipient code paths.
+      process.stderr.write(`[trace.messaging] setTyping → zM(session, convRef) (convMgr.sendTypingNotification)\n`);
       this.#fireBundleCall(() => zM(this.#session, convRef));
-      const interval = 2500;
+
+      // Also broadcast via the presence slice's own `broadcastTypingActivity`
+      // action when a session is live — the slice gates this on the same
+      // `awayState === Present` check our `document.hasFocus = () => true`
+      // chat-loader patch satisfies. The slice action signature mirrors
+      // {@link PresenceSlice.broadcastTypingActivity}: takes the envelope
+      // already stored on `presenceSession.conversationId`. Best-effort.
+      if (presenceSession) {
+        try {
+          const ctx = await this._getCtx();
+          const { presenceSlice } = await import("../bundle/register.ts");
+          const envelope = presenceSession.conversationId as { id?: unknown; str?: string } | string | undefined;
+          const envShape = envelope && typeof envelope === "object"
+            ? `{id-bytelen=${(envelope.id as Uint8Array | undefined)?.byteLength}, str=${envelope.str?.slice(0, 8)}}`
+            : `bare-string=${String(envelope).slice(0, 8)}`;
+          process.stderr.write(`[trace.messaging] setTyping → broadcastTypingActivity envelope=${envShape}\n`);
+          const r = presenceSlice(ctx.sandbox).broadcastTypingActivity(
+            presenceSession.conversationId,
+            "typing",
+          );
+          process.stderr.write(`[trace.messaging] setTyping ← broadcastTypingActivity returned=${typeof r} (${String(r).slice(0, 80)})\n`);
+        } catch (e) {
+          process.stderr.write(`[trace.messaging] setTyping ← broadcastTypingActivity THREW=${(e as Error).message?.slice(0, 200)}\n`);
+        }
+      }
+
+      // Recipient's typing-state machine drops the indicator if no
+      // valid typing frame arrives within ~3s. Pulse at 2s to give
+      // ~1s of head-room. Each pulse re-fires `broadcastTypingActivity`
+      // (the SAME proven action used at the initial fire above), NOT
+      // the malformed `onUserAction({type:"chatVisible", typingState})`
+      // shape that the bundle silently drops.
+      const interval = 2000;
       const start = Date.now();
+      const ctx = await this._getCtx();
+      const { presenceSlice } = await import("../bundle/register.ts");
       while (Date.now() - start < durationMs) {
         const remaining = durationMs - (Date.now() - start);
         await new Promise<void>((r) => setTimeout(r, Math.min(interval, remaining)));
         if (Date.now() - start < durationMs) {
           this.#fireBundleCall(() => zM(this.#session, convRef));
+          if (presenceSession) {
+            try {
+              presenceSlice(ctx.sandbox).broadcastTypingActivity(
+                presenceSession.conversationId,
+                "typing",
+              );
+            } catch { /* tolerate */ }
+          }
         }
       }
     } finally {
-      // Auto-clear: empirically the WASM's TypingStateMachine drops the
-      // typing state ~3s after the last sendTypingNotification pulse with
-      // no further pulses. Stopping the pulse loop above is sufficient
-      // for the recipient's UI to clear within that window. We do NOT
-      // fire exitConversation here — that would clobber a separate
-      // setViewing() in flight and isn't the typing-state opcode anyway.
+      // Auto-clear: stopping the convMgr pulse loop above lets the
+      // recipient's TypingStateMachine drop within ~3s. Additionally
+      // fire `chatHidden` on the presence session so modern clients
+      // clear the dot immediately rather than waiting for the timer.
+      if (presenceSession) {
+        process.stderr.write(`[trace.messaging] setTyping FINALLY → onUserAction(chatHidden)\n`);
+        try {
+          presenceSession.onUserAction({ type: "chatHidden" });
+          process.stderr.write(`[trace.messaging] setTyping FINALLY ← onUserAction(chatHidden) ok\n`);
+        } catch (e) {
+          process.stderr.write(`[trace.messaging] setTyping FINALLY ← onUserAction(chatHidden) THREW=${(e as Error).message?.slice(0, 200)}\n`);
+        }
+      }
+      process.stderr.write(`[trace.messaging] setTyping EXIT durMs=${Date.now() - _t0}\n`);
     }
   }
 
@@ -286,20 +419,36 @@ export class Messaging {
    * pairing it with `ON` (exitConversation) on teardown clears the state.
    * `try/finally` guarantees exit fires even on abort.
    *
-   * @remarks Same caveat as {@link Messaging.setTyping} — the convMgr
-   * path leaves the WASM as a real WS frame, but the modern web client
-   * also runs a parallel ChatPresenceSession that gates the visible
-   * indicator. Older web peers + the mobile app still observe the
-   * convMgr-side state.
+   * @remarks Same dual-path treatment as {@link Messaging.setTyping}:
+   * primes `state.presence.presenceSession.onUserAction({type:
+   * "chatVisible"})` so modern recipients honor the convMgr
+   * `enterConversation` frame, and fires `chatHidden` on teardown so
+   * the indicator clears immediately rather than waiting on the
+   * recipient's idle timer.
    */
   async setViewing(convId: string, durationMs: number): Promise<void> {
+    const _t0 = Date.now();
+    process.stderr.write(`[trace.messaging] setViewing ENTER convId=${convId.slice(0, 8)} durationMs=${durationMs}\n`);
     await this.#ensureSession();
-    if (!this.#session || !this.#realm) return;
+    if (!this.#session || !this.#realm) {
+      process.stderr.write(`[trace.messaging] setViewing EXIT-EARLY no session/realm\n`);
+      return;
+    }
     const convRef = await this.#buildConvRef(convId);
     const sendsMod = this.#realm.wreq("56639") as Record<string, Function>;
     const Mw = sendsMod.Mw as Function | undefined;
     const ON = sendsMod.ON as Function | undefined;
     if (typeof Mw !== "function") return;
+
+    // Same gate-priming as setTyping — modern Snap recipients ignore
+    // the convMgr enterConversation frame unless `chatVisible` has been
+    // sent on the presence session first. Best-effort.
+    const presenceSession = await this.#ensurePresenceForConv(convId);
+    if (presenceSession) {
+      try { presenceSession.onUserAction({ type: "chatVisible" }); }
+      catch { /* tolerate */ }
+    }
+
     try {
       // Source enum 0 = unspecified; bundle accepts and the WASM doesn't
       // care for presence-frame purposes. Real React caller passes the
@@ -315,6 +464,11 @@ export class Messaging {
       if (typeof ON === "function") {
         this.#fireBundleCall(() => ON(this.#session, convRef, 0));
       }
+      if (presenceSession) {
+        try { presenceSession.onUserAction({ type: "chatHidden" }); }
+        catch { /* tolerate */ }
+      }
+      process.stderr.write(`[trace.messaging] setViewing EXIT durMs=${Date.now() - _t0}\n`);
     }
   }
 
@@ -380,6 +534,222 @@ export class Messaging {
     const idBytes = new VmU8(16);
     idBytes.set(uuidToBytes(convId));
     return { id: idBytes, str: convId };
+  }
+
+  /**
+   * @internal — ensure the bundle's presence layer has a live
+   * `presenceSession` for `convId`. Lazily initializes
+   * `state.presence.initializePresenceServiceTs(bridge)` on first call,
+   * then creates (or reuses) a per-conv presence session.
+   *
+   * The bundle's `state.presence.presenceSession` is single-slot, so a
+   * `createPresenceSession(B)` after a `createPresenceSession(A)` will
+   * dispose A's session and replace it. Our cache is correct only as
+   * long as we don't interleave convs; the cache check + state read
+   * below verifies the slot still matches our cached session before
+   * returning it.
+   *
+   * Returns `undefined` when the realm / session bring-up hasn't
+   * happened yet (caller should fall back to convMgr-only path) — same
+   * defensive posture as the existing setTyping / setViewing methods.
+   */
+  async #ensurePresenceForConv(convId: string): Promise<BundlePresenceSession | undefined> {
+    process.stderr.write(`[trace.presence] ensurePresenceForConv ENTER convId=${convId.slice(0, 8)} presenceInitialized=${this.#presenceInitialized}\n`);
+    if (!this.#realm) {
+      process.stderr.write(`[trace.presence] ensurePresenceForConv EXIT no realm\n`);
+      return undefined;
+    }
+    const ctx = await this._getCtx();
+    const sandbox = ctx.sandbox;
+    const { presenceSlice } = await import("../bundle/register.ts");
+
+    // First-call init. Wrapped in its own try so a failure here doesn't
+    // permanently block the cache — a future call retries.
+    if (!this.#presenceInitialized) {
+      try {
+        process.stderr.write(`[trace.presence] ensurePresenceForConv → initializePresenceServiceTs(bridge)\n`);
+        const slice = presenceSlice(sandbox);
+        const bridge = createPresenceBridge(this.#realm, sandbox, (line) => {
+          // Always echo presence-bridge log lines under our trace tag so
+          // we don't have to set SNAPCAP_DEBUG_PRESENCE for the run.
+          process.stderr.write(`[trace.bridge.log] ${line}\n`);
+        });
+        slice.initializePresenceServiceTs(bridge);
+        this.#presenceInitialized = true;
+        process.stderr.write(`[trace.presence] ensurePresenceForConv ← initializePresenceServiceTs ok\n`);
+      } catch (e) {
+        process.stderr.write(`[trace.presence] ensurePresenceForConv ← initializePresenceServiceTs THREW=${(e as Error).message?.slice(0, 200)}\n`);
+        // Surface the bundle's exact error for diagnostic clarity (e.g.
+        // "Local user ID is not set" if auth slice hasn't populated).
+        if (process.env.SNAPCAP_DEBUG_PRESENCE) {
+          process.stderr.write(
+            `[messaging.#ensurePresenceForConv] initializePresenceServiceTs threw: ${
+              (e as Error).message?.slice(0, 200)
+            }\n`,
+          );
+        }
+        return undefined;
+      }
+    }
+
+    // Cache hit — verify the bundle still has our session in its slot.
+    const cached = this.#presenceSessions.get(convId);
+    if (cached) {
+      try {
+        const slice = presenceSlice(sandbox);
+        if (slice.presenceSession === cached) {
+          process.stderr.write(`[trace.presence] ensurePresenceForConv CACHE-HIT slot-still-matches\n`);
+          return cached;
+        }
+      } catch { /* fall through to recreate */ }
+      // Stale (replaced by a different conv's session, or disposed) —
+      // drop and recreate below.
+      process.stderr.write(`[trace.presence] ensurePresenceForConv CACHE-STALE recreating\n`);
+      this.#presenceSessions.delete(convId);
+    }
+
+    // Create fresh session. The slice action returns a cleanup thunk we
+    // intentionally discard — `presenceSession.dispose()` is the proper
+    // teardown path (same end-effect, but the slot bookkeeping is what
+    // we actually want when switching convs).
+    //
+    // The slice expects an envelope `{id: Uint8Array(16), str: convIdStr}`
+    // (NOT a bare string) — module 74918's `s.QA(envelope)` returns the
+    // `.str` field, and a bare-string input would fall through to the
+    // fallback path inside `d()` and crash with `e[t+0]` because string
+    // values have no `.id`. Build the envelope with a CHAT-realm
+    // Uint8Array so the bundle's `u(e)` check (`id instanceof Uint8Array`)
+    // against the chat realm constructor succeeds.
+    try {
+      const { chatStore } = await import("../bundle/register.ts");
+      const slice = presenceSlice(sandbox);
+      const ChatU8 = sandbox.getGlobal<Uint8ArrayConstructor>("Uint8Array") ?? Uint8Array;
+      const idBytes = new ChatU8(16);
+      idBytes.set(uuidToBytes(convId));
+      const convEnvelope = { id: idBytes, str: convId };
+
+      // CRITICAL: seed `state.messaging.conversations[convId]` BEFORE
+      // calling `createPresenceSession`. The slice's
+      // `createPresenceSession` ends up `await
+      // firstValueFrom(observeConversationParticipants$)` inside
+      // `PresenceServiceImpl`; that observable only emits when the conv
+      // is in `state.messaging.conversations` (selector `mt.VN(state,
+      // convIdStr)` reads `state.messaging.conversations[convIdStr]
+      // ?.participants`). Without React running the bundle's normal
+      // feed-pump, the slice is empty, the observable never emits, and
+      // `createPresenceSession` hangs forever — the 1s poll below
+      // times out and returns `undefined`, killing the entire
+      // modern-presence path.
+      //
+      // The slice's own `fetchConversation` action would do this, but
+      // it routes through `Sr(state)` which throws "Expected the
+      // messaging client to be set" — the bundle's React layer
+      // populates `state.messaging.client` via `initializeClient`, and
+      // that path depends on `state.wasm.workerProxy` (a Comlink-wrapped
+      // Web Worker we don't run). Playing the React role: write a
+      // minimal `{participants: [{participantId: envelope}, ...]}`
+      // record DIRECTLY into the slice via `chatStore.setState`. The
+      // selector only reads `.participants[].participantId`; that's the
+      // contract the presence observable needs and the only contract
+      // we owe it.
+      //
+      // Participant envelopes are built from the SDK's already-resolved
+      // self userId + conversation participant list. Skip when the conv
+      // is already in the slice (e.g. priming on a hot path) so we don't
+      // clobber a richer record the bundle's own action wrote.
+      try {
+        const store = chatStore(sandbox);
+        const state = store.getState() as {
+          messaging?: { conversations?: Record<string, unknown> };
+        };
+        const conversations = state.messaging?.conversations;
+        const alreadySeeded = !!(conversations && conversations[convId]);
+        process.stderr.write(`[trace.presence] ensurePresenceForConv slice-conversations.has(${convId.slice(0, 8)})=${alreadySeeded}\n`);
+        if (!alreadySeeded) {
+          // Build the envelope shape `{id: ChatU8(16), str}` for each
+          // participant — same wrapper the bundle uses (module 74918's
+          // `c(uuid)` factory), but we synthesize directly so the seed
+          // doesn't depend on reaching into another bundle module.
+          const selfUserId = await this._getSelfUserId(ctx);
+          let participantUuids: string[] = [selfUserId];
+          try {
+            const all = await this.listConversations(selfUserId);
+            const found = all.find((c) => c.conversationId === convId);
+            if (found && found.participants.length) {
+              participantUuids = found.participants;
+            }
+          } catch {
+            // Best-effort — fall back to self-only. The selector still
+            // emits (with one participant), unblocking the observable.
+          }
+          const buildEnv = (uuid: string): { id: Uint8Array; str: string } => {
+            const b = new ChatU8(16);
+            b.set(uuidToBytes(uuid));
+            return { id: b, str: uuid };
+          };
+          const participants = participantUuids.map((u) => ({
+            participantId: buildEnv(u),
+          }));
+          process.stderr.write(`[trace.presence] ensurePresenceForConv → setState messaging.conversations[${convId.slice(0, 8)}]={participants:${participants.length}}\n`);
+          store.setState((s) => {
+            const ms = (s as { messaging?: { conversations?: Record<string, unknown> } }).messaging;
+            if (!ms) return s;
+            // Direct mutation is the bundle's pattern — Zustand uses
+            // Immer drafts internally for the messaging slice, so
+            // mutating the draft + returning the same state object lands
+            // the change. (See `(0,fr.wD)(r, e.messaging.conversations)`
+            // in the bundle's slice — it mutates the conversations
+            // object in place.)
+            const conv = ms.conversations ?? (ms.conversations = {});
+            conv[convId] = {
+              conversation: { conversationId: convEnvelope, participants },
+              participants,
+              messages: new Map(),
+              hasMoreMessages: false,
+              isActive: false,
+              loadingMessages: false,
+            };
+            return s;
+          });
+          process.stderr.write(`[trace.presence] ensurePresenceForConv ← setState ok\n`);
+        }
+      } catch (e) {
+        process.stderr.write(`[trace.presence] ensurePresenceForConv messaging-slice seed THREW=${(e as Error).message?.slice(0, 200)}\n`);
+      }
+
+      process.stderr.write(`[trace.presence] ensurePresenceForConv → createPresenceSession({id-bytelen=${idBytes.byteLength}, str=${convId.slice(0, 8)}})\n`);
+      slice.createPresenceSession(convEnvelope);
+      // The slice populates `state.presence.presenceSession` AFTER an
+      // async await on `n.createPresenceSession(...)` resolves; poll
+      // briefly. Real cost is bounded — the inner await only blocks on
+      // an `observeConversationParticipants` first-value pull.
+      //
+      // `candidate.conversationId` is the envelope ({id, str}) we passed
+      // in — compare via `.str`. Note: the bundle may also receive
+      // `firstValueFrom(participants$)` that NEVER emits if the conv
+      // isn't in `state.messaging.conversations` (the slice's
+      // observeConversationParticipants logs a warn and emits nothing).
+      // The 1s poll budget below is a soft cap — if no session lands,
+      // we proceed without one and fall back to the convMgr-only path.
+      let session: BundlePresenceSession | undefined;
+      for (let i = 0; i < 50; i++) {
+        const candidate = presenceSlice(sandbox).presenceSession;
+        if (candidate && candidate.conversationId?.str === convId) {
+          session = candidate;
+          break;
+        }
+        await new Promise<void>((r) => setTimeout(r, 20));
+      }
+      if (session) {
+        this.#presenceSessions.set(convId, session);
+        process.stderr.write(`[trace.presence] ensurePresenceForConv ← createPresenceSession LANDED session-obj for conv=${convId.slice(0, 8)}\n`);
+        return session;
+      }
+      process.stderr.write(`[trace.presence] ensurePresenceForConv ← createPresenceSession POLL-EXHAUSTED no session in slot after 1s\n`);
+    } catch (e) {
+      process.stderr.write(`[trace.presence] ensurePresenceForConv ← createPresenceSession THREW=${(e as Error).message?.slice(0, 200)}\n`);
+    }
+    return undefined;
   }
 
   /** @internal — single-flight bring-up gate. */
