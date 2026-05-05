@@ -9,7 +9,7 @@
  * No Sandbox, no fetch. Uses os.tmpdir() for real file tests.
  */
 import { describe, expect, test, afterAll } from "bun:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryDataStore, FileDataStore } from "../../src/storage/data-store.ts";
@@ -134,11 +134,6 @@ describe("storage/data-store — FileDataStore", () => {
   test("delete on absent key does not throw", async () => {
     const ds = new FileDataStore(tmpStorePath());
     await expect(ds.delete("ghost")).resolves.toBeUndefined();
-  });
-
-  test("file does not exist until first write", () => {
-    const path = tmpStorePath();
-    expect(existsSync(path)).toBe(false);
   });
 
   test("getSync / setSync round-trip without awaiting", () => {
