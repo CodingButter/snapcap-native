@@ -144,7 +144,31 @@ Constraints:
 - Report back: branch path, test-count + LOC delta, verification gate results.
 ```
 
-### ⏳ Phase 6 — Bloat audit via knip
+### ✅ Phase 6 — Bloat audit via knip
+
+`tests/BLOAT-AUDIT.md` lists knip's findings. Headlines:
+- 0 unused files
+- 9 unused exports (8 functions + 1 type) — most are Phase 2/3 stepping-stones (`makeConversationRef`, `bootKameleon`, `getStandaloneChatModule`) + 3 unused fixture variants from Phase 4 over-prep.
+- 1 unused production dep: `sharp`. ~30 MB. The `postStory` doc claims auto-normalize-to-1080×1920 but no `sharp` import exists in src/. Either dead dep or broken feature — needs a human look BEFORE removal.
+- 0 unused devDeps.
+
+Per Phase 6 brief: nothing was deleted. User reviews per-item.
+
+---
+
+## ✅ Refactor complete
+
+All planned phases (1, 2A, 2B.1, 2B.2, 3, 4, 5A–5E, 6) merged to `main` at `f3d9342`. Test suite: 562 / 580 pass; the 14 failures are pre-existing live-only tests unrelated to refactor work (friends API drift, presence requiring real WS connect, FileDataStore live-bundle edge case). Live decrypt verified end-to-end on `messaging-myai` post-merge (Hey AI! reply landed in 964 ms post-send, identical fidelius key bytes before + after — warm-path persistence confirmed).
+
+Open follow-ups (NOT part of the refactor; track separately):
+- Fix the 5 `// BUG:` markers in tests/ (5C found these during audit; kept as docs).
+- Decide on `sharp` removal vs. wiring up image normalization properly.
+- Review the 9 unused exports in BLOAT-AUDIT.md and prune the ones that are truly orphans.
+- Re-enable the pre-push doc-update hook (currently `exit 0` early — see `scripts/git-hooks/pre-push`).
+
+---
+
+### Original Phase 6 dispatch (kept for reference)
 
 `knip.json` is configured with the right entry points (src/index.ts, every `tests/**/*.test.ts`, every shell script, both git hooks) and ignores (vendor, dist, docs, .tmp, .claude, node_modules). knip is in devDependencies.
 
