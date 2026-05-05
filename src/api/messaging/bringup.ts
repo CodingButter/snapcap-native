@@ -47,7 +47,7 @@ export async function bringUpSession(internal: MessagingInternal): Promise<void>
   // before throwing so consumers don't hit a transient miss when they
   // chain `.on()` directly off `await authenticate()`.
   const { authSlice } = await import("../../bundle/register.ts");
-  const auth = await import("../auth.ts");
+  const auth = await import("../auth/index.ts");
   let userId: string | undefined;
   let bearer: string | undefined;
   // Poll up to 30s for the bundle's auth slice to populate `userId`. On

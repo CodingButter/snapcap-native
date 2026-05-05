@@ -104,7 +104,7 @@ export async function getSelfUserId(ctx: ClientContext): Promise<string> {
  * @internal
  */
 export async function grpcCall(ctx: ClientContext, methodName: string, body: Uint8Array): Promise<Uint8Array> {
-  const auth = await import("../auth.ts");
+  const auth = await import("../auth/index.ts");
   const bearer = auth.getAuthToken(ctx);
   const sharedJar = getOrCreateJar(ctx.dataStore);
   const cookieHeader = (await sharedJar.getCookies("https://web.snapchat.com"))
