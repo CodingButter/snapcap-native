@@ -121,35 +121,34 @@ if [ ! -f ".snapcap-smoke.json" ]; then
   fi
 fi
 
-# 4. .tmp/auth/ — same cascade. Auth files are COPIED (not symlinked) so
-#    each worktree has its own — prevents JWT-refresh races across
-#    parallel workers using the same account. WARNING: parallel agents
-#    using the same account WILL still hit Snap-side session invalidation
-#    on bearer refresh. For parallel work, use distinct accounts via
-#    tests/lib/user-locker (when added) or explicit per-agent credentials.
-if [ ! -d ".tmp/auth" ] || [ -z "$(ls -A .tmp/auth 2>/dev/null)" ]; then
-  AUTH_SRC=""
-  if [ -n "${SNAPCAP_PARENT_REPO:-}" ] && [ -d "$SNAPCAP_PARENT_REPO/.tmp/auth" ]; then
-    AUTH_SRC="$SNAPCAP_PARENT_REPO/.tmp/auth"
-    AUTH_FROM="$SNAPCAP_PARENT_REPO (explicit)"
+# 4. .tmp/ — SYMLINK the whole directory from sibling. All sub-paths
+#    (.tmp/auth/, .tmp/storage/, .tmp/configs/, .tmp/locks/, .tmp/scripts/)
+#    share automatically. Sequential agents have no race; future parallel
+#    agents coordinate via tests/lib/user-locker (when added) which uses
+#    atomic mkdir on .tmp/locks/<user>.lock — that needs a SHARED location
+#    to work, so symlink (not copy) is the right shape.
+if [ ! -e ".tmp" ]; then
+  TMP_SRC=""
+  if [ -n "${SNAPCAP_PARENT_REPO:-}" ] && [ -d "$SNAPCAP_PARENT_REPO/.tmp" ]; then
+    TMP_SRC="$SNAPCAP_PARENT_REPO/.tmp"
+    TMP_FROM="$SNAPCAP_PARENT_REPO (explicit)"
   else
     while IFS= read -r line; do
       case "$line" in
         worktree\ *)
           candidate="${line#worktree }"
-          if [ "$candidate" != "$SELF" ] && [ -d "$candidate/.tmp/auth" ] && [ -n "$(ls -A "$candidate/.tmp/auth" 2>/dev/null)" ]; then
-            AUTH_SRC="$candidate/.tmp/auth"
-            AUTH_FROM="$candidate (auto-detected sibling)"
+          if [ "$candidate" != "$SELF" ] && [ -d "$candidate/.tmp" ]; then
+            TMP_SRC="$candidate/.tmp"
+            TMP_FROM="$candidate (auto-detected sibling)"
             break
           fi
           ;;
       esac
     done < <(git worktree list --porcelain)
   fi
-  if [ -n "$AUTH_SRC" ]; then
-    mkdir -p .tmp/auth
-    cp -n "$AUTH_SRC/"*.json .tmp/auth/ 2>/dev/null || true
-    echo "[worktree-init] copied auth files from $AUTH_FROM"
+  if [ -n "$TMP_SRC" ]; then
+    ln -s "$TMP_SRC" .tmp
+    echo "[worktree-init] symlinked .tmp → $TMP_SRC"
   fi
 fi
 
