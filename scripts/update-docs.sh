@@ -59,7 +59,26 @@ if git diff --quiet docs/ src/ .claude/ && git diff --cached --quiet docs/ src/ 
   exit 0
 fi
 
-echo "[docs] Doc changes detected — committing."
+echo "[docs] Doc changes detected."
 git add docs/ src/ .claude/
-git commit -m "docs: auto-update via claude $(date +%Y-%m-%d)"
-echo "[docs] ✓ Doc commit added. Will be included in the push."
+
+# Amend doc changes into the most-recent commit so the push transmits
+# ONE atomic commit (feature + its docs together) instead of a separate
+# follow-up doc commit that races the push range. Safety check: only
+# amend if HEAD has not yet been published to origin/main — otherwise
+# we'd be rewriting shared history.
+HEAD_SHA="$(git rev-parse HEAD)"
+UPSTREAM_SHA="$(git rev-parse @{u} 2>/dev/null || true)"
+
+if git merge-base --is-ancestor "$HEAD_SHA" "$UPSTREAM_SHA" 2>/dev/null; then
+  # HEAD is already on the remote — amending would rewrite published
+  # history. Fall back to a separate commit (the legacy behavior).
+  echo "[docs] HEAD is already published — falling back to a separate doc commit."
+  git commit -m "docs: auto-update via claude $(date +%Y-%m-%d)"
+  echo "[docs] ✓ Doc commit added. Will be included in the push."
+else
+  # Amend onto the unpushed commit so the push gets one atomic change.
+  echo "[docs] Amending doc changes into HEAD ($HEAD_SHA — unpushed)."
+  git commit --amend --no-edit
+  echo "[docs] ✓ Doc changes amended into HEAD. Push will transmit one commit."
+fi
