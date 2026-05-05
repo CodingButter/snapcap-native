@@ -161,7 +161,12 @@ Per Phase 6 brief: nothing was deleted. User reviews per-item.
 All planned phases (1, 2A, 2B.1, 2B.2, 3, 4, 5A–5E, 6) merged to `main` at `f3d9342`. Test suite: 562 / 580 pass; the 14 failures are pre-existing live-only tests unrelated to refactor work (friends API drift, presence requiring real WS connect, FileDataStore live-bundle edge case). Live decrypt verified end-to-end on `messaging-myai` post-merge (Hey AI! reply landed in 964 ms post-send, identical fidelius key bytes before + after — warm-path persistence confirmed).
 
 Open follow-ups (NOT part of the refactor; track separately):
-- Fix the 5 `// BUG:` markers in tests/ (5C found these during audit; kept as docs).
+- ~~Fix the 5 `// BUG:` markers in tests/~~ ✅ 4 of 5 fixed:
+  - `patchSandboxLocationToWeb` idempotency guarded on the wrong field — switched to `host` check.
+  - `IDBObjectStoreShim.get` / `getAll` raced `tx.oncomplete` — refactored `_noteOp` into `_opStart`/`_opEnd` with sync-at-issue + async-at-resolve.
+  - `extractTicket` regex missed `?ticket=` — widened character class to `[#?&]`.
+  - `nativeFetch` eagerly snapshotted `globalThis.fetch` — replaced with per-call `hostFetch()`.
+  - Remaining: `fullLogin` has no test seam for the underlying SSO+bearer+jar machinery (architectural — needs DI refactor; deferred).
 - ~~Decide on `sharp` removal vs. wiring up image normalization properly.~~ ✅ removed (`stories.ts:68` confirms the bundle does it; SDK passes raw bytes).
 - ~~Review the 9 unused exports in BLOAT-AUDIT.md and prune the ones that are truly orphans.~~ ✅ partial — 3 clear orphans removed (`makeConversationRef`, `listConfiguredUsers`, `getStandaloneChatModule`); 5 remaining are intentional (forward-looking `Rpc` type per JSDoc, speculative test fixtures, `withLockedUser` should be adopted not deleted, `bootKameleon` API seam).
 - Re-enable the pre-push doc-update hook (currently `exit 0` early — see `scripts/git-hooks/pre-push`).
