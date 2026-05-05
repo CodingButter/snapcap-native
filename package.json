@@ -44,6 +44,7 @@
     "install:bundle": "bash scripts/install-bundle.sh",
     "release:bundle": "bash scripts/release-bundle.sh",
     "refresh:bundle": "bash scripts/refresh-bundle.sh",
+    "init:repo": "bash scripts/worktree-init.sh",
     "init:worktree": "bash scripts/worktree-init.sh",
     "docs:api": "typedoc",
     "docs:api:check": "typedoc --emit none",

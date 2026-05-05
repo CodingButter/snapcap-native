@@ -51,24 +51,50 @@ else
   echo "[worktree-init] node_modules already present"
 fi
 
-# 2. vendor/snap-bundle — symlink from arg, or download pinned.
+# 2. vendor/snap-bundle — three-tier cascade:
+#      a. explicit VENDOR_PATH arg → symlink (highest priority)
+#      b. sibling worktree has vendor/snap-bundle → symlink (auto-detect)
+#      c. download pinned tarball from GitHub Release (fallback)
 if [ -d "vendor/snap-bundle" ] || [ -L "vendor/snap-bundle" ]; then
   echo "[worktree-init] vendor/snap-bundle already present"
 elif [ -n "$VENDOR_PATH" ]; then
-  # Symlink mode.
+  # Tier (a): explicit arg.
   if [ ! -d "$VENDOR_PATH/snap-bundle" ]; then
     echo "[worktree-init] FATAL: $VENDOR_PATH/snap-bundle does not exist."
     echo "  Provide a path whose snap-bundle/ subdir is populated, OR omit"
-    echo "  the arg to download the pinned tarball from GitHub instead."
+    echo "  the arg to let the script auto-detect or download."
     exit 1
   fi
   mkdir -p vendor
   ln -s "$VENDOR_PATH/snap-bundle" vendor/snap-bundle
-  echo "[worktree-init] symlinked vendor/snap-bundle → $VENDOR_PATH/snap-bundle"
+  echo "[worktree-init] symlinked vendor/snap-bundle → $VENDOR_PATH/snap-bundle (explicit)"
 else
-  # Download mode.
-  echo "[worktree-init] no VENDOR_PATH given — downloading pinned bundle..."
-  bash scripts/install-bundle.sh
+  # Tier (b): walk attached worktrees, find first one with a populated
+  # vendor/snap-bundle/. `git worktree list --porcelain` outputs blocks
+  # of `worktree <path>` lines; we only consider paths that aren't us.
+  SELF="$REPO_ROOT"
+  SIBLING_VENDOR=""
+  while IFS= read -r line; do
+    case "$line" in
+      worktree\ *)
+        candidate="${line#worktree }"
+        if [ "$candidate" != "$SELF" ] && [ -d "$candidate/vendor/snap-bundle" ]; then
+          SIBLING_VENDOR="$candidate/vendor/snap-bundle"
+          break
+        fi
+        ;;
+    esac
+  done < <(git worktree list --porcelain)
+
+  if [ -n "$SIBLING_VENDOR" ]; then
+    mkdir -p vendor
+    ln -s "$SIBLING_VENDOR" vendor/snap-bundle
+    echo "[worktree-init] symlinked vendor/snap-bundle → $SIBLING_VENDOR (auto-detected sibling)"
+  else
+    # Tier (c): download pinned.
+    echo "[worktree-init] no sibling worktree has vendor — downloading pinned bundle..."
+    bash scripts/install-bundle.sh
+  fi
 fi
 
 # 3. .snapcap-smoke.json — only copy if env var points us at a parent repo
