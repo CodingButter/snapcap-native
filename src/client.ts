@@ -27,7 +27,7 @@ import {
   getAuthState as getAuthStateBundle,
   hasEverLoggedIn as hasEverLoggedInBundle,
   makeContext,
-} from "./api/auth.ts";
+} from "./api/auth/index.ts";
 import { Friends } from "./api/friends.ts";
 import { Messaging } from "./api/messaging.ts";
 import { Presence } from "./api/presence.ts";
@@ -40,7 +40,7 @@ import { CookieJarStore } from "./storage/cookie-store.ts";
 import { presenceSlice, presenceStateEnum } from "./bundle/register.ts";
 
 // `Credentials`, `BrowserContext`, and `activeIdentifier` live in
-// `./types.ts` so `api/auth.ts` can import them without forming a cycle
+// `./types.ts` so `api/auth/` can import them without forming a cycle
 // with `client.ts`. Re-exported here so consumers can import the public
 // types from either location.
 export { activeIdentifier, type Credentials, type BrowserContext, type PresenceStatus } from "./types.ts";

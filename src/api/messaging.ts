@@ -789,7 +789,7 @@ export class Messaging {
     // before throwing so consumers don't hit a transient miss when they
     // chain `.on()` directly off `await authenticate()`.
     const { authSlice } = await import("../bundle/register.ts");
-    const auth = await import("./auth.ts");
+    const auth = await import("./auth/index.ts");
     let userId: string | undefined;
     let bearer: string | undefined;
     // Poll up to 30s for the bundle's auth slice to populate `userId`. On
@@ -1123,7 +1123,7 @@ export class Messaging {
 
   /** @internal */
   private async _grpcCall(ctx: ClientContext, methodName: string, body: Uint8Array): Promise<Uint8Array> {
-    const auth = await import("./auth.ts");
+    const auth = await import("./auth/index.ts");
     const bearer = auth.getAuthToken(ctx);
     const sharedJar = getOrCreateJar(ctx.dataStore);
     const cookieHeader = (await sharedJar.getCookies("https://web.snapchat.com"))
