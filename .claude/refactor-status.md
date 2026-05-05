@@ -68,19 +68,20 @@ Split into `src/bundle/chat/standalone/`:
 
 The WASM-duplication TODO (~12MB extra in memory + ~250ms boot time per `SnapcapClient`) is documented in `src/bundle/chat/standalone/index.ts` jsdoc — fixing it properly = reverse-engineering Snap's worker init sequence (~1-2 weeks). Worth doing if multi-tenancy scales beyond N>20 per process.
 
-### ✅ Phase 5 — Test fan-out (parallel Sonnet, 4 of 5 done; 5B redo in flight)
+### ✅ Phase 5 — Test fan-out (parallel agents, all done)
 
-Per-domain test coverage built against the Phase 4 foundation. **5 sub-agents dispatched in worktrees, all Sonnet; 4 nailed it, 5B got stuck on proto wire-format and was stopped + split.**
+Per-domain test coverage built against the Phase 4 foundation. **5 domains, dispatched in parallel worktrees; 5B was originally Sonnet, got stuck on proto wire-format, was stopped + re-split into Sonnet (5B.1) + Opus (5B.2).**
 
 | Domain | Files | Tests | Bugs found | Status |
 |---|---|---|---|---|
 | 5A Friends | 7 | 117 | 0 | ✅ merged |
-| 5B Messaging | — | — | — | ❌ stopped (proto wire-format too hard for Sonnet, all writes were going to MAIN due to absolute-path use). Re-dispatched as 5B.1 (Sonnet, 8 easy files) + 5B.2 (Opus, 6 hard files including parse/* using real captured bytes from `.tmp/recon/`) |
+| 5B.1 Messaging (easy) | 8 | 69 | 0 | ✅ merged (Sonnet) |
+| 5B.2 Messaging (hard) | 6 | 82 | 0 | ✅ merged (Opus, parse/* against real captured bytes) |
 | 5C Auth | 8 | 31 | 4 (`patch-location` guard wrong, `extractTicket` regex misses `?ticket=`, `full-login` no test seam, `nativeFetch` snapshots `globalThis.fetch` eagerly) | ✅ merged |
 | 5D Bundle | 16 | 113 | 0 | ✅ merged |
 | 5E Storage/Shims | 17 | 157 | 1 (`idbGet` always returns `undefined` — `IDBObjectStoreShim.get` doesn't call `tx._noteOp()`) | ✅ merged |
 
-**Net SDK test coverage: 4 files → 55 files. 432 of 446 tests pass (97%); 12 of the 14 fails are pre-existing `friends.test.ts` API drift, not from this work.**
+**Net SDK test coverage: 4 files → 63 files. 562 / 580 tests pass (97%); 14 fails are pre-existing live-only tests (friends API drift, presence requiring real WS, FileDataStore live-bundle edge case).**
 
 5 documented bugs remain as TODOs in the test files themselves (each test asserts the broken behavior so the test passes today; flip the assertion when the bug is fixed). Future fix-up agent should grep `// BUG:` in tests/.
 
@@ -88,6 +89,7 @@ Per-domain test coverage built against the Phase 4 foundation. **5 sub-agents di
 - Sonnet bites off too much when domain has hidden complexity. Domain-difficulty audit the prompt scope BEFORE dispatching.
 - Worktree discipline isn't automatic — must explicitly say "use relative paths only, never `/home/codingbutter/`, run `pwd && git status` between writes to confirm."
 - Don't try to hand-build proto fixtures. Use real captured bytes from `.tmp/recon/` (sync-conv, bds, qm, ccm, fidelius blobs all available).
+- **bun's `mock.module` is process-global and `mock.restore()` does NOT cleanly restore it across sibling test files when those siblings have already captured the mocked binding via top-level `import` at load time.** Symptom: a unit test for module X passes in isolation but fails when run alongside an orchestration test that mocks X. Fix: split `bun test` into two invocations via `--path-ignore-patterns` (see `package.json` `test` script — bringup + presence-bridge-init run in their own pass). Don't use mock.module for any module that has a sibling unit test in the same suite.
 
 ### ✅ Phase 4 — Test foundation (Opus)
 
@@ -142,25 +144,39 @@ Constraints:
 - Report back: branch path, test-count + LOC delta, verification gate results.
 ```
 
-### ⏳ Phase 5 — Test fan-out (Sonnet, parallel)
-
-Per-domain test agents, each in own worktree, each owns one slice:
-
-| Agent | Domain | Likely test files |
-|---|---|---|
-| 5A | Friends | `tests/api/friends/{mappers,snapshot-builders,graph-cache,subscriptions,mutations,reads}.test.ts` |
-| 5B | Messaging | `tests/api/messaging/{parse-*,send,presence,bringup}.test.ts` |
-| 5C | Auth | `tests/api/auth/{authenticate,sso-ticket,refresh,kickoff-messaging}.test.ts` |
-| 5D | Bundle | `tests/bundle/{register,types,presence-bridge,prime}.test.ts` |
-| 5E | Storage / Shims | `tests/storage/*.test.ts`, `tests/shims/*.test.ts` |
-
 ### ⏳ Phase 6 — Bloat audit via knip
 
-```bash
-bun add -D knip
+`knip.json` is configured with the right entry points (src/index.ts, every `tests/**/*.test.ts`, every shell script, both git hooks) and ignores (vendor, dist, docs, .tmp, .claude, node_modules). knip is in devDependencies.
+
+Dispatch as a single Sonnet agent in a worktree:
+
+```
+You're Phase 6 — repo bloat audit.
+
+Step 1: bash scripts/worktree-init.sh
+Step 2: bunx knip --reporter json > /tmp/knip.json (also run plain
+        `bunx knip` for the human-readable summary).
+Step 3: write tests/BLOAT-AUDIT.md categorising findings:
+        - "Likely safe to delete" (with file path + reasoning)
+        - "Investigate first" (used by tests only? exported but
+          internal? referenced by docs?)
+        - "Keep" (false positive — give the reason)
+        For each item, include the actual usage signals you checked
+        (`grep -r 'foo' src/ tests/` results condensed).
+
+Constraints:
+- DO NOT delete anything. This is an audit, not a cleanup.
+- Touch ONLY tests/BLOAT-AUDIT.md. No src/ or scripts/ edits.
+- DO NOT commit, push, or merge.
+
+Report back:
+- Total counts: unused files, unused exports, unused deps.
+- Top-5 surprises (things you expected to be used but aren't).
+- Anything that looks like a bug (e.g. an export of a function nobody
+  calls = either dead code or a public API never wired up).
 ```
 
-Configure entry points (src/index.ts, scripts/, tests/), run, get list of unused files / exports / deps. User reviews per-item; nothing auto-deletes.
+After the agent returns, the user reviews `tests/BLOAT-AUDIT.md` per-item and decides what to remove.
 
 ---
 
@@ -212,5 +228,13 @@ Configure entry points (src/index.ts, scripts/, tests/), run, get list of unused
 | `ae4c89d`, `75ea5b4` | Phase 2B.1 — types split + merge |
 | `e5ef608`, `ff7d652` | Phase 2B.2 — register split + merge |
 | `64ef18f` | User-locker + per-user configs + storage rename |
+| `b6def17`, `b540091` | Phase 5E — storage + shims tests |
+| `dc1e79e`, `a66edfa` | Phase 5C — auth domain tests |
+| (5A merge), `(5D merge)` | Phase 5A friends + 5D bundle tests |
+| `d31e812`, `82d0c87` | Phase 5B.1 — messaging easy files (Sonnet) |
+| `fbddc2d`, `731773f` | Phase 5B.2 — messaging hard files (Opus) |
+| `79e8e58` | mock.module isolation fix — split `bun test` into two passes |
+| `d8c5295`, `d0d2951` | Phase 3 — `src/auth/` → `src/bundle/chat/standalone/` (19-file split, 2191 → 2944 LOC, all ≤ 291 LOC) |
+| `023a131` | Phase 5B test paths retargeted to standalone barrel after Phase 3 merge |
 
-`origin/main` is currently at `7d39e52` (pre-refactor; we haven't pushed `refactor/feature-folders` yet).
+`origin/main` and `origin/refactor/feature-folders` are both up-to-date at `023a131`. Remaining: Phase 6 audit dispatch.
