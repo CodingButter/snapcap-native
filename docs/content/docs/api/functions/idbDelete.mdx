@@ -6,19 +6,22 @@ title: idbDelete
 
 ```ts
 function idbDelete(
+   sandbox: Sandbox, 
    dbName: string, 
    storeName: string, 
 key: string): Promise<void>;
 ```
 
-Defined in: [storage/idb-utils.ts:209](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/idb-utils.ts#L209)
+Defined in: [storage/idb-utils.ts:219](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/idb-utils.ts#L219)
 
-Delete the entry at `(dbName, storeName, key)`. No-op if absent.
+Delete the entry at `(dbName, storeName, key)` in the given Sandbox's
+IndexedDB. No-op if absent.
 
 ## Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
+| `sandbox` | `Sandbox` | The Sandbox whose IDB shim handles the delete. |
 | `dbName` | `string` | IndexedDB database name. |
 | `storeName` | `string` | Object store name within the database. |
 | `key` | `string` | Record key within the object store. |

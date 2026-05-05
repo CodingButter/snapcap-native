@@ -26,7 +26,7 @@ type MessagingEvents = {
 };
 ```
 
-Defined in: [api/messaging.ts:126](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L126)
+Defined in: [api/messaging.ts:132](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L132)
 
 Event map for [Messaging.on](../classes/Messaging.mdx#on).
 
@@ -41,7 +41,7 @@ Messaging.#bringUpSession.
 
 | Property | Type | Description | Defined in |
 | ------ | ------ | ------ | ------ |
-| <a id="message"></a> `message` | (`msg`: [`PlaintextMessage`](PlaintextMessage.mdx)) => `void` | A decrypted plaintext message arrived. | [api/messaging.ts:128](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L128) |
-| <a id="read"></a> `read` | (`ev`: \{ `at`: `number`; `convId`: `string`; `messageId`: `string`; `userId`: `string`; \}) => `void` | Peer marked `messageId` read at `at` (ms epoch). | [api/messaging.ts:134](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L134) |
-| <a id="typing"></a> `typing` | (`ev`: \{ `convId`: `string`; `until`: `number`; `userId`: `string`; \}) => `void` | Peer started typing in `convId` until `until` (ms epoch). | [api/messaging.ts:130](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L130) |
-| <a id="viewing"></a> `viewing` | (`ev`: \{ `convId`: `string`; `until`: `number`; `userId`: `string`; \}) => `void` | Peer is viewing `convId` until `until` (ms epoch). | [api/messaging.ts:132](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L132) |
+| <a id="message"></a> `message` | (`msg`: [`PlaintextMessage`](PlaintextMessage.mdx)) => `void` | A decrypted plaintext message arrived. | [api/messaging.ts:134](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L134) |
+| <a id="read"></a> `read` | (`ev`: \{ `at`: `number`; `convId`: `string`; `messageId`: `string`; `userId`: `string`; \}) => `void` | Peer marked `messageId` read at `at` (ms epoch). | [api/messaging.ts:140](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L140) |
+| <a id="typing"></a> `typing` | (`ev`: \{ `convId`: `string`; `until`: `number`; `userId`: `string`; \}) => `void` | Peer started typing in `convId` until `until` (ms epoch). | [api/messaging.ts:136](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L136) |
+| <a id="viewing"></a> `viewing` | (`ev`: \{ `convId`: `string`; `until`: `number`; `userId`: `string`; \}) => `void` | Peer is viewing `convId` until `until` (ms epoch). | [api/messaging.ts:138](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging.ts#L138) |

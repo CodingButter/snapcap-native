@@ -4,7 +4,7 @@ title: Friends
 
 # Class: Friends
 
-Defined in: [api/friends.ts:897](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L897)
+Defined in: [api/friends.ts:957](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L957)
 
 Concrete [IFriendsManager](../interfaces/IFriendsManager.mdx) implementation.
 
@@ -28,7 +28,7 @@ full method-level documentation.
 acceptRequest(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:943](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L943)
+Defined in: [api/friends.ts:1003](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1003)
 
 Accept an incoming friend request.
 
@@ -60,7 +60,7 @@ verb because the inbox flow has its own consumer mental model;
 block(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:931](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L931)
+Defined in: [api/friends.ts:991](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L991)
 
 Block a user — also removes any existing friend link.
 
@@ -88,7 +88,7 @@ getUsers(userIds: string[], opts?: {
 }): Promise<FriendsUser[]>;
 ```
 
-Defined in: [api/friends.ts:1021](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1021)
+Defined in: [api/friends.ts:1118](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1118)
 
 Resolve a list of user IDs to [User](../interfaces/FriendsUser.mdx) records (username +
 display name).
@@ -126,7 +126,7 @@ appear with `notFound: true`.
 list(): Promise<Friend[]>;
 ```
 
-Defined in: [api/friends.ts:1006](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1006)
+Defined in: [api/friends.ts:1103](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1103)
 
 All friends in the logged-in user's social graph (excluding self).
 
@@ -153,7 +153,7 @@ on<K>(
 }): Subscription;
 ```
 
-Defined in: [api/friends.ts:1131](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1131)
+Defined in: [api/friends.ts:1228](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1228)
 
 Subscribe to a typed friends event. Returns a [Subscription](../type-aliases/Subscription.mdx)
 — call it to unsubscribe, or use `sub.signal` to tie the
@@ -193,7 +193,7 @@ A [Subscription](../type-aliases/Subscription.mdx) — a callable unsubscribe th
 onChange(cb: (snap: FriendsSnapshot) => void): Unsubscribe;
 ```
 
-Defined in: [api/friends.ts:1117](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1117)
+Defined in: [api/friends.ts:1214](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1214)
 
 Fire `cb` whenever any part of the friend graph changes — mutuals,
 incoming requests, or outgoing requests.
@@ -227,7 +227,7 @@ An `Unsubscribe` thunk; idempotent on repeat calls.
 receivedRequests(): Promise<ReceivedRequest[]>;
 ```
 
-Defined in: [api/friends.ts:1011](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1011)
+Defined in: [api/friends.ts:1108](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1108)
 
 All pending received friend requests.
 
@@ -250,7 +250,7 @@ reject / ignore.
 refresh(): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:989](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L989)
+Defined in: [api/friends.ts:1086](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1086)
 
 Force an explicit re-sync from the server — pulls the latest mutuals
 + outgoing requests (via `SyncFriendData`) AND incoming requests (via
@@ -286,7 +286,7 @@ pattern). Subsequent reads return whatever is in cache.
 rejectRequest(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:949](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L949)
+Defined in: [api/friends.ts:1009](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1009)
 
 Reject (ignore) an incoming friend request.
 
@@ -316,7 +316,7 @@ Maps to Snap's `IgnoreFriends` RPC — the same path the SPA's
 remove(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:925](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L925)
+Defined in: [api/friends.ts:985](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L985)
 
 Remove a friend from the social graph.
 
@@ -366,7 +366,7 @@ user must do it from the official mobile app.
 search(query: string): Promise<FriendsUser[]>;
 ```
 
-Defined in: [api/friends.ts:1084](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1084)
+Defined in: [api/friends.ts:1181](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1181)
 
 Search Snap's user index by username / display-name fragment.
 
@@ -397,7 +397,7 @@ sendRequest(userId: string, opts?: {
 }): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:919](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L919)
+Defined in: [api/friends.ts:979](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L979)
 
 Send a friend request / add a user to the friend list.
 
@@ -427,7 +427,7 @@ Resolves once the server acknowledges.
 sentRequests(): Promise<SentRequest[]>;
 ```
 
-Defined in: [api/friends.ts:1016](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1016)
+Defined in: [api/friends.ts:1113](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1113)
 
 All pending sent friend requests (the logged-in user's adds
 waiting for the recipient to accept).
@@ -450,7 +450,7 @@ Outbound [SentRequest](../interfaces/SentRequest.mdx) records.
 snapshot(): Promise<FriendsSnapshot>;
 ```
 
-Defined in: [api/friends.ts:984](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L984)
+Defined in: [api/friends.ts:1044](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L1044)
 
 Canonical point-in-time view of the friend graph — mutuals + pending
 requests in both directions.
@@ -479,7 +479,7 @@ The split read accessors ([IFriendsManager.list](../interfaces/IFriendsManager.m
 unblock(userId: string): Promise<void>;
 ```
 
-Defined in: [api/friends.ts:937](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L937)
+Defined in: [api/friends.ts:997](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L997)
 
 Unblock a previously-blocked user.
 

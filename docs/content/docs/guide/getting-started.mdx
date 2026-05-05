@@ -125,6 +125,8 @@ await b.authenticate();   // ~100 ms — warm SSO redirect, bundle still loads
 - **Cold start** (`auth.json` missing or empty): kameleon WASM boots (~5 MB JS + 814 KB WASM), `WebLoginService` two-step runs, SSO redirect mints a bearer, parent-domain cookies seed the jar. Persisted to the DataStore. Wall-clock around **5 seconds**.
 - **Warm start** (`auth.json` already has valid cookies): the SSO redirect short-circuits in roughly **one redirect, ~100 ms**. The bundle still loads — `authenticate()` always brings up the chat bundle so the friend graph and Zustand auth slice are populated.
 
+`authenticate()` also warms the friend-graph cache by calling `client.friends.list()` once before resolving. The fetch is best-effort — a friends sync failure is logged but never poisons the auth result — and seeds the persisted graph baseline so a later subscriber's first replay correctly identifies "new since last session" mutuals/requests instead of treating every existing entry as added.
+
 If the bearer in the DataStore has expired, the next gRPC call gets a 401 and the SDK transparently mints a fresh bearer from the long-lived `__Host-sc-a-auth-session` cookie — no caller-side handling required. For a manual bearer-only refresh, call `await client.refreshAuthToken()`.
 
 ## Re-authenticate

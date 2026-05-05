@@ -4,14 +4,50 @@ title: Stories
 
 # Class: Stories
 
-Defined in: [api/stories.ts:18](https://github.com/CodingButter/snapcap-native/blob/main/src/api/stories.ts#L18)
+Defined in: [api/stories.ts:40](https://github.com/CodingButter/snapcap-native/blob/main/src/api/stories.ts#L40)
 
-Placeholder for the upcoming Stories domain manager.
-
-Held as [SnapcapClient.stories](SnapcapClient.mdx#stories). No methods are exposed yet — any
-call site like `client.stories.post(...)` is a TypeScript compile
-error.
+Stories domain manager — held as [SnapcapClient.stories](SnapcapClient.mdx#stories).
 
 ## See
 
 [SnapcapClient](SnapcapClient.mdx)
+
+## Methods
+
+### post()
+
+```ts
+post(media: Uint8Array, opts?: {
+  caption?: string;
+}): Promise<string>;
+```
+
+Defined in: [api/stories.ts:82](https://github.com/CodingButter/snapcap-native/blob/main/src/api/stories.ts#L82)
+
+Post media (image or video) to MY_STORY. The bundle's send pipeline
+owns upload, encryption, and dispatch; we project the media bytes
+into the standalone realm and call the bundle's `HM` (sendSnap)
+entry with MY_STORY destinations from `storyDescModule.R9`.
+
+Auto-normalization (1080×1920 RGBA PNG) is the bundle's
+responsibility once it sniffs the Blob; pass raw bytes through.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `media` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Raw image or video bytes (PNG / JPEG / WebP / MP4). |
+| `opts?` | \{ `caption?`: `string`; \} | Reserved for caption + future story config (TODO). |
+| `opts.caption?` | `string` | - |
+
+#### Returns
+
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`string`\>
+
+The story id assigned by the bundle's send pipeline.
+
+#### Remarks
+
+Wire-tested through `Messaging.sendText` only — `post()` compiles
+and the bring-up path runs without throwing. The bundle drives the
+MY_STORY upload internally.

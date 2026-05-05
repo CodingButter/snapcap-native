@@ -28,7 +28,7 @@ import {
   hasEverLoggedIn as hasEverLoggedInBundle,
   makeContext,
 } from "./api/auth/index.ts";
-import { Friends } from "./api/friends.ts";
+import { Friends } from "./api/friends/index.ts";
 import { Messaging } from "./api/messaging.ts";
 import { Presence } from "./api/presence.ts";
 import { Stories } from "./api/stories.ts";

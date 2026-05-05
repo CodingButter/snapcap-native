@@ -6,14 +6,15 @@ title: idbGet
 
 ```ts
 function idbGet<T>(
+   sandbox: Sandbox, 
    dbName: string, 
    storeName: string, 
 key: string): Promise<T | undefined>;
 ```
 
-Defined in: [storage/idb-utils.ts:163](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/idb-utils.ts#L163)
+Defined in: [storage/idb-utils.ts:168](https://github.com/CodingButter/snapcap-native/blob/main/src/storage/idb-utils.ts#L168)
 
-Read a value from the sandbox's IndexedDB at `(dbName, storeName, key)`.
+Read a value from the given Sandbox's IndexedDB at `(dbName, storeName, key)`.
 
 ## Type Parameters
 
@@ -25,6 +26,7 @@ Read a value from the sandbox's IndexedDB at `(dbName, storeName, key)`.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
+| `sandbox` | `Sandbox` | The Sandbox whose IDB shim handles the read. |
 | `dbName` | `string` | IndexedDB database name. |
 | `storeName` | `string` | Object store name within the database. Created on first use if absent. |
 | `key` | `string` | Record key within the object store. |
@@ -38,7 +40,7 @@ The stored value, or `undefined` if absent.
 ## Example
 
 ```ts
-const identity = await idbGet<{ pub: Uint8Array }>("snapcap", "fidelius", "identity");
+const identity = await idbGet<{ pub: Uint8Array }>(sandbox, "snapcap", "fidelius", "identity");
 ```
 
 ## See

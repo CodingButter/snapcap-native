@@ -64,7 +64,7 @@ describe("client.friends.add", () => {
 
   test("accepts optional FriendSource enum", async () => {
     // Should accept the enum without TypeScript or runtime issues.
-    const { FriendSource } = await import("../../src/api/friends.ts");
+    const { FriendSource } = await import("../../src/api/friends/index.ts");
     await expect(
       client.friends.add("eabd1d89-239a-4f7b-bbcc-0ae3b26c5202", FriendSource.ADDED_BY_SEARCH),
     ).resolves.toBeUndefined();
@@ -249,7 +249,7 @@ describe("client.friends.onChange", () => {
 
 describe("client.friends wiring", () => {
   test("client.friends exists and is a Friends instance", async () => {
-    const { Friends } = await import("../../src/api/friends.ts");
+    const { Friends } = await import("../../src/api/friends/index.ts");
     expect(client.friends).toBeInstanceOf(Friends);
   });
 

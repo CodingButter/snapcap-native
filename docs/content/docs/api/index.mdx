@@ -84,7 +84,7 @@ setLogger(defaultTextLogger);
 | [Presence](classes/Presence.mdx) | Placeholder for the upcoming Presence domain manager. |
 | [SnapcapClient](classes/SnapcapClient.mdx) | Concrete [ISnapcapClient](interfaces/ISnapcapClient.mdx) implementation — main SDK entry point. |
 | [StorageShim](classes/StorageShim.mdx) | Web Storage API (`localStorage` / `sessionStorage`) implementation backed by a [DataStore](interfaces/DataStore.mdx). |
-| [Stories](classes/Stories.mdx) | Placeholder for the upcoming Stories domain manager. |
+| [Stories](classes/Stories.mdx) | Stories domain manager — held as [SnapcapClient.stories](classes/SnapcapClient.mdx#stories). |
 | [TypedEventBus](classes/TypedEventBus.mdx) | Typed event bus — the shared subscription primitive every domain manager (Friends, Messaging, Stories, Presence) composes. |
 
 ## Interfaces
@@ -116,6 +116,7 @@ setLogger(defaultTextLogger);
 | [Logger](type-aliases/Logger.mdx) | Handler signature passed to [setLogger](functions/setLogger.mdx). |
 | [MessagingEvents](type-aliases/MessagingEvents.mdx) | Event map for [Messaging.on](classes/Messaging.mdx#on). |
 | [PlaintextMessage](type-aliases/PlaintextMessage.mdx) | Plaintext message handed to the consumer's `onPlaintext` callback. |
+| [PresenceStatus](type-aliases/PresenceStatus.mdx) | Presence status — what the client reports for the active session's global "I'm here" / "I'm away" slot. |
 | [SnapcapClientOpts](type-aliases/SnapcapClientOpts.mdx) | Public constructor options for [SnapcapClient](classes/SnapcapClient.mdx). |
 | [Subscription](type-aliases/Subscription.mdx) | A live subscription — callable thunk that tears down when invoked, with `.signal` exposing the subscription's combined lifetime (fires on `sub()` OR on an externally-passed `opts.signal` abort). |
 | [ThrottleConfig](type-aliases/ThrottleConfig.mdx) | Throttle configuration accepted by `SnapcapClient`'s `throttle` option. |
@@ -136,13 +137,13 @@ setLogger(defaultTextLogger);
 
 | Function | Description |
 | ------ | ------ |
-| [activeIdentifier](functions/activeIdentifier.mdx) | Pull the active identifier (and its `loginIdentifier` `$case`) out of a [Credentials](type-aliases/Credentials.mdx) object. |
+| [activeIdentifier](functions/activeIdentifier.mdx) | - |
 | [bytesToUuid](functions/bytesToUuid.mdx) | Inverse of [uuidToBytes](functions/uuidToBytes.mdx): 16-byte buffer → hyphenated UUID string. |
 | [createSharedThrottle](functions/createSharedThrottle.mdx) | Build a SHARED [ThrottleGate](type-aliases/ThrottleGate.mdx) for use across multiple `SnapcapClient` instances in the same process. |
 | [highLowToUuid](functions/highLowToUuid.mdx) | Inverse of [uuidToHighLow](functions/uuidToHighLow.mdx): assemble a UUID string from the `{high, low}` pair. |
-| [idbDelete](functions/idbDelete.mdx) | Delete the entry at `(dbName, storeName, key)`. No-op if absent. |
-| [idbGet](functions/idbGet.mdx) | Read a value from the sandbox's IndexedDB at `(dbName, storeName, key)`. |
-| [idbPut](functions/idbPut.mdx) | Write `value` into the sandbox's IndexedDB at `(dbName, storeName, key)`. |
+| [idbDelete](functions/idbDelete.mdx) | Delete the entry at `(dbName, storeName, key)` in the given Sandbox's IndexedDB. No-op if absent. |
+| [idbGet](functions/idbGet.mdx) | Read a value from the given Sandbox's IndexedDB at `(dbName, storeName, key)`. |
+| [idbPut](functions/idbPut.mdx) | Write `value` into the given Sandbox's IndexedDB at `(dbName, storeName, key)`. |
 | [setLogger](functions/setLogger.mdx) | Install (or clear) the active logger. |
 | [uuidToBytes](functions/uuidToBytes.mdx) | Convert a hyphenated UUID string into its 16-byte representation. |
 | [uuidToHighLow](functions/uuidToHighLow.mdx) | Split a UUID into the `{high, low}` fixed64 pair Snap uses in some RPCs (e.g. `FriendAction.AddFriends`) instead of the bytes16 wrapper. |

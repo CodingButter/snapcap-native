@@ -178,15 +178,15 @@ Snap's server-side validation presumably decrypts the blob, verifies the embedde
 
 ## The full snapcap kameleon module
 
-Here's the entire `bootKameleon` flow in one place. Note: the `globalThis` referenced inside the patched bundle source is the **sandbox-realm** `globalThis`, not the host's. Bundle source is eval'd via `sandbox.runInContext(src)`, and `getSandbox().getGlobal("__snapcap_p")` reads the value back from that same realm.
+Here's the entire `bootKameleon` flow in one place. Note: the `globalThis` referenced inside the patched bundle source is the **sandbox-realm** `globalThis`, not the host's. Bundle source is eval'd via `sandbox.runInContext(src)`, and `sandbox.getGlobal("__snapcap_p")` reads the value back from that same realm.
 
 ```ts
-import { installShims } from "../shims/runtime.ts";
+import { Sandbox } from "../shims/sandbox.ts";
 import { installWebpackCapture } from "../shims/webpack-capture.ts";
 
 async function bootKameleonOnce(): Promise<KameleonContext> {
-  const sandbox = installShims({ url: "https://accounts.snapchat.com/" });
-  installWebpackCapture();
+  const sandbox = new Sandbox({ url: "https://accounts.snapchat.com/" });
+  installWebpackCapture(sandbox);
 
   // 1. Eval the accounts bundle in canonical Next.js order — inside the sandbox.
   for (const file of accountsFilesInOrder) {

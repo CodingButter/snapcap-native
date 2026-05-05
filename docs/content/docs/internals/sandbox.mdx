@@ -134,7 +134,7 @@ The trailing `\n` is the load-bearing one. The leading `\n` is defensive (some c
 
 That's the substrate for [multi-tenant in one process](/docs/guide/multi-tenant). Each tenant gets its own `DataStore`, its own `BrowserContext.userAgent`, and its own `Sandbox` — `localStorage` writes from tenant A's bundle are isolated from tenant B's bundle at the V8 vm-realm boundary.
 
-`src/shims/runtime.ts` still exposes a process-wide `installShims()` / `getSandbox()` pair as an internal helper for scratch scripts that want a single Sandbox without going through `SnapcapClient`. Production code should not rely on it — `SnapcapClient` ignores the singleton and constructs a fresh Sandbox per instance.
+`SnapcapClient` constructs a `new Sandbox({ dataStore, ... })` directly — there is no process-wide singleton. Scratch scripts that want a Sandbox without spinning up a full `SnapcapClient` import the `Sandbox` class and construct one themselves; everything that previously read a singleton (`idbGet`/`idbPut`/`idbDelete`, the bundle loaders) now takes the `Sandbox` instance as its first argument.
 
 ## What the consumer sees
 

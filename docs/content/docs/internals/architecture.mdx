@@ -132,5 +132,6 @@ A single process can drive many accounts simultaneously — see [Multi-tenant](/
 
 ## What's deferred
 
-- **Outbound message send + real presence frames.** `client.messaging.on("message", ...)` is wired end-to-end (the bundle session decrypts inbound through Fidelius and emits plaintext via `TypedEventBus`); `setTyping` / `setViewing` resolve correctly but don't yet fire a WS frame, and there's no `messaging.send(...)` yet. Both gated on mapping the bundle session's outbound delegate slots.
-- **Per-domain manager surfaces for `presence` / `stories` / `media`.** Stub classes today — the surfaces are designed at migration time, not pre-emptively.
+- **Inbound presence delegate.** `messaging.on("typing" | "viewing" | "read", ...)` is subscribable but the bundle's inbound presence delegate slot isn't hooked yet — events don't fire. Outbound (`setTyping` / `setViewing` / `setRead`) is wired end-to-end through the convMgr + presence-slice dual path.
+- **Wire-tested media sends.** `messaging.sendImage(...)` / `sendSnap(...)` / `stories.post(...)` compile + bring up cleanly through Snap's bundle send pipeline, but the integration suite hasn't covered them yet.
+- **Per-domain manager surfaces for `presence` / `media`.** Stub classes today — the surfaces are designed at migration time, not pre-emptively.

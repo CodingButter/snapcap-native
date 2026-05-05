@@ -4,7 +4,7 @@ title: FriendsUser
 
 # Interface: FriendsUser
 
-Defined in: [api/friends.ts:170](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L170)
+Defined in: [api/friends.ts:171](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L171)
 
 A user surfaced from search / lookup / friends list. Mirrors the shape
 of Snap's `GetSnapchatterPublicInfo` response — every public field
@@ -60,15 +60,15 @@ Forward-compat for fields Snap adds to the public-info envelope.
 
 | Property | Type | Description | Defined in |
 | ------ | ------ | ------ | ------ |
-| <a id="bitmojipublicinfo"></a> `bitmojiPublicInfo?` | [`BitmojiPublicInfo`](BitmojiPublicInfo.mdx) | Bitmoji avatar identifiers — see [BitmojiPublicInfo](BitmojiPublicInfo.mdx). | [api/friends.ts:189](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L189) |
-| <a id="creatorsubscriptionproductsinfo"></a> `creatorSubscriptionProductsInfo?` | `unknown` | Creator-subscription products envelope; shape varies, kept untyped. | [api/friends.ts:193](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L193) |
-| <a id="displayname"></a> `displayName?` | `string` | Display name shown in the Snap UI. | [api/friends.ts:177](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L177) |
-| <a id="isofficial"></a> `isOfficial?` | `boolean` | `true` for verified Snap-official accounts. | [api/friends.ts:181](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L181) |
-| <a id="ispopular"></a> `isPopular?` | `boolean` | `true` for accounts Snap surfaces as popular (high follower count, public profile, etc.). | [api/friends.ts:183](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L183) |
-| <a id="mutableusername"></a> `mutableUsername?` | `string` | Current handle when the user has changed it (Snap retains the original `username`). | [api/friends.ts:179](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L179) |
-| <a id="notfound"></a> `notFound?` | `true` | Set only by [IFriendsManager.getUsers](IFriendsManager.mdx#getusers) when the server confirmed no record exists. | [api/friends.ts:196](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L196) |
-| <a id="profilelogo"></a> `profileLogo?` | `unknown` | Profile-logo envelope; shape varies, kept untyped. | [api/friends.ts:191](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L191) |
-| <a id="profiletier"></a> `profileTier?` | `number` | Profile-tier int; semantics opaque (observed: `1` for typical accounts). | [api/friends.ts:187](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L187) |
-| <a id="snapproid"></a> `snapProId?` | `string` | Snapchat+ subscription product id; empty string when not subscribed. | [api/friends.ts:185](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L185) |
-| <a id="userid"></a> `userId` | `string` | Hyphenated UUID (string view of Snap's `userId` bytes). | [api/friends.ts:172](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L172) |
-| <a id="username"></a> `username` | `string` | Snap username (handle). May be empty when populated from a partial source. | [api/friends.ts:174](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L174) |
+| <a id="bitmojipublicinfo"></a> `bitmojiPublicInfo?` | [`BitmojiPublicInfo`](BitmojiPublicInfo.mdx) | Bitmoji avatar identifiers — see [BitmojiPublicInfo](BitmojiPublicInfo.mdx). | [api/friends.ts:190](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L190) |
+| <a id="creatorsubscriptionproductsinfo"></a> `creatorSubscriptionProductsInfo?` | `unknown` | Creator-subscription products envelope; shape varies, kept untyped. | [api/friends.ts:194](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L194) |
+| <a id="displayname"></a> `displayName?` | `string` | Display name shown in the Snap UI. | [api/friends.ts:178](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L178) |
+| <a id="isofficial"></a> `isOfficial?` | `boolean` | `true` for verified Snap-official accounts. | [api/friends.ts:182](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L182) |
+| <a id="ispopular"></a> `isPopular?` | `boolean` | `true` for accounts Snap surfaces as popular (high follower count, public profile, etc.). | [api/friends.ts:184](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L184) |
+| <a id="mutableusername"></a> `mutableUsername?` | `string` | Current handle when the user has changed it (Snap retains the original `username`). | [api/friends.ts:180](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L180) |
+| <a id="notfound"></a> `notFound?` | `true` | Set only by [IFriendsManager.getUsers](IFriendsManager.mdx#getusers) when the server confirmed no record exists. | [api/friends.ts:197](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L197) |
+| <a id="profilelogo"></a> `profileLogo?` | `unknown` | Profile-logo envelope; shape varies, kept untyped. | [api/friends.ts:192](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L192) |
+| <a id="profiletier"></a> `profileTier?` | `number` | Profile-tier int; semantics opaque (observed: `1` for typical accounts). | [api/friends.ts:188](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L188) |
+| <a id="snapproid"></a> `snapProId?` | `string` | Snapchat+ subscription product id; empty string when not subscribed. | [api/friends.ts:186](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L186) |
+| <a id="userid"></a> `userId` | `string` | Hyphenated UUID (string view of Snap's `userId` bytes). | [api/friends.ts:173](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L173) |
+| <a id="username"></a> `username` | `string` | Snap username (handle). May be empty when populated from a partial source. | [api/friends.ts:175](https://github.com/CodingButter/snapcap-native/blob/main/src/api/friends.ts#L175) |
