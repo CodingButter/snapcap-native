@@ -247,14 +247,15 @@ export class Messaging {
    * in chat history (not ephemeral).
    *
    * @param convId - Hyphenated conversation UUID.
-   * @param image - Raw image bytes (PNG / JPEG / WebP).
-   * @param opts - Optional `caption` shown beside the image.
+   * @param image - Raw image bytes (PNG / JPEG / WebP) or a filesystem path.
+   * @param opts - Optional `caption` (sent as a separate text message
+   *   immediately after; matches Snap's UI).
    */
   sendImage(
     convId: string,
-    image: Uint8Array,
+    image: Uint8Array | string,
     opts?: { caption?: string },
-  ): Promise<string> {
+  ): Promise<void> {
     return sendImageImpl(this.#internal, convId, image, opts);
   }
 
