@@ -18,28 +18,108 @@
 
 /**
  * Parse intrinsic dimensions from the leading bytes of a supported image
- * format. PNG only at the moment — the bundle's media-send path passes
- * raw bytes through, so the format that lands here matches whatever the
- * caller supplied to `sendImage`. JPEG / WebP / GIF surface a clear error
- * with the offending magic so the next iteration knows what to add.
+ * format. PNG, JPEG, and WebP (VP8 / VP8L / VP8X) — the formats the bundle's
+ * media-send path actually receives. GIF and SVG surface a clear "unsupported
+ * format" error so the next iteration knows what to add.
  *
  * @internal
  */
 function readImageDimensions(buf: Uint8Array): { width: number; height: number } {
-  // PNG signature "\x89PNG\r\n\x1a\n" + IHDR chunk header at offsets 8-15;
+  if (buf.length < 8) {
+    throw new Error("readImageDimensions: buffer too short");
+  }
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  // PNG: signature "\x89PNG\r\n\x1a\n" + IHDR chunk header at offsets 8-15;
   // width is the big-endian uint32 at 16-19, height at 20-23.
   if (
-    buf.length >= 24 &&
     buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
     buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
   ) {
-    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     return { width: dv.getUint32(16, false), height: dv.getUint32(20, false) };
+  }
+  // JPEG: 0xFF 0xD8 marker + scan for SOFn (0xFF 0xC0..0xC3, 0xC5..0xC7,
+  // 0xC9..0xCB, 0xCD..0xCF). Each marker is followed by a 2-byte big-endian
+  // length, 1-byte precision, then height (uint16 BE), width (uint16 BE).
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i < buf.length - 9) {
+      if (buf[i] !== 0xff) { i += 1; continue; }
+      const marker = buf[i + 1];
+      if (marker === undefined) break;
+      if (
+        (marker >= 0xc0 && marker <= 0xc3) ||
+        (marker >= 0xc5 && marker <= 0xc7) ||
+        (marker >= 0xc9 && marker <= 0xcb) ||
+        (marker >= 0xcd && marker <= 0xcf)
+      ) {
+        return { width: dv.getUint16(i + 7, false), height: dv.getUint16(i + 5, false) };
+      }
+      const segLen = dv.getUint16(i + 2, false);
+      i += 2 + segLen;
+    }
+    throw new Error("readImageDimensions: JPEG SOF marker not found");
+  }
+  // WebP: "RIFF" + size + "WEBP" + chunk type ("VP8 ", "VP8L", "VP8X").
+  if (
+    buf.length >= 30 &&
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  ) {
+    // VP8 (lossy): width/height at offsets 26-27 / 28-29 as uint16 LE,
+    // dimensions in the low 14 bits.
+    if (buf[12] === 0x56 && buf[13] === 0x50 && buf[14] === 0x38 && buf[15] === 0x20) {
+      return {
+        width: dv.getUint16(26, true) & 0x3fff,
+        height: dv.getUint16(28, true) & 0x3fff,
+      };
+    }
+    // VP8L (lossless): 4-byte signature 0x2f at offset 20, then width-1 (14
+    // bits) and height-1 (14 bits) packed across offsets 21-24.
+    if (buf[12] === 0x56 && buf[13] === 0x50 && buf[14] === 0x38 && buf[15] === 0x4c) {
+      const b21 = buf[21]!, b22 = buf[22]!, b23 = buf[23]!, b24 = buf[24]!;
+      const wMinus1 = ((b22 & 0x3f) << 8) | b21;
+      const hMinus1 = ((b24 & 0x0f) << 10) | (b23 << 2) | ((b22 & 0xc0) >> 6);
+      return { width: wMinus1 + 1, height: hMinus1 + 1 };
+    }
+    // VP8X (extended): width-1 at offset 24-26 (3 bytes LE), height-1 at 27-29.
+    if (buf[12] === 0x56 && buf[13] === 0x50 && buf[14] === 0x38 && buf[15] === 0x58) {
+      const wMinus1 = buf[24]! | (buf[25]! << 8) | (buf[26]! << 16);
+      const hMinus1 = buf[27]! | (buf[28]! << 8) | (buf[29]! << 16);
+      return { width: wMinus1 + 1, height: hMinus1 + 1 };
+    }
+    throw new Error("readImageDimensions: unrecognized WebP variant");
   }
   const head = Array.from(buf.slice(0, 4))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join(" ");
   throw new Error(`readImageDimensions: unsupported format (head: ${head})`);
+}
+
+/**
+ * Install a cookie-attached `fetch` on the standalone-realm `globalThis`.
+ * The mint-realm boot leaves a stub that throws "fetch unavailable in
+ * mint realm"; the session realm reuses that boot, so we have to override.
+ *
+ * The bundle's media-upload path (`Fi.uploadMedia`) calls fetch to PUT
+ * media bytes to Snap's CDN; without this, the path silently hangs in a
+ * promise chain that catches the throw and never resolves.
+ *
+ * Pass the `setupBundleSession` cookieJar + userAgent through the existing
+ * `makeJarFetch` host-realm wrapper — same plumbing the WebSocket shim
+ * uses for its upgrade GET.
+ *
+ * @param realmGlobal - The standalone realm's globalThis (from
+ *   `vm.runInContext("globalThis", context)`).
+ * @param fetch - A pre-bound fetch function (typically built via
+ *   `makeJarFetch(cookieJar, userAgent)` in `setup.ts`).
+ *
+ * @internal
+ */
+export function installSessionRealmFetch(
+  realmGlobal: Record<string, unknown>,
+  fetch: (url: string, init?: RequestInit) => Promise<Response>,
+): void {
+  realmGlobal.fetch = fetch;
 }
 
 /**
@@ -251,8 +331,14 @@ export function installSessionRealmGlobals(realmGlobal: Record<string, unknown>)
               const dims = readImageDimensions(buf);
               naturalWidth = dims.width;
               naturalHeight = dims.height;
+              if (process.env.SNAPCAP_DEBUG_IMAGE === "1") {
+                process.stderr.write(`[Image.shim] src=${v} size=${buf.byteLength} dims=${dims.width}x${dims.height}\n`);
+              }
               onload?.({ target: img });
             } catch (err) {
+              if (process.env.SNAPCAP_DEBUG_IMAGE === "1") {
+                process.stderr.write(`[Image.shim] FAIL src=${v} err=${(err as Error).message}\n`);
+              }
               onerror?.({ target: img, error: err });
             }
           });

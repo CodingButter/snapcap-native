@@ -40,8 +40,9 @@
  */
 import { join } from "node:path";
 import vm from "node:vm";
-import { installSessionRealmGlobals } from "./realm-globals.ts";
+import { installSessionRealmGlobals, installSessionRealmFetch } from "./realm-globals.ts";
 import { createWebSocketShim } from "./ws-shim.ts";
+import { makeJarFetch } from "../../../../transport/cookies.ts";
 import { installImportScripts } from "./import-scripts.ts";
 import { loadPatchedChunk } from "./chunk-patch.ts";
 import { instrumentRegisterDuplexHandler } from "./register-duplex-trace.ts";
@@ -111,6 +112,31 @@ export async function setupBundleSession(
   // ── Top up the realm with the slots the chunk + its dep graph need ─
   const realmGlobal = vm.runInContext("globalThis", context) as Record<string, unknown>;
   installSessionRealmGlobals(realmGlobal);
+
+  // ── Cookie-attached fetch for media uploads (Fi.uploadMedia → CDN) ─
+  // The mint-realm boot stubs `fetch` to throw "unavailable in mint realm".
+  // The session realm reuses that boot, so override here with a real
+  // fetch that threads cookies through the same jar the WebSocket shim
+  // uses below. Without this, the bundle's image-send pipeline hangs
+  // after `Image` dimensions are read — Fi.uploadMedia silently catches
+  // the "fetch unavailable" throw and waits for an upload that never starts.
+  const baseRealmFetch = makeJarFetch(opts.cookieJar, opts.userAgent);
+  const realmFetch = process.env.SNAPCAP_DEBUG_REALM_FETCH === "1"
+    ? async (url: string, init?: RequestInit): Promise<Response> => {
+        const method = init?.method ?? "GET";
+        const t0 = Date.now();
+        process.stderr.write(`[realm.fetch] → ${method} ${url}\n`);
+        try {
+          const res = await baseRealmFetch(url, init);
+          process.stderr.write(`[realm.fetch] ← ${method} ${url} ${res.status} ${Date.now() - t0}ms\n`);
+          return res;
+        } catch (err) {
+          process.stderr.write(`[realm.fetch] ✗ ${method} ${url} ${(err as Error).message}\n`);
+          throw err;
+        }
+      }
+    : baseRealmFetch;
+  installSessionRealmFetch(realmGlobal, realmFetch);
 
   // ── WebSocket shim (pre-binds cookies for the duplex upgrade) ──────
   const WebSocketShim = await createWebSocketShim({

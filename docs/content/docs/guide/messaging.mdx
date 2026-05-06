@@ -6,7 +6,7 @@ description: 'Inbox enumeration, raw envelope reads, and the live decrypted mess
 `client.messaging` exposes two layers in one manager:
 
 - **Raw envelope reads** — `listConversations()` and `fetchEncryptedMessages()` are direct gRPC-Web calls against `MessagingCoreService`. Useful for inbox enumeration and historical backfill that doesn't need decrypt.
-- **Live decrypted stream + outbound presence** — `on("message", …)`, `setTyping`, `setViewing`, `setRead`, plus the outbound sends (`sendText`, `sendImage`, `sendSnap`). The first call to any of these lazily brings up Snap's own bundle session inside the per-instance Sandbox; subsequent calls reuse it.
+- **Live decrypted stream + outbound presence** — `on("message", …)`, `setTyping`, `setViewing`, `setRead`, plus the outbound sends (`sendText`, `sendSnap`). The first call to any of these lazily brings up Snap's own bundle session inside the per-instance Sandbox; subsequent calls reuse it. `sendImage` is the exception — it goes direct gRPC-Web and never needs the bundle session.
 
 The bring-up is **lazy** because it costs ~3s cold (mint/register Fidelius identity if needed, eval the worker chunk, open the duplex WebSocket). Consumers that only want raw envelope reads shouldn't pay for it.
 
@@ -107,16 +107,36 @@ const sub = client.messaging.on("message", (msg) => {
 await client.messaging.sendText(conversationId, "hello");
 ```
 
-## Sending images and snaps (experimental)
+## Sending images
 
 ```ts
+// Path or bytes — both work.
+await client.messaging.sendImage(conversationId, "/home/me/photo.jpg");
+await client.messaging.sendImage(conversationId, imageBytes);
 await client.messaging.sendImage(conversationId, imageBytes, { caption: "hi" });
+```
+
+`sendImage` posts a persistent attachment that stays in chat history. PNG / JPEG / WebP bytes (or a filesystem path) go in; a `Promise<void>` comes out — resolves on success, rejects with the gRPC status / message on failure.
+
+The pipeline is **direct gRPC-Web** — three calls in sequence, all from Node, no bundle session, no canvas:
+
+1. `MediaDeliveryService/getUploadLocations` returns a pre-signed S3 PUT URL + media-id token (~100 ms).
+2. AES-256-CBC encrypt the bytes with a fresh per-message random key + IV; HTTP PUT ciphertext to the S3 URL.
+3. `MessagingCoreService/CreateContentMessage` with the media-id, AES key, and IV embedded in the envelope.
+
+Recipients fetch from S3 and decrypt client-side using the keys the message carries. Verified live ~370 ms wall-clock. The encryption is the regular media-at-rest layer Snap's own clients use — distinct from Fidelius (which adds end-to-end identity-keyed encryption on top, used only for snaps).
+
+`opts.caption` sends a separate text message immediately after the image. This matches what Snap's UI does — image-with-caption is two `CreateContentMessage` calls on the wire, not a combined content kind.
+
+## Sending snaps (experimental)
+
+```ts
 await client.messaging.sendSnap(conversationId, imageBytes, { timer: 5 });
 ```
 
-Both route through Snap's own bundle send pipeline. `sendImage` posts a persistent attachment that stays in chat history; `sendSnap` posts a disappearing snap (destination kind 122) — pass `timer` for a custom display duration in seconds, omit for view-once. The bundle owns upload, Fidelius encryption, and dispatch end-to-end. They compile and bring up the bundle session cleanly but are **not** yet wire-tested in the integration suite — treat as experimental.
+`sendSnap` posts a disappearing snap (destination kind 122) — pass `timer` for a custom display duration in seconds, omit for view-once. Routes through Snap's bundle session because snaps need Fidelius E2E. The bundle owns upload, Fidelius encryption, and dispatch end-to-end. Compiles and brings up the session cleanly but is **not** yet wire-tested in the integration suite — treat as experimental.
 
-`client.stories.post(bytes, { caption })` shares the same pipeline targeted at `MY_STORY`. Same experimental status — see [`Stories`](/docs/api/classes/Stories).
+`client.stories.post(bytes, { caption })` shares the same bundle-session pipeline targeted at `MY_STORY`. Same experimental status — see [`Stories`](/docs/api/classes/Stories).
 
 ## Outbound presence
 
@@ -165,10 +185,10 @@ The first call to any of these brings up the bundle session:
 
 - `client.messaging.on(event, …)` (any event)
 - `client.messaging.setTyping(...)` / `setViewing(...)` / `setRead(...)`
-- `client.messaging.sendText(...)` / `sendImage(...)` / `sendSnap(...)`
+- `client.messaging.sendText(...)` / `sendSnap(...)`
 - `client.stories.post(...)`
 
-`listConversations()` and `fetchEncryptedMessages()` do **not** — they're plain gRPC-Web and stay cheap. If you only need inbox enumeration, you'll never pay for the bundle session. `client.setStatus` / `getStatus` also stay cheap — they just read/write the existing bundle's Zustand slice and require `authenticate()` to have completed.
+`listConversations()`, `fetchEncryptedMessages()`, and `sendImage(...)` do **not** — they're plain gRPC-Web and stay cheap. If you only need inbox enumeration, you'll never pay for the bundle session. `client.setStatus` / `getStatus` also stay cheap — they just read/write the existing bundle's Zustand slice and require `authenticate()` to have completed.
 
 Bring-up is single-flight per `SnapcapClient`: concurrent `.on(...)` calls all wait on the same in-flight promise. If bring-up fails, the next subscription / presence call retries from scratch.
 
@@ -181,8 +201,9 @@ Bring-up is single-flight per `SnapcapClient`: concurrent `.on(...)` calls all w
 | `sendText(convId, text)` | Working — routes through bundle send pipeline |
 | `setTyping` / `setViewing` / `setRead` — outbound presence | Working — convMgr + presence-slice dual-path |
 | `client.setStatus` / `getStatus` — global Present/Away | Working |
-| `sendImage(...)` / `sendSnap(...)` | Experimental — compiles and brings up cleanly, not wire-tested |
-| `client.stories.post(media)` | Experimental — same shape as `sendImage`, not wire-tested |
+| `sendImage(convId, image, opts?)` | Working — direct gRPC-Web pipeline, accepts bytes or path |
+| `sendSnap(...)` | Experimental — compiles and brings up cleanly, not wire-tested |
+| `client.stories.post(media)` | Experimental — same shape as `sendSnap`, not wire-tested |
 | `on("typing" / "viewing" / "read", ...)` | Subscribable today, but the bundle's inbound presence delegate hasn't been hooked yet — events don't fire |
 
 See the [messaging-session internals](/docs/internals/messaging-session) for the bring-up plumbing, and [Fidelius](/docs/internals/fidelius) for the identity / decrypt side.

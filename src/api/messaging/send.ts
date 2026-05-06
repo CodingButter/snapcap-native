@@ -98,49 +98,40 @@ export async function sendText(
 
 /**
  * Send a persistent image attachment into a conversation. Image stays
- * in chat history (not ephemeral). Routes through the bundle's
- * messaging session — `sendMessageWithContent` builds the
- * `CreateContentMessage` envelope and the upload pipeline runs from
- * inside the WASM via the `mediaUploadDelegate`.
+ * in chat history (not ephemeral). Routes through the **direct gRPC-Web
+ * pipeline** — three calls: `MediaDeliveryService.getUploadLocations`
+ * for a signed S3 PUT URL, AES-256-CBC encrypt + PUT the bytes, then
+ * `MessagingCoreService.CreateContentMessage` with the media reference
+ * and AES key + IV embedded in the envelope. No bundle session, no
+ * canvas shim — pure Node code.
  *
  * @param convId - Hyphenated conversation UUID.
- * @param image - Raw image bytes (PNG / JPEG / WebP).
- * @param opts - Optional `caption` shown beside the image.
- * @returns The message ID assigned by the bundle's send pipeline.
- *
- * @remarks
- * Wire-tested via `sendText` only — `sendImage` compiles + the
- * bring-up path runs without throwing, but the bundle's `pe`/`E$`
- * media path needs a Blob shim and end-to-end media-upload primitives
- * we haven't yet exercised. If the bundle's `E$` send rejects, an
- * error surfaces; the caller can retry on the next bundle update.
+ * @param image - Raw image bytes (PNG / JPEG / WebP) or a filesystem path.
+ * @param opts - Optional `caption` (sent as a separate text message
+ *   immediately after the image; matches what Snap's UI does).
+ * @returns Resolves on success; rejects with the gRPC status / message
+ *   if either call fails.
  */
 export async function sendImage(
   internal: MessagingInternal,
   convId: string,
-  image: Uint8Array,
+  image: Uint8Array | string,
   opts?: { caption?: string },
-): Promise<string> {
-  await internal.ensureSession();
+): Promise<void> {
+  const { sendImageDirect } = await import("../_media_send.ts");
   const ctx = await internal.ctx();
-  const { getSelfUserId } = await import("./reads.ts");
-  const selfUserId = await getSelfUserId(ctx);
-  const conv = await lookupConversation(internal, convId, selfUserId);
-  const session = internal.session.get();
-  const realm = internal.realm.get();
-  if (!session || !realm) {
-    throw new Error("Messaging.sendImage: bundle session not available after bring-up");
+  const bytes = typeof image === "string"
+    ? await readImageFromPath(image)
+    : image;
+  await sendImageDirect(ctx, convId, bytes);
+  if (opts?.caption) {
+    await sendText(internal, convId, opts.caption);
   }
-  return sendMediaViaSession({
-    realm,
-    session,
-    kind: "image",
-    convId,
-    convType: conv.type,
-    media: image,
-    caption: opts?.caption,
-    events: internal.events,
-  });
+}
+
+async function readImageFromPath(path: string): Promise<Uint8Array> {
+  const { readFile } = await import("node:fs/promises");
+  return new Uint8Array(await readFile(path));
 }
 
 /**
