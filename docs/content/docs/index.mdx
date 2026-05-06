@@ -79,7 +79,7 @@ The source of truth for what's wired today. See the [capability matrix in the RE
 - `client.messaging.sendText(convId, text)` — outbound text DM via Snap's own bundle send path.
 - `client.messaging.setTyping(...)` / `setViewing(...)` / `setRead(...)` — outbound presence via the bundle's convMgr + presence-slice dual path.
 - Fidelius identity mint + register, per-instance and isolated.
-- Per-instance Sandbox (multi-tenant in one process) — verified by `scripts/test-isolation.ts`.
+- Per-instance Sandbox (multi-tenant in one process) — verified by `tests/shims/multi-instance-isolation.test.ts`.
 - `DataStore`-backed sandbox persistence (cookies, `local_*`, `session_*`, `indexdb_*`).
 - Opt-in HTTP throttling (per-instance + shared gates).
 - Structured network observability (`setLogger`, `SNAP_NETLOG=1`).
