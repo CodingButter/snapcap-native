@@ -93,17 +93,17 @@ We don't care what `www.snapchat.com/web` returns. We just want its `Set-Cookie`
 
 ## Putting it together
 
-The full `mintBearer` from `auth/sso.ts`:
+The full `_mintTicketFromSSO` from `src/api/auth/sso-ticket.ts`:
 
 ```ts
-export async function mintBearer(opts: MintBearerOpts): Promise<BearerResult> {
+export async function _mintTicketFromSSO(opts: MintTicketOpts): Promise<MintTicketResult> {
   const jarFetch = makeJarFetch(opts.jar, opts.userAgent);
-  const ssoUrl = `${ACCOUNTS_HOST}${opts.continueParam ?? DEFAULT_CONTINUE}`;
+  const ssoUrl = `${SSO_HOST}${opts.continueParam ?? DEFAULT_SSO_CONTINUE}`;
 
   // 1. Hit /accounts/sso. Cookie jar carries __Host-sc-a-auth-session.
   let resp = await jarFetch(ssoUrl, {
     method: "GET",
-    headers: { referer: `${ACCOUNTS_HOST}/v2/password` },
+    headers: { referer: `${SSO_HOST}/v2/password` },
     redirect: "manual",
   });
 
@@ -116,7 +116,7 @@ export async function mintBearer(opts: MintBearerOpts): Promise<BearerResult> {
   // 3. Visit www.snapchat.com so parent-domain cookies seed the jar.
   await jarFetch(location, {
     method: "GET",
-    headers: { accept: "text/html,…", referer: `${ACCOUNTS_HOST}/` },
+    headers: { accept: "text/html,…", referer: `${SSO_HOST}/` },
   });
 
   return { bearer, landingUrl: location };
@@ -132,17 +132,17 @@ And the bearer is in our hand as a string.
 
 ## Refreshing on 401
 
-Bearers are short-lived. We don't know the exact TTL — Snap doesn't document it — but we don't need to. The `transport/grpc-web.ts` helper retries any 401 once via `refreshBearer`:
+Bearers are short-lived. We don't know the exact TTL — Snap doesn't document it — but we don't need to. The `src/api/auth/refresh.ts` module drives a bearer refresh via the bundle's own `state.auth.refreshToken` thunk (which internally re-runs kameleon attestation + the SSO redirect):
 
 ```ts
-let resp = await send(opts.bearer);
-if (resp.status === 401 && opts.refreshBearer) {
-  const fresh = await opts.refreshBearer();
-  if (fresh) resp = await send(fresh);
+// src/api/auth/refresh.ts (paraphrased)
+export async function refreshAuthToken(ctx, id) {
+  const attestation = await ctx.sandbox.kameleon.finalize(id);
+  await authSlice(ctx.sandbox).refreshToken("on_demand", attestation);
 }
 ```
 
-`SnapcapClient.refreshBearer` re-runs `mintBearer` against the same cookie jar. The long-lived `__Host-sc-a-auth-session` is still valid, so the SSO redirect still issues a fresh ticket. The jar accumulates fresh parent-domain cookies in the process. The new Bearer slots into `this.bearer` and the call succeeds.
+The bundle's `refreshToken` calls `state.auth.refreshToken` internally, minting a fresh SSO ticket from the long-lived `__Host-sc-a-auth-session` cookie and populating its Zustand auth slice. The new bearer is immediately available via `authSlice(sandbox).authToken.token`.
 
 Net effect: callers never see bearer expiration. They write `await client.friends.list()` and the auth dance is invisible.
 

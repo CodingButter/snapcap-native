@@ -100,4 +100,4 @@ Both surfaces fan out the full [`FriendsSnapshot`](/docs/api/interfaces/FriendsS
 const hits = await client.friends.search("alice");
 ```
 
-Returns matching [`User`](/docs/api/interfaces/Friend) records with just `userId` / `username` / `displayName` populated — Snap's search index doesn't return the richer flags. Run the hits through `getUsers()` if you need bitmoji or profile-tier data.
+Returns matching [`FriendsUser`](/docs/api/interfaces/FriendsUser) records with just `userId` / `username` / `displayName` populated — Snap's search index doesn't return the richer flags. Run the hits through `getUsers()` if you need bitmoji or profile-tier data.

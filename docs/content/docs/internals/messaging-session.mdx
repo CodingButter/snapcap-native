@@ -3,7 +3,7 @@ title: 'The bundle layer'
 description: 'How the chat and accounts bundles are loaded inside the per-instance Sandbox, and how SDK code reaches into them through a typed registry.'
 ---
 
-The `bundle/` layer is where Snap's actual JavaScript bundles meet the SDK. Two webpacked bundles run inside the per-instance `Sandbox`'s `vm.Context` — the accounts bundle (login + kameleon attestation) and the chat bundle (AtlasGw, friending, search, presence, Fidelius E2E). The SDK calls into them through a typed registry of late-bound getters; consumer-shape work happens one layer up in `api/*.ts`.
+The `bundle/` layer is where Snap's actual JavaScript bundles meet the SDK. Two webpacked bundles run inside the per-instance `Sandbox`'s `vm.Context` — the accounts bundle (login + kameleon attestation) and the chat bundle (AtlasGw, friending, search, presence, Fidelius E2E). The SDK calls into them through a typed registry of late-bound getters; consumer-shape work happens one layer up in `api/<domain>/`.
 
 For non-E2E paths (login, friends, search, conversation enumeration) the SDK reaches Snap's webpack methods directly through the registry — no session harness needed. For inbound message decrypt and **outbound text/media/presence sends**, the bundle's own `En.createMessagingSession(...)` call drives Snap's WASM-side state machines; the SDK lazily brings up that session on the first `client.messaging.on(...)` / `sendText(...)` / `setTyping(...)` / `client.stories.post(...)` call. The bring-up lives in `src/bundle/chat/standalone/session/setup.ts:setupBundleSession` and is wired from `src/api/messaging/bringup.ts:bringUpSession` (and `src/api/stories.ts:#bringUpSession`); the captured session is surfaced via `SetupBundleSessionOpts.onSession` so outbound paths can drive `sendMessageWithContent` / `sendTypingNotification` / `enterConversation` against it. See [Fidelius](/docs/internals/fidelius) for the identity side of the story.
 
@@ -15,16 +15,16 @@ For non-E2E paths (login, friends, search, conversation enumeration) the SDK rea
 | `bundle/accounts-loader.ts` | Loads the accounts bundle into the sandbox and boots the kameleon WASM. Per-Sandbox singleton (cached on `sandbox.kameleon`). |
 | `bundle/chat-loader.ts` | Loads the chat bundle main + sibling chunks. Source-patches the webpack runtime to leak `p` to `__snapcap_chat_p`, and source-patches a handful of closure-private symbols (`Fi`, `HY`, `JY`, AtlasGw `A`, friending `jz`) onto `globalThis.__SNAPCAP_*` so the registry can address them by name. |
 | `bundle/chat-wasm-boot.ts` | Boots the chat-bundle Emscripten WASM (`e4fa…wasm`) directly from webpack module 86818. Pre-fetched bytes are fed through Emscripten's `instantiateWasm` hook so we never spawn a Web Worker. Reserved for the upcoming messaging features; not on the auth path. |
-| `bundle/prime.ts` | Resolves cyclic-dependency rewires after chat-bundle eval — primes module 10409 (HY/JY/JZ codecs) and module 94704 (Zustand `M.getState`). Both required before any `register.ts` getter works. |
+| `bundle/prime.ts` | Resolves cyclic-dependency rewires after chat-bundle eval — primes module 10409 (HY/JY/JZ codecs) and module 94704 (Zustand `M.getState`). Both required before any `register/` getter works. |
 | `bundle/presence-bridge.ts` | Synthesizes the duplex-client shape (`registerHandler` / `send` / `addStreamListener` / …) the bundle's `state.presence.initializePresenceServiceTs(bridge)` expects. Lets `Messaging.setTyping` / `setViewing` prime the bundle's modern presence path so today's mobile recipients honour the indicator. |
-| `bundle/register.ts` | Tier-1 typed registry. One getter per bundle entity; each takes `Sandbox` as its first arg and returns the live class instance / module export. No consumer-shape adaptation. |
-| `bundle/types.ts` | Bundle-realm type declarations — protobuf shapes, manager interfaces, presence + messaging slice surfaces, the `Wreq` webpack-require type. |
+| `bundle/register/` | Tier-1 typed registry — per-domain files (`auth.ts`, `friends.ts`, `messaging.ts`, …) with one getter per bundle entity. Each getter takes `Sandbox` as its first arg and returns the live class instance / module export. No consumer-shape adaptation. Barrel: `register/index.ts`. |
+| `bundle/types/` | Bundle-realm type declarations — protobuf shapes, manager interfaces, presence + messaging slice surfaces, the `Wreq` webpack-require type. Barrel: `types/index.ts`. |
 
-The boundary is sharp: anything that reads source-patched globals or webpack modules lives in `bundle/`; anything that translates between consumer types (UUID strings, plain numbers) and bundle types (16-byte buffers, `{highBits, lowBits}` pairs) lives in `api/*.ts` and uses the helpers in `api/_helpers.ts`.
+The boundary is sharp: anything that reads source-patched globals or webpack modules lives in `bundle/`; anything that translates between consumer types (UUID strings, plain numbers) and bundle types (16-byte buffers, `{highBits, lowBits}` pairs) lives in `api/<domain>/` and uses the helpers in `api/_helpers.ts`.
 
 ## Bring-up order
 
-`api/auth.ts:bringUp(ctx)` is the single entry point. Idempotent — a per-context `_bundlesLoaded` marker short-circuits subsequent calls.
+`api/auth/bringup.ts:bringUp(ctx)` is the single entry point. Idempotent — a per-context `_bundlesLoaded` marker short-circuits subsequent calls.
 
 ```
 1. getKameleon(sandbox, { page: "www_login" })
@@ -49,17 +49,17 @@ The boundary is sharp: anything that reads source-patched globals or webpack mod
    rewires.
 ```
 
-After step 3 the registry getters in `bundle/register.ts` resolve. `api/auth.ts` then drives `WebLoginService` (cold path) or short-circuits through the bundle's own SSO `initialize` (warm path) and the bundle's Zustand auth slice ends up populated.
+After step 3 the registry getters in `bundle/register/` resolve. `api/auth/` then drives `WebLoginService` (cold path) or short-circuits through the bundle's own SSO `initialize` (warm path) and the bundle's Zustand auth slice ends up populated.
 
 ## The registry pattern
 
-`bundle/register.ts` exports two kinds of entities:
+`bundle/register/` exports two kinds of entities:
 
 - **WIRED** — a constant maps to a confirmed `__SNAPCAP_*` name or webpack module id. The getter resolves the live entity from the sandbox at call time.
 - **TODO** — constant is `undefined`; the getter throws an explicit "not yet mapped" error. The comment above the constant points at the byte offset to investigate.
 
 ```ts
-// Simplified shape — see bundle/register.ts for the real one.
+// Simplified shape — see bundle/register/friends.ts for the real one.
 const G_ATLAS_CLIENT = "__SNAPCAP_ATLAS";
 
 export function atlasGw(sandbox: Sandbox): AtlasGwClient {
@@ -72,8 +72,8 @@ export function atlasGw(sandbox: Sandbox): AtlasGwClient {
 The api-layer call site looks like:
 
 ```ts
-// api/friends.ts
-import { friendActionClient } from "../bundle/register.ts";
+// api/friends/mutations.ts
+import { friendActionClient } from "../../bundle/register/index.ts";
 
 export async function add(ctx: ClientContext, userId: string, source: number) {
   const params = makeFriendIdParams([userId], source);

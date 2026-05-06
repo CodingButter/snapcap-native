@@ -88,10 +88,9 @@ A small key/value interface backs everything that the bundle would normally writ
 
 ```ts
 interface DataStore {
-  get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<void>;
+  get(key: string): Promise<Uint8Array | undefined>;
+  set(key: string, value: Uint8Array): Promise<void>;
   delete(key: string): Promise<void>;
-  // … plus list/clear primitives
 }
 ```
 

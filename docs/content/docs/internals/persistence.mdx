@@ -85,16 +85,14 @@ Three paths read/write that key (all sharing the same in-memory `tough-cookie.Co
 
 All three see each other's writes, so bundle-side cookie writes are visible to the next gRPC call and vice versa. See [the shims chapter](/docs/internals/shims) for the I/O ordering.
 
-## Why the bearer is in sessionStorage, not in cookies
+## Where the bearer lives
 
 SSO bearer tokens are short-lived (Snap doesn't document the TTL but empirically it's ~1 hour) and re-mintable. The durable bit is `__Host-sc-a-auth-session` — that cookie is what `accounts.snapchat.com/accounts/sso` checks before issuing a new ticket. Anything that has the cookie can mint a fresh bearer; anything that has a bearer without the cookie cannot.
 
-So:
+The bearer is no longer an SDK-owned key. It lives inside the bundle's Zustand auth slice (which spills into `local_*` / `session_*` like any other bundle storage write); the SDK reads it back through `authSlice(sandbox).authToken.token`. On 401, the SDK re-runs the SSO mint via `src/api/auth/refresh.ts` (which calls the bundle's `state.auth.refreshToken`) rather than maintaining a separate cache.
 
 - The cookie jar (under `cookie_jar`) is the source of truth for "am I logged in".
-- The bearer (under `session_snapcap_bearer`) is a per-process cache of the most recently minted ticket. On 401 it gets re-minted via `mintBearer` against the same jar; the new value overwrites the old.
-
-Putting it in `sessionStorage` instead of `localStorage` is a deliberate framing: per-process cache, not per-account credential.
+- The bearer is a transient in-bundle-slice value — present after `authenticate()`, refreshed on 401, cleared by `logout()`.
 
 ## Why Fidelius identity is bundle-owned (not SDK-owned)
 
@@ -113,16 +111,14 @@ This is better than the previous SDK-side flow: the SDK doesn't need to track id
 ## What `client.logout()` clears
 
 ```ts
-// src/client.ts:219-229 (paraphrased)
+// src/client.ts + src/api/auth/logout.ts (paraphrased)
 async logout(): Promise<void> {
-  await this.dataStore.delete("cookie_jar");
-  ss?.removeItem("snapcap_bearer");        // → session_snapcap_bearer
-  ls?.removeItem("snapcap_self");          // → local_snapcap_self
-  // … reset in-memory fields
+  await authSlice(ctx.sandbox).logout(force);  // bundle clears its Zustand slice
+  await this.dataStore.delete("cookie_jar");   // SDK-owned: durable session cookies
 }
 ```
 
-Three explicit deletes, one per SDK-owned key. Bundle-owned entries (other `local_*` / `session_*` / `indexdb_*`, **including** the bundle-minted Fidelius wrapped identity at `local_uds_uds.e2eeIdentityKey.shared`) are deliberately left intact: wiping them would force the next `MessagingSession` bring-up to re-mint and re-register Fidelius identity, which Snap rate-limits.
+One explicit DataStore delete — `cookie_jar` is the only SDK-owned key. Bundle-owned entries (other `local_*` / `session_*` / `indexdb_*`, **including** the bundle-minted Fidelius wrapped identity at `local_uds_uds.e2eeIdentityKey.shared`) are deliberately left intact: wiping them would force the next `MessagingSession` bring-up to re-mint and re-register Fidelius identity, which Snap rate-limits.
 
 If a consumer wants a true wipe, drop the underlying DataStore (delete the file, drop the Redis namespace) — there's no SDK-supported way to selectively delete bundle keys without breaking the next session.
 

@@ -107,7 +107,7 @@ toVmU8(bytes: Uint8Array | ArrayBufferView): Uint8Array {
 
 Two main callers today:
 
-- `src/api/auth.ts` — wrapping the bundle-driven `WebLogin` response bytes before handing them to the bundle's protobuf decoder during the cold-path login.
+- `src/shims/fetch.ts` — projecting response body bytes into a sandbox-realm `Uint8Array` so the bundle's protobuf decoders can decode them without a cross-realm `instanceof` failure.
 - `src/shims/websocket.ts` — projecting incoming WebSocket binary frames so `e.data instanceof ArrayBuffer` passes the bundle's check.
 
 If you write a new path that hands bytes into the bundle, run it through `sandbox.toVmU8(...)`.
