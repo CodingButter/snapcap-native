@@ -43,6 +43,33 @@ function readImageDimensions(buf: Uint8Array): { width: number; height: number }
 }
 
 /**
+ * Install a cookie-attached `fetch` on the standalone-realm `globalThis`.
+ * The mint-realm boot leaves a stub that throws "fetch unavailable in
+ * mint realm"; the session realm reuses that boot, so we have to override.
+ *
+ * The bundle's media-upload path (`Fi.uploadMedia`) calls fetch to PUT
+ * media bytes to Snap's CDN; without this, the path silently hangs in a
+ * promise chain that catches the throw and never resolves.
+ *
+ * Pass the `setupBundleSession` cookieJar + userAgent through the existing
+ * `makeJarFetch` host-realm wrapper — same plumbing the WebSocket shim
+ * uses for its upgrade GET.
+ *
+ * @param realmGlobal - The standalone realm's globalThis (from
+ *   `vm.runInContext("globalThis", context)`).
+ * @param fetch - A pre-bound fetch function (typically built via
+ *   `makeJarFetch(cookieJar, userAgent)` in `setup.ts`).
+ *
+ * @internal
+ */
+export function installSessionRealmFetch(
+  realmGlobal: Record<string, unknown>,
+  fetch: (url: string, init?: RequestInit) => Promise<Response>,
+): void {
+  realmGlobal.fetch = fetch;
+}
+
+/**
  * Project the slot top-ups onto a standalone-realm globalThis. Safe to
  * call repeatedly.
  */
@@ -251,8 +278,14 @@ export function installSessionRealmGlobals(realmGlobal: Record<string, unknown>)
               const dims = readImageDimensions(buf);
               naturalWidth = dims.width;
               naturalHeight = dims.height;
+              if (process.env.SNAPCAP_DEBUG_IMAGE === "1") {
+                process.stderr.write(`[Image.shim] src=${v} size=${buf.byteLength} dims=${dims.width}x${dims.height}\n`);
+              }
               onload?.({ target: img });
             } catch (err) {
+              if (process.env.SNAPCAP_DEBUG_IMAGE === "1") {
+                process.stderr.write(`[Image.shim] FAIL src=${v} err=${(err as Error).message}\n`);
+              }
               onerror?.({ target: img, error: err });
             }
           });
