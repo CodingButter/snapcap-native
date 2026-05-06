@@ -42,3 +42,4 @@ scripts/test-bundle-auth.ts
 .claude/worktrees/
 .claude/.last-conversation
 
+docs-generated/
