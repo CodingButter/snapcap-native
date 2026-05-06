@@ -43,3 +43,6 @@ scripts/test-bundle-auth.ts
 .claude/.last-conversation
 
 docs-generated/
+
+# Worktrees symlink .tmp/ in as a top-level link; catch that form too:
+.tmp
