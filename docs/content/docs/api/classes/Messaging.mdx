@@ -20,7 +20,7 @@ Messaging manager — inbox enumeration + live decrypt + presence.
 fetchEncryptedMessages(conversations: ConversationSummary[], selfUserId?: string): Promise<RawEncryptedMessage[]>;
 ```
 
-Defined in: [api/messaging/manager.ts:296](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L296)
+Defined in: [api/messaging/manager.ts:297](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L297)
 
 Fetch raw encrypted message envelopes for the given conversations
 via `BatchDeltaSync`.
@@ -44,7 +44,7 @@ via `BatchDeltaSync`.
 listConversations(selfUserId?: string): Promise<ConversationSummary[]>;
 ```
 
-Defined in: [api/messaging/manager.ts:287](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L287)
+Defined in: [api/messaging/manager.ts:288](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L288)
 
 Fetch the user's full conversation list via `SyncConversations`.
 Returns one entry per conversation — the same set the SPA shows on
@@ -113,13 +113,15 @@ client.messaging.on("message", (msg) => {
 ```ts
 sendImage(
    convId: string, 
-   image: Uint8Array, 
+   image: 
+  | string
+  | Uint8Array<ArrayBufferLike>, 
    opts?: {
   caption?: string;
-}): Promise<string>;
+}): Promise<void>;
 ```
 
-Defined in: [api/messaging/manager.ts:253](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L253)
+Defined in: [api/messaging/manager.ts:254](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L254)
 
 Send a persistent image attachment into a conversation. Image stays
 in chat history (not ephemeral).
@@ -129,13 +131,13 @@ in chat history (not ephemeral).
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `convId` | `string` | Hyphenated conversation UUID. |
-| `image` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Raw image bytes (PNG / JPEG / WebP). |
-| `opts?` | \{ `caption?`: `string`; \} | Optional `caption` shown beside the image. |
+| `image` | \| `string` \| [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)\<`ArrayBufferLike`\> | Raw image bytes (PNG / JPEG / WebP) or a filesystem path. |
+| `opts?` | \{ `caption?`: `string`; \} | Optional `caption` (sent as a separate text message immediately after; matches Snap's UI). |
 | `opts.caption?` | `string` | - |
 
 #### Returns
 
-[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`string`\>
+[`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`void`\>
 
 ***
 
@@ -150,7 +152,7 @@ sendSnap(
 }): Promise<string>;
 ```
 
-Defined in: [api/messaging/manager.ts:269](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L269)
+Defined in: [api/messaging/manager.ts:270](https://github.com/CodingButter/snapcap-native/blob/main/src/api/messaging/manager.ts#L270)
 
 Send a disappearing snap to a conversation (destination kind 122).
 Default is view-once; pass `{ timer: 5 }` to override.

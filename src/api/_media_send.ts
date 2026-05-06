@@ -27,6 +27,26 @@ import type { ClientContext } from "./_context.ts";
 
 // ── Image dimension parsing (PNG / JPEG / WebP) ───────────────────────
 
+/**
+ * Parse intrinsic width / height from the leading bytes of a supported
+ * image format. The CCM envelope carries dimensions explicitly so the
+ * recipient client can size the placeholder before the CDN download
+ * lands; mismatched dimensions render at the wrong aspect ratio.
+ *
+ * Supports PNG (signature + IHDR), JPEG (SOFn marker scan), and WebP
+ * VP8 (lossy at fixed offsets). For VP8L / VP8X / GIF / SVG / unknown
+ * formats, pass an explicit `override.width` + `override.height` from
+ * the caller.
+ *
+ * @param bytes - Raw image bytes (the same bytes passed to `sendImage`).
+ * @param override - Optional explicit `{width, height}`. If both are
+ *   provided, parsing is skipped — useful for formats not auto-detected
+ *   or when the caller already knows the dimensions.
+ * @returns `{width, height}` in pixels.
+ * @throws If the format isn't recognized AND no override was provided.
+ *
+ * @internal
+ */
 function parseImageDimensions(
   bytes: Uint8Array,
   override?: { width?: number; height?: number },
@@ -76,12 +96,41 @@ function parseImageDimensions(
 
 // ── 1. getUploadLocations ─────────────────────────────────────────────
 
+/**
+ * Result of {@link getUploadLocations}. The two ids are referenced from
+ * the `CreateContentMessage` envelope: `mediaIdToken` from the media
+ * descriptor (with `_<index>` suffix), `mediaIdBase` from the inner
+ * reference object (without suffix).
+ *
+ * @internal
+ */
 type UploadLocation = {
+  /** Pre-signed S3 PUT URL — valid ~24h. AWS4-HMAC-SHA256 signed; do
+   *  NOT add `x-amz-acl` as a header (already in the query string). */
   putUrl: string;
-  mediaIdToken: string;  // e.g. "wO87suY3U6Ss473nIx9ba_1"
-  mediaIdBase: string;   // e.g. "wO87suY3U6Ss473nIx9ba"
+  /** Token with `_<index>` suffix referenced from the message descriptor.
+   *  Example: `"wO87suY3U6Ss473nIx9ba_1"`. */
+  mediaIdToken: string;
+  /** Base media-id (no suffix). Example: `"wO87suY3U6Ss473nIx9ba"`. */
+  mediaIdBase: string;
 };
 
+/**
+ * Step 1 of the image-send pipeline: ask Snap for a CDN upload URL.
+ *
+ * Sends a tiny gRPC-Web POST to
+ * `snapchat.content.v2.MediaDeliveryService/getUploadLocations`. The
+ * 10-byte request body was lifted verbatim from a captured HAR — fields
+ * 2/4/16 = 1 declare the image variant; field 7 byte differs between
+ * media kinds and we hard-code the image one.
+ *
+ * @param ctx - Per-instance {@link ClientContext} (bearer + cookies).
+ * @returns Resolved {@link UploadLocation}.
+ * @throws If the gRPC call returns non-200 or the response is missing
+ *   any of `uploadUrl` / `mediaIdToken` / `mediaIdBase`.
+ *
+ * @internal
+ */
 async function getUploadLocations(ctx: ClientContext): Promise<UploadLocation> {
   const body = (() => {
     const w = new ProtoWriter();
@@ -115,6 +164,22 @@ function parseUploadLocationsResponse(buf: Uint8Array): UploadLocation {
 
 // ── 2. AES-256-CBC encrypt + S3 PUT ───────────────────────────────────
 
+/**
+ * Step 2a of the pipeline: encrypt the image bytes with a fresh random
+ * AES-256-CBC key and IV. Snap's regular media flow stores blobs encrypted
+ * at rest in S3; the per-image key + IV travel inside the message body
+ * (see {@link encodeCreateContentMessageMedia}), so any recipient client
+ * with the message can fetch and decrypt.
+ *
+ * Distinct from Fidelius — this is the regular media-at-rest layer, not
+ * the E2E identity layer. Image DMs use only this; snaps add Fidelius on
+ * top.
+ *
+ * @param plaintext - Raw image bytes.
+ * @returns `{ciphertext, key (32 bytes), iv (16 bytes)}`.
+ *
+ * @internal
+ */
 function encryptMedia(plaintext: Uint8Array): { ciphertext: Uint8Array; key: Uint8Array; iv: Uint8Array } {
   const key = randomBytes(32);
   const iv = randomBytes(16);
@@ -123,6 +188,22 @@ function encryptMedia(plaintext: Uint8Array): { ciphertext: Uint8Array; key: Uin
   return { ciphertext: new Uint8Array(ciphertext), key: new Uint8Array(key), iv: new Uint8Array(iv) };
 }
 
+/**
+ * Step 2b of the pipeline: HTTP PUT the ciphertext to the pre-signed
+ * S3 URL returned by {@link getUploadLocations}.
+ *
+ * Header set kept minimal to match what Chrome actually sends. Critically,
+ * the pre-signed URL already carries `x-amz-acl=public-read` in its query
+ * string; sending it as a header would change the canonical request and
+ * break the AWS4 signature → 404.
+ *
+ * @param putUrl - Pre-signed S3 URL from `UploadLocation.putUrl`.
+ * @param ciphertext - AES-encrypted image bytes (output of {@link encryptMedia}).
+ * @throws If S3 returns non-200 (the message includes the response body
+ *   prefix to aid debugging).
+ *
+ * @internal
+ */
 async function uploadEncrypted(putUrl: string, ciphertext: Uint8Array): Promise<void> {
   // The pre-signed URL already carries `x-amz-acl` in its query string;
   // sending it as a header would change the canonical request and break
@@ -148,19 +229,54 @@ async function uploadEncrypted(putUrl: string, ciphertext: Uint8Array): Promise<
 
 // ── 3. CreateContentMessage (image variant) ───────────────────────────
 
+/**
+ * Inputs to {@link encodeCreateContentMessageMedia} — the message-side
+ * fields that ride alongside the uploaded media. Most fields are ids;
+ * `messageId` and `clientMessageId` default to fresh values when omitted.
+ *
+ * @internal
+ */
 type SendImageReq = {
+  /** Sender's hyphenated UUID. */
   senderUserId: string;
+  /** Recipient conversation's hyphenated UUID. */
   conversationId: string;
+  /** Image width in pixels (from {@link parseImageDimensions}). */
   width: number;
+  /** Image height in pixels. */
   height: number;
+  /** Media-id with `_<index>` suffix (`UploadLocation.mediaIdToken`). */
   mediaIdToken: string;
+  /** Media-id without suffix (`UploadLocation.mediaIdBase`). */
   mediaIdBase: string;
+  /** AES-256 key used to encrypt the uploaded blob (32 bytes). */
   encryptionKey: Uint8Array;
+  /** AES-CBC IV used alongside the key (16 bytes). */
   encryptionIv: Uint8Array;
+  /** Server-side int64 message id. Defaults to a timestamp+random hybrid. */
   messageId?: bigint;
+  /** Idempotency UUID — defaults to a fresh `crypto.randomUUID()`. */
   clientMessageId?: string;
 };
 
+/**
+ * Hand-written proto encoder for `MessagingCoreService.CreateContentMessage`
+ * — image variant. Wire shape recovered from a captured HAR; field tags
+ * and nesting verified against real recipient delivery.
+ *
+ * Two key gotchas baked in:
+ *
+ *   - The encryption key + IV are stored TWICE in the descriptor: field
+ *     4 carries them as base64 strings, field 19 as raw bytes. Different
+ *     recipient clients read different fields; both must carry the SAME
+ *     values or recipients see "tap to view" with nothing displayed.
+ *   - DM-with-media uses destination kind=111 (vs 8 for text-only DM).
+ *
+ * @param req - Already-resolved {@link SendImageReq} (post upload).
+ * @returns Proto bytes ready for gRPC-Web framing.
+ *
+ * @internal
+ */
 function encodeCreateContentMessageMedia(req: SendImageReq): Uint8Array {
   const w = new ProtoWriter();
   w.fieldMessage(1, (s) => s.fieldBytes(1, uuidToBytes(req.senderUserId)));
@@ -243,12 +359,47 @@ function encodeCreateContentMessageMedia(req: SendImageReq): Uint8Array {
   return w.finish();
 }
 
+/**
+ * Generate a positive 63-bit message id from the current timestamp +
+ * 16 bits of randomness. Snap doesn't validate the structure — what
+ * matters is uniqueness within a sender's outbound stream — so the
+ * timestamp prefix gives ordering for free.
+ *
+ * @internal
+ */
 function randomInt64Positive(): bigint {
   return (BigInt(Date.now()) << 16n) | BigInt(Math.floor(Math.random() * 0xffff));
 }
 
 // ── 4. Top-level send-image orchestrator ──────────────────────────────
 
+/**
+ * Send a persistent image DM into a conversation via the direct gRPC-Web
+ * pipeline. Bypasses Snap's bundle session entirely — no canvas, no
+ * Image shim, no Fidelius wrap on the envelope.
+ *
+ * # Flow
+ *
+ *   1. {@link getUploadLocations} — signed S3 PUT URL + media-id token.
+ *   2. {@link encryptMedia} (AES-256-CBC) → {@link uploadEncrypted} (PUT).
+ *   3. {@link encodeCreateContentMessageMedia} → gRPC-Web POST to
+ *      `MessagingCoreService/CreateContentMessage`.
+ *
+ * Recipients fetch from S3 and decrypt client-side with the per-message
+ * key embedded in the envelope. Verified live ~370 ms wall.
+ *
+ * Does NOT need the bundle messaging session to be brought up — works
+ * cold from any authenticated `ClientContext`.
+ *
+ * @param ctx - Per-instance {@link ClientContext}.
+ * @param conversationId - Recipient conversation's hyphenated UUID.
+ * @param bytes - Raw image bytes (PNG / JPEG / WebP). Sent as-is; no
+ *   resizing or re-encoding.
+ * @param opts - Optional `{width, height}` override for image formats
+ *   {@link parseImageDimensions} doesn't auto-detect.
+ *
+ * @internal Public surface is `Messaging.sendImage`.
+ */
 export async function sendImageDirect(
   ctx: ClientContext,
   conversationId: string,
@@ -280,6 +431,27 @@ export async function sendImageDirect(
 
 // ── gRPC-Web POST helper (cookies + bearer threaded) ──────────────────
 
+/**
+ * Generic gRPC-Web POST with bearer + cookies attached. Handles request
+ * framing (1-byte flag + 4-byte big-endian length + payload), walks the
+ * frame chain on the response side to extract the data frame (skipping
+ * trailer frames marked by flag bit 0x80).
+ *
+ * Mirrors `src/api/messaging/reads.ts:grpcCall` — pulled inline here to
+ * keep `_media_send.ts` self-contained as a reference for the wire
+ * shape. If we add another direct-gRPC caller, fold both onto a shared
+ * helper.
+ *
+ * @param ctx - Per-instance {@link ClientContext}.
+ * @param service - Fully-qualified service name (e.g.
+ *   `"messagingcoreservice.MessagingCoreService"`).
+ * @param methodName - Method on the service (e.g. `"CreateContentMessage"`).
+ * @param body - Already-encoded request bytes.
+ * @returns Decoded data-frame bytes from the response (empty if none).
+ * @throws If the HTTP layer or gRPC trailer signals failure.
+ *
+ * @internal
+ */
 async function grpcWebPost(
   ctx: ClientContext,
   service: string,
@@ -335,6 +507,14 @@ async function grpcWebPost(
   return dataPayload ?? new Uint8Array(0);
 }
 
+/**
+ * Resolve the authenticated user's hyphenated UUID. Reads through the
+ * shared messaging-domain helper so the source of truth (the bundle's
+ * auth slice) stays consistent with how the rest of the SDK derives
+ * `senderUserId`.
+ *
+ * @internal
+ */
 async function getSelfUserId(ctx: ClientContext): Promise<string> {
   const { getSelfUserId: g } = await import("./messaging/reads.ts");
   return g(ctx);
@@ -342,9 +522,33 @@ async function getSelfUserId(ctx: ClientContext): Promise<string> {
 
 // ── Tiny tolerant proto walker (read-only) ────────────────────────────
 
+/**
+ * Read-only proto field accessor returned by {@link walkProto}.
+ *
+ * @internal
+ */
 type ProtoNode = { field(n: number): ProtoFieldVal | undefined };
+/**
+ * Decoded field value. Multiple shape projections are populated when
+ * applicable (e.g. a length-delimited field that's also valid UTF-8 has
+ * both `bytes` and `string` set; a nested message also has `message`).
+ *
+ * @internal
+ */
 type ProtoFieldVal = { varint?: bigint; string?: string; bytes?: Uint8Array; message?: ProtoNode };
 
+/**
+ * Tolerant proto walker — decodes whatever it can without a schema and
+ * returns a `field(n)` accessor. Unknown / corrupt fields are skipped
+ * silently. Used to extract `uploadUrl` / `mediaIdToken` / `mediaIdBase`
+ * from the {@link getUploadLocations} response without pulling in a
+ * full proto runtime.
+ *
+ * @param buf - Raw proto bytes.
+ * @returns Read-only {@link ProtoNode} keyed by field number.
+ *
+ * @internal
+ */
 function walkProto(buf: Uint8Array): ProtoNode {
   const fields = new Map<number, ProtoFieldVal>();
   let pos = 0;
@@ -370,6 +574,12 @@ function walkProto(buf: Uint8Array): ProtoNode {
   return { field: (n) => fields.get(n) };
 }
 
+/**
+ * Read a single proto varint from `buf` starting at `pos`. Returns the
+ * decoded `bigint` value plus the new cursor position.
+ *
+ * @internal
+ */
 function readVarint(buf: Uint8Array, pos: number): [bigint, number] {
   let v = 0n; let shift = 0n;
   while (pos < buf.byteLength) {
