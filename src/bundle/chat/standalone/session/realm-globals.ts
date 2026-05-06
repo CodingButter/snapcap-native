@@ -17,6 +17,32 @@
  */
 
 /**
+ * Parse intrinsic dimensions from the leading bytes of a supported image
+ * format. PNG only at the moment — the bundle's media-send path passes
+ * raw bytes through, so the format that lands here matches whatever the
+ * caller supplied to `sendImage`. JPEG / WebP / GIF surface a clear error
+ * with the offending magic so the next iteration knows what to add.
+ *
+ * @internal
+ */
+function readImageDimensions(buf: Uint8Array): { width: number; height: number } {
+  // PNG signature "\x89PNG\r\n\x1a\n" + IHDR chunk header at offsets 8-15;
+  // width is the big-endian uint32 at 16-19, height at 20-23.
+  if (
+    buf.length >= 24 &&
+    buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
+    buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
+  ) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    return { width: dv.getUint32(16, false), height: dv.getUint32(20, false) };
+  }
+  const head = Array.from(buf.slice(0, 4))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join(" ");
+  throw new Error(`readImageDimensions: unsupported format (head: ${head})`);
+}
+
+/**
  * Project the slot top-ups onto a standalone-realm globalThis. Safe to
  * call repeatedly.
  */
@@ -171,16 +197,80 @@ export function installSessionRealmGlobals(realmGlobal: Record<string, unknown>)
   if (typeof realmGlobal.Blob !== "function" && typeof globalThis.Blob === "function") {
     realmGlobal.Blob = globalThis.Blob;
   }
-  // URL.createObjectURL stub — only one bundle path uses it (audio note).
-  // For image / snap / story sends it's not strictly required, but a stub
-  // prevents `URL.createObjectURL is not a function` crashes if the
-  // bundle's pg helper ever lands on the createObjectURL fallback branch.
+  // URL.createObjectURL + Image — used by the bundle's media send pipeline
+  // (sendImage / sendSnap / stories.post). The bundle calls
+  // `URL.createObjectURL(blob)` to get a handle, then `new Image()` with
+  // `src = handle`, and reads `naturalWidth` / `naturalHeight` to drive
+  // the 1080×1920 normalization canvas. happy-dom's HTMLImageElement is a
+  // no-op stub (`naturalWidth = 0`), so we install our own pair: a
+  // Map-backed createObjectURL and an Image shim that parses image headers
+  // directly from the blob bytes.
   const realmURL = realmGlobal.URL as
     | { createObjectURL?: Function; revokeObjectURL?: Function }
     | undefined;
-  if (realmURL && typeof realmURL.createObjectURL !== "function") {
-    realmURL.createObjectURL = (_blob: unknown): string => "blob:snapcap-stub";
-    realmURL.revokeObjectURL = (_url: string): void => {};
+  // Force-install: happy-dom ships a `URL.createObjectURL` that mints
+  // UUID-style URLs and stores blobs in a private map we can't read, so
+  // our `Image` shim couldn't look them up. Replace unconditionally to
+  // route both ends through our shared registry.
+  if (realmURL && !realmGlobal.__snapcap_objectURLs) {
+    const registry = new Map<string, Blob>();
+    realmGlobal.__snapcap_objectURLs = registry;
+    let counter = 0;
+    realmURL.createObjectURL = (blob: Blob): string => {
+      counter += 1;
+      const url = `blob:snapcap-realm-${counter}`;
+      registry.set(url, blob);
+      return url;
+    };
+    realmURL.revokeObjectURL = (url: string): void => {
+      registry.delete(url);
+    };
+  }
+  // Force-install Image too — happy-dom's HTMLImageElement is a no-op
+  // stub (`naturalWidth = 0`), so even if it's already on the realm we
+  // need ours.
+  if (!realmGlobal.__snapcap_image_shim_installed) {
+    realmGlobal.__snapcap_image_shim_installed = true;
+    realmGlobal.Image = function ShimImage(this: Record<string, unknown>): void {
+      const registry = realmGlobal.__snapcap_objectURLs as Map<string, Blob> | undefined;
+      let src = "";
+      let naturalWidth = 0;
+      let naturalHeight = 0;
+      let onload: ((ev?: unknown) => void) | null = null;
+      let onerror: ((ev?: unknown) => void) | null = null;
+      const img = this;
+      Object.defineProperty(img, "src", {
+        get: () => src,
+        set: (v: string): void => {
+          src = v;
+          queueMicrotask(async () => {
+            try {
+              const blob = registry?.get(v);
+              if (!blob) throw new Error(`Image: unknown blob URL ${v}`);
+              const buf = new Uint8Array(await blob.arrayBuffer());
+              const dims = readImageDimensions(buf);
+              naturalWidth = dims.width;
+              naturalHeight = dims.height;
+              onload?.({ target: img });
+            } catch (err) {
+              onerror?.({ target: img, error: err });
+            }
+          });
+        },
+      });
+      Object.defineProperty(img, "onload", {
+        get: () => onload,
+        set: (v) => { onload = v as typeof onload; },
+      });
+      Object.defineProperty(img, "onerror", {
+        get: () => onerror,
+        set: (v) => { onerror = v as typeof onerror; },
+      });
+      Object.defineProperty(img, "naturalWidth", { get: () => naturalWidth });
+      Object.defineProperty(img, "naturalHeight", { get: () => naturalHeight });
+      Object.defineProperty(img, "width", { get: () => naturalWidth });
+      Object.defineProperty(img, "height", { get: () => naturalHeight });
+    } as unknown as new () => unknown;
   }
   if (!realmGlobal.MessageChannel) {
     // Tiny synchronous stub. The chunk constructs MessageChannel for its
